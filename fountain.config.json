@@ -1,0 +1,21 @@
+{
+  "server": { "port": 9520 },
+  "timing": { "tickMs": 50, "spinMs": 10, "uiFrameMs": 100 },
+  "universes": [
+    {
+      "id": 1,
+      "label": "Вселенная 1",
+      "outputs": [{ "type": "artnet", "host": "127.0.0.1", "universe": 0 }]
+    },
+    {
+      "id": 2,
+      "label": "Вселенная 2",
+      "outputs": [{ "type": "artnet", "host": "127.0.0.1", "universe": 1 }]
+    },
+    {
+      "id": 3,
+      "label": "Вселенная 3",
+      "outputs": [{ "type": "artnet", "host": "127.0.0.1", "universe": 2 }]
+    }
+  ]
+}

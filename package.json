@@ -1,0 +1,24 @@
+{
+  "name": "fountain-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fountain Studio — управление светомузыкальными фонтанами: DMX512/Art-Net/sACN/RDM, таймлайн с музыкой, секвенсоры, 3D-визуализация",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n engine,ui -c blue,green \"npm:dev:engine\" \"npm:dev:ui\"",
+    "dev:engine": "npm -w @fountain-studio/engine run dev",
+    "dev:ui": "npm -w @fountain-studio/ui run dev",
+    "start:engine": "npm -w @fountain-studio/engine run start",
+    "monitor": "tsx packages/engine/src/tools/artnet-monitor.ts",
+    "build": "npm -w @fountain-studio/ui run build",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
