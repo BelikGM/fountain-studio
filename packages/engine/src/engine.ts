@@ -2,6 +2,8 @@ import {
   DMX_UNIVERSE_SIZE,
   clampDmx,
   type EngineStats,
+  type PlaybackState,
+  type Project,
   type TestPatternMode,
   type UniverseInfo,
 } from '@fountain-studio/shared';
@@ -10,6 +12,7 @@ import type { EngineConfig, OutputConfig } from './config';
 import { ArtNetOutput } from './drivers/artnet';
 import { SacnOutput } from './drivers/sacn';
 import type { UniverseOutput } from './drivers/output';
+import { Playback } from './playback';
 
 interface UniverseState {
   id: number;
@@ -28,9 +31,12 @@ interface UniverseState {
  */
 export class Engine {
   readonly universes: UniverseState[] = [];
+  readonly playback: Playback;
   private readonly ticker: Ticker;
   private pattern: TestPatternMode = 'off';
   private framesSent = 0;
+  /** Часы движка: время последнего тика (n * tickMs), мс. */
+  private nowMs = 0;
 
   constructor(readonly config: EngineConfig) {
     for (const u of config.universes) {
@@ -42,6 +48,7 @@ export class Engine {
         outputs: u.outputs.map(createOutput),
       });
     }
+    this.playback = new Playback(this.universes.map((u) => u.id));
     this.ticker = new Ticker(config.timing.tickMs, config.timing.spinMs, (n) => this.tick(n));
   }
 
@@ -61,11 +68,19 @@ export class Engine {
   }
 
   private tick(n: number): void {
-    const tSec = (n * this.config.timing.tickMs) / 1000;
+    this.nowMs = n * this.config.timing.tickMs;
+    const tSec = this.nowMs / 1000;
+    this.playback.tick(this.nowMs);
     for (let i = 0; i < this.universes.length; i++) {
       const u = this.universes[i]!;
       if (this.pattern === 'off') {
-        u.out.set(u.manual);
+        // Слияние слоёв по HTP: воспроизведение (сцены/секвенсоры) и ручная консоль.
+        const pb = this.playback.levels(u.id);
+        for (let ch = 0; ch < DMX_UNIVERSE_SIZE; ch++) {
+          const p = pb ? pb[ch]! : 0;
+          const m = u.manual[ch]!;
+          u.out[ch] = p > m ? p : m;
+        }
       } else {
         fillTestPattern(this.pattern, tSec, i, u.out);
       }
@@ -92,7 +107,42 @@ export class Engine {
 
   blackout(): void {
     this.pattern = 'off';
+    this.playback.stopAll();
     for (const u of this.universes) u.manual.fill(0);
+  }
+
+  // ── Проект и транспорт воспроизведения ────────────────────────────────────
+
+  setProject(project: Project): void {
+    this.playback.setProject(project);
+  }
+
+  setScene(sceneId: string | null): void {
+    this.playback.setScene(sceneId, this.nowMs);
+  }
+
+  startSequence(sequenceId: string): void {
+    this.playback.start(sequenceId, this.nowMs);
+  }
+
+  pauseSequence(sequenceId: string): void {
+    this.playback.pause(sequenceId, this.nowMs);
+  }
+
+  resumeSequence(sequenceId: string): void {
+    this.playback.resume(sequenceId, this.nowMs);
+  }
+
+  stopSequence(sequenceId: string): void {
+    this.playback.stop(sequenceId);
+  }
+
+  stopAllPlayback(): void {
+    this.playback.stopAll();
+  }
+
+  playbackState(): PlaybackState {
+    return this.playback.state();
   }
 
   setTestPattern(mode: TestPatternMode): void {

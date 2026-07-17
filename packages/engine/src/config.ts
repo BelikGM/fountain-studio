@@ -40,7 +40,7 @@ const DEFAULTS: EngineConfig = {
 };
 
 /** Ищет fountain.config.json вверх от cwd; путь можно задать через --config. */
-export function loadConfig(argv: string[]): EngineConfig {
+export function loadConfig(argv: string[]): EngineConfig & { configFile: string } {
   const flagIdx = argv.indexOf('--config');
   const explicit = flagIdx >= 0 ? argv[flagIdx + 1] : undefined;
   const file = explicit ? path.resolve(explicit) : findUp('fountain.config.json', process.cwd());
@@ -50,10 +50,11 @@ export function loadConfig(argv: string[]): EngineConfig {
     );
   }
   const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<EngineConfig>;
-  const config: EngineConfig = {
+  const config: EngineConfig & { configFile: string } = {
     server: { ...DEFAULTS.server, ...raw.server },
     timing: { ...DEFAULTS.timing, ...raw.timing },
     universes: raw.universes ?? [],
+    configFile: file,
   };
   if (config.universes.length === 0) {
     throw new Error(`В ${file} не задано ни одной вселенной (universes)`);

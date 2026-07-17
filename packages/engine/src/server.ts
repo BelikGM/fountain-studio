@@ -1,11 +1,12 @@
 import { WebSocketServer, WebSocket } from 'ws';
-import type { ClientMessage, ServerMessage } from '@fountain-studio/shared';
+import { sanitizeProject, type ClientMessage, type ServerMessage } from '@fountain-studio/shared';
 import type { Engine } from './engine';
+import type { ProjectStore } from './project';
 
-export const ENGINE_VERSION = '0.1.0';
+export const ENGINE_VERSION = '0.2.0';
 
-/** WebSocket API движка: команды от редактора, поток статистики и кадров. */
-export function startServer(engine: Engine): WebSocketServer {
+/** WebSocket API движка: команды от редактора, поток статистики, кадров и состояния. */
+export function startServer(engine: Engine, store: ProjectStore): WebSocketServer {
   const port = engine.config.server.port;
   const wss = new WebSocketServer({ port });
 
@@ -16,6 +17,8 @@ export function startServer(engine: Engine): WebSocketServer {
     }
   };
 
+  const broadcastPlayback = (): void => broadcast({ type: 'playback', state: engine.playbackState() });
+
   wss.on('connection', (ws) => {
     const hello: ServerMessage = {
       type: 'hello',
@@ -24,6 +27,8 @@ export function startServer(engine: Engine): WebSocketServer {
       universes: engine.universeInfos(),
     };
     ws.send(JSON.stringify(hello));
+    ws.send(JSON.stringify({ type: 'project', project: store.project } satisfies ServerMessage));
+    ws.send(JSON.stringify({ type: 'playback', state: engine.playbackState() } satisfies ServerMessage));
 
     ws.on('message', (raw) => {
       let msg: ClientMessage;
@@ -41,9 +46,43 @@ export function startServer(engine: Engine): WebSocketServer {
           break;
         case 'blackout':
           engine.blackout();
+          broadcastPlayback();
           break;
         case 'testPattern':
           engine.setTestPattern(msg.mode);
+          break;
+        case 'updateProject': {
+          const project = sanitizeProject(msg.project);
+          store.update(project);
+          engine.setProject(project);
+          // Эхо всем клиентам (включая отправителя — он отсеет по содержимому).
+          broadcast({ type: 'project', project });
+          broadcastPlayback();
+          break;
+        }
+        case 'setScene':
+          engine.setScene(msg.sceneId);
+          broadcastPlayback();
+          break;
+        case 'startSequence':
+          engine.startSequence(msg.sequenceId);
+          broadcastPlayback();
+          break;
+        case 'pauseSequence':
+          engine.pauseSequence(msg.sequenceId);
+          broadcastPlayback();
+          break;
+        case 'resumeSequence':
+          engine.resumeSequence(msg.sequenceId);
+          broadcastPlayback();
+          break;
+        case 'stopSequence':
+          engine.stopSequence(msg.sequenceId);
+          broadcastPlayback();
+          break;
+        case 'stopAllPlayback':
+          engine.stopAllPlayback();
+          broadcastPlayback();
           break;
       }
     });
@@ -57,6 +96,16 @@ export function startServer(engine: Engine): WebSocketServer {
       broadcast({ type: 'frame', universe: u.id, data: Buffer.from(u.out).toString('base64') });
     }
   }, engine.config.timing.uiFrameMs);
+
+  // Автопереходы шагов секвенсоров: рассылаем состояние, когда оно поменялось само.
+  let lastVersion = engine.playback.version;
+  setInterval(() => {
+    if (wss.clients.size === 0) return;
+    if (engine.playback.version !== lastVersion) {
+      lastVersion = engine.playback.version;
+      broadcastPlayback();
+    }
+  }, 250);
 
   wss.on('listening', () => console.log(`[server] WebSocket на ws://0.0.0.0:${port}`));
   return wss;
