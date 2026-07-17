@@ -2,7 +2,8 @@
  * Смоук-тест воспроизведения: поднимает движок с WebSocket-сервером в этом же
  * процессе, подключается клиентом и проверяет: загрузку проекта, статическую
  * сцену, HTP-слияние с ручной консолью, секвенсор с фейдом и переходами шагов,
- * общий стоп и сохранение проекта на диск.
+ * общий стоп, шоу-таймлайн (блоки, огибающие, опережение дорожек, транспорт),
+ * монтажную арифметику вырезок, хранилище аудио и сохранение проекта на диск.
  *
  * Запуск: npm run smoke (или npm -w @fountain-studio/engine run smoke)
  */
@@ -11,12 +12,17 @@ import os from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
 import {
+  editedToSourceMs,
   emptyProject,
+  keptSegments,
+  mergeCuts,
+  sourceToEditedMs,
   type PlaybackState,
   type Project,
   type ClientMessage,
   type ServerMessage,
 } from '@fountain-studio/shared';
+import { AudioStore } from '../audio';
 import { Engine } from '../engine';
 import { ProjectStore } from '../project';
 import { startServer } from '../server';
@@ -33,7 +39,7 @@ const engine = new Engine({
 const store = new ProjectStore(projectFile);
 engine.setProject(store.project);
 engine.start();
-const wss = startServer(engine, store);
+const wss = startServer(engine, store, new AudioStore(path.join(tmpDir, 'audio')));
 
 // Демо-проект: насос (адрес 1), клапан (2), RGB (10–12).
 const demo: Project = {
@@ -58,11 +64,63 @@ const demo: Project = {
       ],
     },
   ],
+  shows: [
+    {
+      id: 'show1',
+      name: 'Шоу 1',
+      audioFile: null,
+      durationMs: 4000,
+      cuts: [],
+      tracks: [
+        {
+          id: 'trkBlocks',
+          name: 'Блоки',
+          kind: 'blocks',
+          offsetMs: 0,
+          muted: false,
+          blocks: [
+            // Сцена A на 0.5–2.0 с; секвенсор seq1 на 2.5–3.7 с.
+            { id: 'b1', type: 'scene', refId: 'sceneA', startMs: 500, durationMs: 1500, fadeInMs: 0, fadeOutMs: 0 },
+            { id: 'b2', type: 'sequence', refId: 'seq1', startMs: 2500, durationMs: 1200, fadeInMs: 0, fadeOutMs: 0 },
+          ],
+        },
+        {
+          id: 'trkEnv',
+          name: 'Зелёный RGB',
+          kind: 'envelope',
+          offsetMs: 0,
+          muted: false,
+          deviceId: 'rgb1',
+          channel: 1,
+          points: [
+            { tMs: 0, value: 0 },
+            { tMs: 2000, value: 200 },
+            { tMs: 4000, value: 0 },
+          ],
+        },
+        {
+          // Опережение +1000 мс: точки 3.0–4.0 с исполняются на позиции 2.0–3.0 с.
+          id: 'trkValve',
+          name: 'Клапан (опережение 1 с)',
+          kind: 'envelope',
+          offsetMs: 1000,
+          muted: false,
+          deviceId: 'valve1',
+          channel: 0,
+          points: [
+            { tMs: 3000, value: 255 },
+            { tMs: 4000, value: 255 },
+          ],
+        },
+      ],
+    },
+  ],
 };
 
 let frame = new Uint8Array(512);
-let playback: PlaybackState = { activeSceneId: null, running: [] };
+let playback: PlaybackState = { activeSceneId: null, running: [], show: null };
 let projectEcho: Project | null = null;
+let audioMsg: { name: string; dataBase64: string } | null = null;
 let sawStep1 = false;
 let sawFadeMidpoint = false;
 
@@ -90,6 +148,8 @@ ws.on('message', (raw) => {
     if (playback.running.some((r) => r.stepIndex === 1)) sawStep1 = true;
   } else if (msg.type === 'project') {
     projectEcho = msg.project;
+  } else if (msg.type === 'audio') {
+    audioMsg = { name: msg.name, dataBase64: msg.dataBase64 };
   }
 });
 
@@ -159,10 +219,71 @@ async function main(): Promise<void> {
   await waitFor('общий стоп', () => playback.running.length === 0 && ch(1) === 0 && ch(10) === 0);
   check(true, 'общий стоп — все каналы в ноль');
 
+  console.log('— Шоу: перемотка на паузе (стейтлес-рендер таймлайна) —');
+  send({ type: 'playShow', showId: 'show1', positionMs: 0 });
+  send({ type: 'pauseShow' });
+  await waitFor('шоу на паузе', () => playback.show !== null && !playback.show.playing);
+  send({ type: 'seekShow', positionMs: 1000 });
+  await waitFor('позиция 1.0 с', () => ch(1) === 200 && ch(11) === 100);
+  check(true, '1.0 с: блок сцены A (насос 200) + огибающая зелёного = 100');
+  send({ type: 'seekShow', positionMs: 2200 });
+  await waitFor('позиция 2.2 с', () => ch(2) === 255 && ch(1) === 0 && ch(11) === 180);
+  check(true, '2.2 с: опережение +1 с — клапан 255 от точек 3.0–4.0 с, блок сцены уже погас');
+  send({ type: 'seekShow', positionMs: 2600 });
+  await waitFor('позиция 2.6 с', () => ch(1) === 200 && ch(2) === 255 && ch(11) === 140);
+  check(true, '2.6 с: блок-секвенсор шаг 1 (сцена A целиком)');
+  send({ type: 'seekShow', positionMs: 3300 });
+  await waitFor('позиция 3.3 с', () => ch(1) === 130 && ch(2) === 128 && ch(11) === 70);
+  check(true, '3.3 с: шаг 2 в середине фейда (насос 130, клапан 128), огибающая HTP 70');
+
+  console.log('— Шоу: воспроизведение, синхронизация, автопауза в конце —');
+  send({ type: 'playShow', showId: 'show1', positionMs: 0 });
+  await waitFor('шоу играет', () => playback.show?.playing === true);
+  send({ type: 'syncShow', positionMs: 2200 });
+  await waitFor('тихая коррекция позиции', () => ch(2) === 255, 1000);
+  check(true, 'syncShow перекинул позицию по аудио-часам без остановки');
+  await waitFor(
+    'автопауза в конце',
+    () => playback.show?.playing === false && playback.show.positionMs === 4000,
+    3000,
+  );
+  check(true, 'конец таймлайна: автопауза ровно на 4.000 с');
+  send({ type: 'stopShow' });
+  await waitFor('стоп шоу', () => playback.show === null && ch(1) === 0 && ch(2) === 0 && ch(11) === 0);
+  check(true, 'стоп шоу — слой снят, каналы в ноль');
+
+  console.log('— Монтаж вырезок (хелперы) —');
+  const cuts = mergeCuts([
+    { startMs: 3000, endMs: 3500 },
+    { startMs: 1000, endMs: 2000 },
+    { startMs: 1800, endMs: 2000 },
+  ]);
+  check(
+    cuts.length === 2 && cuts[0]!.startMs === 1000 && cuts[0]!.endMs === 2000,
+    'mergeCuts: сортировка и слияние пересечений',
+  );
+  check(editedToSourceMs(cuts, 2600) === 4100, 'editedToSourceMs: 2.6 с монтажа = 4.1 с исходника');
+  check(sourceToEditedMs(cuts, 4100) === 2600, 'sourceToEditedMs: обратное преобразование');
+  const segs = keptSegments(cuts, 5000);
+  check(
+    segs.length === 3 && segs[2]!.startMs === 3500 && segs[2]!.endMs === 5000,
+    'keptSegments: куски аудио между вырезками',
+  );
+
+  console.log('— Хранилище аудио —');
+  const audioData = Buffer.from('НЕ-НАСТОЯЩИЙ-MP3: проверка хранилища').toString('base64');
+  send({ type: 'uploadAudio', name: 'тест.mp3', dataBase64: audioData });
+  send({ type: 'getAudio', name: 'тест.mp3' });
+  await waitFor('ответ getAudio', () => audioMsg !== null);
+  check(audioMsg!.name === 'тест.mp3' && audioMsg!.dataBase64 === audioData, 'аудиофайл сохранён и отдан байт в байт');
+
   console.log('— Сохранение проекта —');
   await sleep(700); // дебаунс записи 500 мс
   const saved = JSON.parse(fs.readFileSync(projectFile, 'utf8')) as Project;
-  check(saved.devices.length === 3 && saved.sequences.length === 1, 'fountain.project.json записан на диск');
+  check(
+    saved.devices.length === 3 && saved.sequences.length === 1 && saved.shows.length === 1,
+    'fountain.project.json записан на диск (включая шоу)',
+  );
 
   console.log(failures.length === 0 ? '\nСМОУК-ТЕСТ ПРОЙДЕН' : `\nПРОВАЛОВ: ${failures.length}`);
 }

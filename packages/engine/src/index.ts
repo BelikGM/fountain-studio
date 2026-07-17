@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { AudioStore } from './audio';
 import { loadConfig } from './config';
 import { Engine } from './engine';
 import { ProjectStore } from './project';
@@ -6,11 +7,13 @@ import { startServer } from './server';
 
 const config = loadConfig(process.argv);
 const engine = new Engine(config);
-const store = new ProjectStore(path.join(path.dirname(config.configFile), 'fountain.project.json'));
+const projectDir = path.dirname(config.configFile);
+const store = new ProjectStore(path.join(projectDir, 'fountain.project.json'));
+const audio = new AudioStore(path.join(projectDir, 'audio'));
 
 engine.setProject(store.project);
 engine.start();
-startServer(engine, store);
+startServer(engine, store, audio);
 
 // Периодический отчёт о качестве тайминга в консоль (важно в headless-режиме).
 setInterval(() => {

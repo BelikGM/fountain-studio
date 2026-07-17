@@ -141,8 +141,28 @@ export class Engine {
     this.playback.stopAll();
   }
 
+  playShow(showId: string, positionMs: number): void {
+    this.playback.playShow(showId, positionMs, this.nowMs);
+  }
+
+  pauseShow(): void {
+    this.playback.pauseShow(this.nowMs);
+  }
+
+  seekShow(positionMs: number): void {
+    this.playback.seekShow(positionMs, this.nowMs);
+  }
+
+  syncShow(positionMs: number): void {
+    this.playback.syncShow(positionMs, this.nowMs);
+  }
+
+  stopShow(): void {
+    this.playback.stopShow();
+  }
+
   playbackState(): PlaybackState {
-    return this.playback.state();
+    return this.playback.state(this.nowMs);
   }
 
   setTestPattern(mode: TestPatternMode): void {

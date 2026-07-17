@@ -1,12 +1,13 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { sanitizeProject, type ClientMessage, type ServerMessage } from '@fountain-studio/shared';
+import type { AudioStore } from './audio';
 import type { Engine } from './engine';
 import type { ProjectStore } from './project';
 
-export const ENGINE_VERSION = '0.2.0';
+export const ENGINE_VERSION = '0.3.0';
 
 /** WebSocket API движка: команды от редактора, поток статистики, кадров и состояния. */
-export function startServer(engine: Engine, store: ProjectStore): WebSocketServer {
+export function startServer(engine: Engine, store: ProjectStore, audio: AudioStore): WebSocketServer {
   const port = engine.config.server.port;
   const wss = new WebSocketServer({ port });
 
@@ -84,6 +85,34 @@ export function startServer(engine: Engine, store: ProjectStore): WebSocketServe
           engine.stopAllPlayback();
           broadcastPlayback();
           break;
+        case 'playShow':
+          engine.playShow(msg.showId, msg.positionMs);
+          broadcastPlayback();
+          break;
+        case 'pauseShow':
+          engine.pauseShow();
+          broadcastPlayback();
+          break;
+        case 'seekShow':
+          engine.seekShow(msg.positionMs);
+          broadcastPlayback();
+          break;
+        case 'syncShow':
+          // Тихая коррекция позиции по аудио-часам редактора — без рассылки.
+          engine.syncShow(msg.positionMs);
+          break;
+        case 'stopShow':
+          engine.stopShow();
+          broadcastPlayback();
+          break;
+        case 'uploadAudio':
+          audio.save(msg.name, msg.dataBase64);
+          break;
+        case 'getAudio': {
+          const data = audio.load(msg.name);
+          ws.send(JSON.stringify({ type: 'audio', name: msg.name, dataBase64: data ?? '' } satisfies ServerMessage));
+          break;
+        }
       }
     });
   });
