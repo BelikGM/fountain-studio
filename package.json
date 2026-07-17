@@ -13,7 +13,8 @@
     "start:engine": "npm -w @fountain-studio/engine run start",
     "monitor": "tsx packages/engine/src/tools/artnet-monitor.ts",
     "build": "npm -w @fountain-studio/ui run build",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "smoke": "npm -w @fountain-studio/engine run smoke"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"
