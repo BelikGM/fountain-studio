@@ -4,6 +4,8 @@ import {
   envelopeValue,
   profileMap,
   type PlaybackState,
+  type Playlist,
+  type PlaylistTransportState,
   type Project,
   type Sequence,
   type Show,
@@ -36,6 +38,13 @@ interface ShowRuntime {
   anchorMs: number;
 }
 
+interface PlaylistRuntime {
+  playlist: Playlist;
+  itemIndex: number;
+  /** Конец паузы между шоу по часам движка; null — сейчас играет шоу. */
+  gapUntilMs: number | null;
+}
+
 /** Адрес устройства для огибающих: вселенная + первый адрес + число каналов. */
 interface DeviceSlot {
   universe: number;
@@ -55,9 +64,15 @@ export class Playback {
   private activeSceneId: string | null = null;
   private running: RunningSeq[] = [];
   private showRt: ShowRuntime | null = null;
+  private playlistRt: PlaylistRuntime | null = null;
   private readonly merged = new Map<number, Uint8Array>();
   /** Растёт при любом изменении состояния (транспорт, автопереход шага) — сигнал серверу разослать состояние. */
   version = 0;
+  /**
+   * Автономное воспроизведение сменило шоу: движку пора запустить (show) или
+   * остановить (null) системный аудиоплеер. Назначает точка входа движка.
+   */
+  onShowAudio: ((show: Show | null) => void) | null = null;
 
   constructor(private readonly universeIds: number[]) {
     for (const id of universeIds) this.merged.set(id, new Uint8Array(DMX_UNIVERSE_SIZE));
@@ -108,6 +123,18 @@ export class Playback {
         this.version++;
       } else {
         this.showRt.show = fresh;
+      }
+    }
+    if (this.playlistRt !== null) {
+      const fresh = project.playlists.find((p) => p.id === this.playlistRt!.playlist.id);
+      if (!fresh || fresh.items.length === 0) {
+        this.playlistRt = null;
+        this.version++;
+      } else {
+        this.playlistRt.playlist = fresh;
+        if (this.playlistRt.itemIndex >= fresh.items.length) this.playlistRt.itemIndex = 0;
+        // Текущее шоу удалили из проекта — переходим к следующему элементу на ближайшем тике.
+        if (this.showRt === null && this.playlistRt.gapUntilMs === null) this.playlistRt.gapUntilMs = 0;
       }
     }
     const before = this.running.length;
@@ -166,11 +193,81 @@ export class Playback {
   }
 
   stopAll(): void {
-    if (this.running.length === 0 && this.activeSceneId === null && this.showRt === null) return;
+    if (this.running.length === 0 && this.activeSceneId === null && this.showRt === null && this.playlistRt === null)
+      return;
     this.running = [];
     this.activeSceneId = null;
     this.showRt = null;
+    if (this.playlistRt !== null) this.onShowAudio?.(null);
+    this.playlistRt = null;
     this.version++;
+  }
+
+  // ── Транспорт плейлиста (движок — мастер-часы, аудио — системный плеер) ────
+
+  playPlaylist(playlistId: string, itemIndex: number | undefined, nowMs: number): void {
+    const playlist = this.project?.playlists.find((p) => p.id === playlistId);
+    if (!playlist || playlist.items.length === 0) return;
+    const idx = Math.min(Math.max(0, itemIndex ?? 0), playlist.items.length - 1);
+    this.playlistRt = { playlist, itemIndex: idx, gapUntilMs: null };
+    this.startPlaylistItem(nowMs);
+  }
+
+  skipPlaylist(dir: 1 | -1, nowMs: number): void {
+    const rt = this.playlistRt;
+    if (!rt) return;
+    const n = rt.playlist.items.length;
+    rt.itemIndex = (rt.itemIndex + dir + n) % n;
+    this.startPlaylistItem(nowMs);
+  }
+
+  stopPlaylist(): void {
+    if (this.playlistRt === null) return;
+    this.playlistRt = null;
+    this.showRt = null;
+    this.version++;
+    this.onShowAudio?.(null);
+  }
+
+  /** Запускает текущий элемент плейлиста; битые элементы пропускает (максимум один круг). */
+  private startPlaylistItem(nowMs: number): void {
+    const rt = this.playlistRt;
+    if (!rt || !this.project) return;
+    for (let tries = 0; tries < rt.playlist.items.length; tries++) {
+      const item = rt.playlist.items[rt.itemIndex]!;
+      const show = this.project.shows.find((s) => s.id === item.showId);
+      if (show && show.durationMs > 0) {
+        rt.gapUntilMs = null;
+        this.showRt = { show, playing: true, posAtAnchorMs: 0, anchorMs: nowMs };
+        this.version++;
+        this.onShowAudio?.(show);
+        return;
+      }
+      if (rt.itemIndex + 1 >= rt.playlist.items.length && rt.playlist.mode !== 'loop') break;
+      rt.itemIndex = (rt.itemIndex + 1) % rt.playlist.items.length;
+    }
+    this.stopPlaylist();
+  }
+
+  /** Конец паузы между шоу — переход к следующему элементу или завершение. */
+  private advancePlaylistIfDue(nowMs: number): void {
+    const rt = this.playlistRt;
+    if (!rt || rt.gapUntilMs === null || nowMs < rt.gapUntilMs) return;
+    const last = rt.itemIndex + 1 >= rt.playlist.items.length;
+    if (last && rt.playlist.mode !== 'loop') {
+      this.stopPlaylist();
+    } else {
+      rt.itemIndex = (rt.itemIndex + 1) % rt.playlist.items.length;
+      this.startPlaylistItem(nowMs);
+    }
+  }
+
+  /** Ручное управление шоу из редактора перехватывает воспроизведение у плейлиста. */
+  private releasePlaylist(): void {
+    if (this.playlistRt === null) return;
+    this.playlistRt = null;
+    this.version++;
+    this.onShowAudio?.(null);
   }
 
   // ── Транспорт шоу ──────────────────────────────────────────────────────────
@@ -184,6 +281,7 @@ export class Playback {
   playShow(showId: string, positionMs: number, nowMs: number): void {
     const show = this.project?.shows.find((s) => s.id === showId);
     if (!show) return;
+    this.releasePlaylist();
     this.showRt = { show, playing: true, posAtAnchorMs: Math.max(0, positionMs), anchorMs: nowMs };
     this.version++;
   }
@@ -191,6 +289,7 @@ export class Playback {
   pauseShow(nowMs: number): void {
     const rt = this.showRt;
     if (!rt || !rt.playing) return;
+    this.releasePlaylist();
     rt.posAtAnchorMs = this.showPosition(nowMs);
     rt.playing = false;
     this.version++;
@@ -199,6 +298,7 @@ export class Playback {
   seekShow(positionMs: number, nowMs: number): void {
     const rt = this.showRt;
     if (!rt) return;
+    this.releasePlaylist();
     rt.posAtAnchorMs = Math.max(0, positionMs);
     rt.anchorMs = nowMs;
     this.version++;
@@ -207,12 +307,14 @@ export class Playback {
   /** Коррекция по аудио-часам редактора: якорь переставляется без остановки. */
   syncShow(positionMs: number, nowMs: number): void {
     const rt = this.showRt;
-    if (!rt || !rt.playing) return;
+    // При активном плейлисте мастер-часы — движок, коррекция редактора не применяется.
+    if (!rt || !rt.playing || this.playlistRt !== null) return;
     rt.posAtAnchorMs = Math.max(0, positionMs);
     rt.anchorMs = nowMs;
   }
 
   stopShow(): void {
+    this.releasePlaylist();
     if (this.showRt === null) return;
     this.showRt = null;
     this.version++;
@@ -224,6 +326,12 @@ export class Playback {
     return { showId: rt.show.id, positionMs: Math.round(this.showPosition(nowMs)), playing: rt.playing };
   }
 
+  playlistState(): PlaylistTransportState | null {
+    const rt = this.playlistRt;
+    if (!rt) return null;
+    return { playlistId: rt.playlist.id, itemIndex: rt.itemIndex, inGap: rt.gapUntilMs !== null };
+  }
+
   state(nowMs: number): PlaybackState {
     return {
       activeSceneId: this.activeSceneId,
@@ -233,11 +341,13 @@ export class Playback {
         paused: r.paused,
       })),
       show: this.showState(nowMs),
+      playlist: this.playlistState(),
     };
   }
 
   /** Пересчитывает слой воспроизведения на момент nowMs. */
   tick(nowMs: number): void {
+    this.advancePlaylistIfDue(nowMs);
     for (const buf of this.merged.values()) buf.fill(0);
 
     if (this.activeSceneId !== null) {
@@ -292,6 +402,16 @@ export class Playback {
     if (!rt || !this.project) return;
     let pos = this.showPosition(nowMs);
     if (rt.playing && rt.show.durationMs > 0 && pos >= rt.show.durationMs) {
+      const prt = this.playlistRt;
+      if (prt && prt.gapUntilMs === null) {
+        // Шоу в плейлисте закончилось — пауза между элементами, затем следующий.
+        const item = prt.playlist.items[prt.itemIndex];
+        prt.gapUntilMs = nowMs + (item?.gapMs ?? 0);
+        this.showRt = null;
+        this.version++;
+        this.onShowAudio?.(null);
+        return;
+      }
       // Конец таймлайна — пауза на последней позиции.
       rt.posAtAnchorMs = rt.show.durationMs;
       rt.playing = false;

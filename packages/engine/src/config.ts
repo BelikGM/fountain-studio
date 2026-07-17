@@ -30,12 +30,19 @@ export interface EngineConfig {
     /** Как часто слать кадры в UI, мс. */
     uiFrameMs: number;
   };
+  /** Системный плеер для автономного воспроизведения (плейлисты/расписание). */
+  audio: {
+    /** auto — ffplay, если найден; none — без звука. */
+    player: 'auto' | 'ffplay' | 'none';
+    ffplayPath: string;
+  };
   universes: UniverseConfig[];
 }
 
 const DEFAULTS: EngineConfig = {
   server: { port: 9520 },
   timing: { tickMs: 50, spinMs: 10, uiFrameMs: 100 },
+  audio: { player: 'auto', ffplayPath: 'ffplay' },
   universes: [],
 };
 
@@ -53,6 +60,7 @@ export function loadConfig(argv: string[]): EngineConfig & { configFile: string 
   const config: EngineConfig & { configFile: string } = {
     server: { ...DEFAULTS.server, ...raw.server },
     timing: { ...DEFAULTS.timing, ...raw.timing },
+    audio: { ...DEFAULTS.audio, ...raw.audio },
     universes: raw.universes ?? [],
     configFile: file,
   };

@@ -161,6 +161,18 @@ export class Engine {
     this.playback.stopShow();
   }
 
+  playPlaylist(playlistId: string, itemIndex: number | undefined): void {
+    this.playback.playPlaylist(playlistId, itemIndex, this.nowMs);
+  }
+
+  skipPlaylist(dir: 1 | -1): void {
+    this.playback.skipPlaylist(dir, this.nowMs);
+  }
+
+  stopPlaylist(): void {
+    this.playback.stopPlaylist();
+  }
+
   playbackState(): PlaybackState {
     return this.playback.state(this.nowMs);
   }

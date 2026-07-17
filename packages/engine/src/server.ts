@@ -105,6 +105,18 @@ export function startServer(engine: Engine, store: ProjectStore, audio: AudioSto
           engine.stopShow();
           broadcastPlayback();
           break;
+        case 'playPlaylist':
+          engine.playPlaylist(msg.playlistId, msg.itemIndex);
+          broadcastPlayback();
+          break;
+        case 'skipPlaylist':
+          engine.skipPlaylist(msg.dir);
+          broadcastPlayback();
+          break;
+        case 'stopPlaylist':
+          engine.stopPlaylist();
+          broadcastPlayback();
+          break;
         case 'uploadAudio':
           audio.save(msg.name, msg.dataBase64);
           break;

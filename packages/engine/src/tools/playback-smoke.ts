@@ -25,6 +25,7 @@ import {
 import { AudioStore } from '../audio';
 import { Engine } from '../engine';
 import { ProjectStore } from '../project';
+import { Scheduler } from '../schedule';
 import { startServer } from '../server';
 
 const PORT = 9521;
@@ -34,6 +35,7 @@ const projectFile = path.join(tmpDir, 'fountain.project.json');
 const engine = new Engine({
   server: { port: PORT },
   timing: { tickMs: 50, spinMs: 10, uiFrameMs: 40 },
+  audio: { player: 'none', ffplayPath: 'ffplay' },
   universes: [{ id: 1, label: 'Тест', outputs: [{ type: 'artnet', host: '127.0.0.1', universe: 0 }] }],
 });
 const store = new ProjectStore(projectFile);
@@ -114,11 +116,56 @@ const demo: Project = {
         },
       ],
     },
+    {
+      id: 'showP1',
+      name: 'Короткое 1',
+      audioFile: null,
+      durationMs: 600,
+      cuts: [],
+      tracks: [
+        {
+          id: 'p1t',
+          name: 'Блоки',
+          kind: 'blocks',
+          offsetMs: 0,
+          muted: false,
+          blocks: [{ id: 'p1b', type: 'scene', refId: 'sceneA', startMs: 0, durationMs: 600, fadeInMs: 0, fadeOutMs: 0 }],
+        },
+      ],
+    },
+    {
+      id: 'showP2',
+      name: 'Короткое 2',
+      audioFile: null,
+      durationMs: 500,
+      cuts: [],
+      tracks: [
+        {
+          id: 'p2t',
+          name: 'Блоки',
+          kind: 'blocks',
+          offsetMs: 0,
+          muted: false,
+          blocks: [{ id: 'p2b', type: 'scene', refId: 'sceneB', startMs: 0, durationMs: 500, fadeInMs: 0, fadeOutMs: 0 }],
+        },
+      ],
+    },
+  ],
+  playlists: [
+    {
+      id: 'pl1',
+      name: 'Вечерняя программа',
+      mode: 'once',
+      items: [
+        { showId: 'showP1', gapMs: 300 },
+        { showId: 'showP2', gapMs: 0 },
+      ],
+    },
   ],
 };
 
 let frame = new Uint8Array(512);
-let playback: PlaybackState = { activeSceneId: null, running: [], show: null };
+let playback: PlaybackState = { activeSceneId: null, running: [], show: null, playlist: null };
 let projectEcho: Project | null = null;
 let audioMsg: { name: string; dataBase64: string } | null = null;
 let sawStep1 = false;
@@ -270,6 +317,73 @@ async function main(): Promise<void> {
     'keptSegments: куски аудио между вырезками',
   );
 
+  console.log('— Плейлист: автономная последовательность шоу —');
+  send({ type: 'playPlaylist', playlistId: 'pl1' });
+  await waitFor(
+    'элемент 1 играет',
+    () => playback.playlist?.itemIndex === 0 && playback.playlist.inGap === false && ch(1) === 200,
+  );
+  check(true, 'элемент 1: «Короткое 1» на выходе (сцена A)');
+  await waitFor('пауза между шоу', () => playback.playlist?.inGap === true && ch(1) === 0, 2000);
+  check(true, 'после 0.6 с — пауза между шоу, каналы в ноль');
+  await waitFor(
+    'элемент 2 играет',
+    () => playback.playlist?.itemIndex === 1 && ch(1) === 60 && ch(11) === 128,
+    2000,
+  );
+  check(true, 'через 0.3 с паузы — элемент 2 (сцена B)');
+  await waitFor(
+    'плейлист завершён',
+    () => playback.playlist === null && playback.show === null && ch(1) === 0 && ch(11) === 0,
+    2000,
+  );
+  check(true, 'режим «один раз»: плейлист закончился, всё в ноль');
+
+  console.log('— Плейлист: перехват управления редактором —');
+  send({ type: 'playPlaylist', playlistId: 'pl1' });
+  await waitFor('плейлист снова играет', () => playback.playlist !== null && ch(1) === 200);
+  send({ type: 'pauseShow' });
+  await waitFor(
+    'редактор перехватил шоу',
+    () => playback.playlist === null && playback.show !== null && !playback.show.playing,
+  );
+  check(true, 'pauseShow из редактора снял плейлист, шоу осталось на паузе');
+  send({ type: 'stopShow' });
+  await waitFor('шоу остановлено', () => playback.show === null && ch(1) === 0);
+
+  console.log('— Расписание по системному времени —');
+  const scheduler = new Scheduler(engine, () => store.project.schedule);
+  scheduler.start();
+  const at = new Date(Date.now() + 1500);
+  const hh = String(at.getHours()).padStart(2, '0');
+  const mm = String(at.getMinutes()).padStart(2, '0');
+  const ss = String(at.getSeconds()).padStart(2, '0');
+  send({
+    type: 'updateProject',
+    project: {
+      ...demo,
+      schedule: [
+        {
+          id: 'sch1',
+          name: 'Тестовый запуск',
+          enabled: true,
+          days: [],
+          time: `${hh}:${mm}:${ss}`,
+          action: { type: 'scene', refId: 'sceneA' },
+        },
+      ],
+    },
+  });
+  await waitFor(
+    'расписание сработало',
+    () => playback.activeSceneId === 'sceneA' && ch(1) === 200,
+    5000,
+  );
+  check(true, `запись «${hh}:${mm}:${ss} → сцена» сработала по системным часам`);
+  scheduler.stop();
+  send({ type: 'setScene', sceneId: null });
+  await waitFor('сцена снята', () => ch(1) === 0);
+
   console.log('— Хранилище аудио —');
   const audioData = Buffer.from('НЕ-НАСТОЯЩИЙ-MP3: проверка хранилища').toString('base64');
   send({ type: 'uploadAudio', name: 'тест.mp3', dataBase64: audioData });
@@ -281,8 +395,12 @@ async function main(): Promise<void> {
   await sleep(700); // дебаунс записи 500 мс
   const saved = JSON.parse(fs.readFileSync(projectFile, 'utf8')) as Project;
   check(
-    saved.devices.length === 3 && saved.sequences.length === 1 && saved.shows.length === 1,
-    'fountain.project.json записан на диск (включая шоу)',
+    saved.devices.length === 3 &&
+      saved.sequences.length === 1 &&
+      saved.shows.length === 3 &&
+      saved.playlists.length === 1 &&
+      saved.schedule.length === 1,
+    'fountain.project.json записан на диск (шоу, плейлисты, расписание)',
   );
 
   console.log(failures.length === 0 ? '\nСМОУК-ТЕСТ ПРОЙДЕН' : `\nПРОВАЛОВ: ${failures.length}`);
