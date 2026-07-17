@@ -37,7 +37,12 @@ export function useEngine(): EngineConnection {
   const [stats, setStats] = useState<EngineStats | null>(null);
   const [frames, setFrames] = useState<Record<number, Uint8Array>>({});
   const [project, setProject] = useState<Project | null>(null);
-  const [playback, setPlayback] = useState<PlaybackState>({ activeSceneId: null, running: [], show: null });
+  const [playback, setPlayback] = useState<PlaybackState>({
+    activeSceneId: null,
+    running: [],
+    show: null,
+    playlist: null,
+  });
   const wsRef = useRef<WebSocket | null>(null);
   /** Сколько наших правок ещё «в полёте» — их эхо от движка не применяем, чтобы не сбивать ввод. */
   const pendingEditsRef = useRef(0);

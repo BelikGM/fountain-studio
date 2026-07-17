@@ -617,3 +617,7 @@ select {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+
+/* ── Расписание ──────────────────────────────────────────── */
+.days { display: flex; gap: 2px; }
+.row-disabled td { opacity: 0.45; }

@@ -5,8 +5,10 @@ import { PatchView } from './views/PatchView';
 import { ScenesView } from './views/ScenesView';
 import { SequencesView } from './views/SequencesView';
 import { ShowView } from './views/ShowView';
+import { PlaylistsView } from './views/PlaylistsView';
+import { ScheduleView } from './views/ScheduleView';
 
-type Tab = 'console' | 'patch' | 'scenes' | 'sequences' | 'show';
+type Tab = 'console' | 'patch' | 'scenes' | 'sequences' | 'show' | 'playlists' | 'schedule';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'console', label: 'Консоль' },
@@ -14,6 +16,8 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'scenes', label: 'Сцены' },
   { id: 'sequences', label: 'Секвенсоры' },
   { id: 'show', label: 'Шоу' },
+  { id: 'playlists', label: 'Плейлисты' },
+  { id: 'schedule', label: 'Расписание' },
 ];
 
 export function App() {
@@ -45,6 +49,8 @@ export function App() {
       {tab === 'scenes' && <ScenesView engine={engine} />}
       {tab === 'sequences' && <SequencesView engine={engine} />}
       {tab === 'show' && <ShowView engine={engine} />}
+      {tab === 'playlists' && <PlaylistsView engine={engine} />}
+      {tab === 'schedule' && <ScheduleView engine={engine} />}
 
       <footer className="statusbar">
         {stats ? (
@@ -54,10 +60,13 @@ export function App() {
             <span>max {stats.maxJitterMs} мс</span>
             <span>кадров {stats.framesSent.toLocaleString('ru-RU')}</span>
             <span>
-              {playback.activeSceneId !== null || playback.running.length > 0 || playback.show !== null
+              {playback.activeSceneId !== null ||
+              playback.running.length > 0 ||
+              playback.show !== null ||
+              playback.playlist !== null
                 ? `воспроизведение: ${playback.running.length} секв.${playback.activeSceneId !== null ? ' + сцена' : ''}${
                     playback.show !== null ? ` + шоу (${playback.show.playing ? 'играет' : 'пауза'})` : ''
-                  }`
+                  }${playback.playlist !== null ? ` + плейлист №${playback.playlist.itemIndex + 1}` : ''}`
                 : 'воспроизведение остановлено'}
             </span>
           </>
