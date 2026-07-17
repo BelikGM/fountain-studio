@@ -173,3 +173,253 @@ select {
   overflow: hidden;
   white-space: nowrap;
 }
+
+/* ── Вкладки ─────────────────────────────────────────────── */
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.tab {
+  background: transparent;
+  color: var(--fg-dim);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 5px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.tab:hover { color: var(--fg); }
+.tab.active {
+  background: var(--bg-track);
+  border-color: var(--border);
+  color: var(--fg);
+}
+
+/* ── Виды с прокруткой и раскладка «список + контент» ─────── */
+.view {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.view-split {
+  flex-direction: row;
+  align-items: stretch;
+  overflow: hidden;
+  gap: 14px;
+}
+
+.sidebar {
+  width: 230px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.sidebar-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.list-item {
+  padding: 7px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.list-item:hover { background: var(--bg-track); }
+.list-item.selected {
+  background: var(--bg-track);
+  border-color: var(--accent);
+}
+.list-item.playing { color: #5fd068; }
+
+/* ── Панели и формы ──────────────────────────────────────── */
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 14px;
+}
+
+.panel h2 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.panel h3 {
+  margin: 14px 0 8px;
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.input {
+  background: var(--bg-track);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.input:focus { outline: none; border-color: var(--accent); }
+.input-num { width: 70px; }
+.input-title { font-size: 15px; font-weight: 600; flex: 0 1 300px; }
+
+.dim { color: var(--fg-dim); }
+.error-text { color: #ff9c9c; font-size: 12px; margin-left: 8px; }
+
+.badge {
+  font-size: 10px;
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.badge-live {
+  color: #5fd068;
+  border-color: #2c5232;
+}
+
+.btn-small { padding: 2px 8px; font-size: 12px; }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn:disabled:hover { border-color: var(--border); }
+
+/* ── Таблицы ─────────────────────────────────────────────── */
+.table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+.table th {
+  text-align: left;
+  color: var(--fg-dim);
+  font-weight: 400;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.row-error td { background: #3a1e1e; }
+.row-playing td { background: #1e3a24; }
+
+/* ── Карточки устройств в редакторе сцен ─────────────────── */
+.device-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.device-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.device-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.device-name { font-weight: 600; }
+
+.channel-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.channel-row input[type='range'] { flex: 1; accent-color: var(--accent); }
+.channel-name {
+  width: 70px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.color-input {
+  width: 100%;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-track);
+  cursor: pointer;
+}
+
+.toggle-open {
+  background: #1e3a24;
+  border-color: #2c8f3f;
+  color: #5fd068;
+  font-weight: 600;
+}
+
+.toggle-closed { color: var(--fg-dim); }
+
+.channels-editor { display: flex; flex-direction: column; gap: 4px; }
+.transport { gap: 6px; }

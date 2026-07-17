@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ClientMessage, EngineStats, ServerMessage, UniverseInfo } from '@fountain-studio/shared';
+import type {
+  ClientMessage,
+  EngineStats,
+  PlaybackState,
+  Project,
+  ServerMessage,
+  UniverseInfo,
+} from '@fountain-studio/shared';
 
 export interface EngineConnection {
   connected: boolean;
@@ -9,7 +16,12 @@ export interface EngineConnection {
   stats: EngineStats | null;
   /** Последний кадр каждой вселенной (id → 512 байт). */
   frames: Record<number, Uint8Array>;
+  /** Проект (источник истины — движок; правки шлём через updateProject). */
+  project: Project | null;
+  playback: PlaybackState;
   send: (msg: ClientMessage) => void;
+  /** Применяет правку проекта локально и отправляет движку. */
+  updateProject: (project: Project) => void;
 }
 
 const ENGINE_URL = `ws://${location.hostname}:9520`;
@@ -22,7 +34,11 @@ export function useEngine(): EngineConnection {
   const [universes, setUniverses] = useState<UniverseInfo[]>([]);
   const [stats, setStats] = useState<EngineStats | null>(null);
   const [frames, setFrames] = useState<Record<number, Uint8Array>>({});
+  const [project, setProject] = useState<Project | null>(null);
+  const [playback, setPlayback] = useState<PlaybackState>({ activeSceneId: null, running: [] });
   const wsRef = useRef<WebSocket | null>(null);
+  /** Сколько наших правок ещё «в полёте» — их эхо от движка не применяем, чтобы не сбивать ввод. */
+  const pendingEditsRef = useRef(0);
 
   useEffect(() => {
     let disposed = false;
@@ -51,6 +67,16 @@ export function useEngine(): EngineConnection {
           case 'frame':
             setFrames((prev) => ({ ...prev, [msg.universe]: base64ToBytes(msg.data) }));
             break;
+          case 'project':
+            if (pendingEditsRef.current > 0) {
+              pendingEditsRef.current--;
+            } else {
+              setProject(msg.project);
+            }
+            break;
+          case 'playback':
+            setPlayback(msg.state);
+            break;
         }
       };
     };
@@ -68,7 +94,16 @@ export function useEngine(): EngineConnection {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   }, []);
 
-  return { connected, version, tickMs, universes, stats, frames, send };
+  const updateProject = useCallback(
+    (next: Project) => {
+      setProject(next);
+      pendingEditsRef.current++;
+      send({ type: 'updateProject', project: next });
+    },
+    [send],
+  );
+
+  return { connected, version, tickMs, universes, stats, frames, project, playback, send, updateProject };
 }
 
 function base64ToBytes(b64: string): Uint8Array {
