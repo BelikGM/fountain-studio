@@ -1,4 +1,5 @@
 import { DMX_UNIVERSE_SIZE } from './dmx';
+import { sanitizeKeys, type KeyBinding } from './keys';
 import { sanitizePlaylists, sanitizeSchedule, type Playlist, type ScheduleEntry } from './playlist';
 import { sanitizeShows, type Show } from './show';
 
@@ -38,6 +39,12 @@ export interface DeviceProfile {
   builtin?: boolean;
 }
 
+/** Калибровка канала: рабочий диапазон прибора. 0 остаётся 0 (выключено), 1–255 растягиваются в min–max. */
+export interface ChannelTrim {
+  min: number;
+  max: number;
+}
+
 /** Устройство, поставленное в патч: профиль + вселенная + первый адрес. */
 export interface PatchedDevice {
   id: string;
@@ -47,6 +54,38 @@ export interface PatchedDevice {
   universe: number;
   /** Первый занимаемый DMX-адрес, 1..512. */
   address: number;
+  /** Калибровка по каналам профиля; отсутствует — без масштабирования (0–255 как есть). */
+  trim?: ChannelTrim[];
+}
+
+/** Итоговое значение канала с учётом калибровки. */
+export function applyTrim(value: number, trim: ChannelTrim | undefined): number {
+  if (!trim || value <= 0) return value;
+  return Math.round(trim.min + (value * (trim.max - trim.min)) / 255);
+}
+
+/** Обмен адресами (и вселенными) двух устройств — «физически перепутаны». */
+export function swapDeviceAddresses(project: Project, aId: string, bId: string): Project {
+  const a = project.devices.find((d) => d.id === aId);
+  const b = project.devices.find((d) => d.id === bId);
+  if (!a || !b) return project;
+  return {
+    ...project,
+    devices: project.devices.map((d) => {
+      if (d.id === aId) return { ...d, universe: b.universe, address: b.address };
+      if (d.id === bId) return { ...d, universe: a.universe, address: a.address };
+      return d;
+    }),
+  };
+}
+
+/** Сдвиг адресов выбранных устройств на delta (вставили прибор в середину линии). */
+export function shiftDeviceAddresses(project: Project, ids: string[], delta: number): Project {
+  const set = new Set(ids);
+  return {
+    ...project,
+    devices: project.devices.map((d) => (set.has(d.id) ? { ...d, address: d.address + delta } : d)),
+  };
 }
 
 /** Статическая картина: deviceId → значения каналов устройства по порядку профиля. */
@@ -84,6 +123,7 @@ export interface Project {
   shows: Show[];
   playlists: Playlist[];
   schedule: ScheduleEntry[];
+  keys: KeyBinding[];
 }
 
 /** Встроенные профили — типовые устройства фонтана. */
@@ -146,6 +186,7 @@ export function emptyProject(name = 'Новый проект'): Project {
     shows: [],
     playlists: [],
     schedule: [],
+    keys: [],
   };
 }
 
@@ -255,6 +296,7 @@ export function sanitizeProject(raw: unknown): Project {
     shows: [],
     playlists: [],
     schedule: [],
+    keys: [],
   };
   if (Array.isArray(r.profiles)) {
     for (const p of r.profiles as DeviceProfile[]) {
@@ -274,12 +316,25 @@ export function sanitizeProject(raw: unknown): Project {
   if (Array.isArray(r.devices)) {
     for (const d of r.devices as PatchedDevice[]) {
       if (!d || typeof d.id !== 'string' || !profiles.has(d.profileId)) continue;
+      const channelCount = profiles.get(d.profileId)!.channels.length;
+      let trim: ChannelTrim[] | undefined;
+      if (Array.isArray(d.trim)) {
+        trim = Array.from({ length: channelCount }, (_, k) => {
+          const t = d.trim![k];
+          const min = t && Number.isFinite(t.min) ? Math.max(0, Math.min(255, Math.round(t.min))) : 0;
+          const max = t && Number.isFinite(t.max) ? Math.max(min, Math.min(255, Math.round(t.max))) : 255;
+          return { min, max };
+        });
+        // Полностью нейтральная калибровка не хранится.
+        if (trim.every((t) => t.min === 0 && t.max === 255)) trim = undefined;
+      }
       project.devices.push({
         id: d.id,
         name: typeof d.name === 'string' ? d.name : d.id,
         profileId: d.profileId,
         universe: Number.isInteger(d.universe) ? d.universe : 1,
         address: Number.isInteger(d.address) ? Math.max(1, Math.min(DMX_UNIVERSE_SIZE, d.address)) : 1,
+        ...(trim ? { trim } : {}),
       });
     }
   }
@@ -328,6 +383,12 @@ export function sanitizeProject(raw: unknown): Project {
     shows: new Set(project.shows.map((s) => s.id)),
     sequences: new Set(project.sequences.map((q) => q.id)),
     scenes: sceneIds,
+  });
+  project.keys = sanitizeKeys(r.keys, {
+    scenes: sceneIds,
+    sequences: new Set(project.sequences.map((q) => q.id)),
+    shows: new Set(project.shows.map((s) => s.id)),
+    playlists: new Set(project.playlists.map((p) => p.id)),
   });
   return project;
 }
