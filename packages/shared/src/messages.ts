@@ -42,12 +42,21 @@ export interface ShowTransportState {
   playing: boolean;
 }
 
+/** Состояние плейлиста в движке. */
+export interface PlaylistTransportState {
+  playlistId: string;
+  itemIndex: number;
+  /** true — пауза между шоу (gap), шоу-слой пуст. */
+  inGap: boolean;
+}
+
 /** Состояние воспроизведения движка. */
 export interface PlaybackState {
   /** Включённая статическая сцена (картина) или null. */
   activeSceneId: string | null;
   running: RunningSequenceInfo[];
   show: ShowTransportState | null;
+  playlist: PlaylistTransportState | null;
 }
 
 /** UI → Движок */
@@ -74,7 +83,11 @@ export type ClientMessage =
   | { type: 'stopShow' }
   // Аудиофайлы шоу: хранятся движком в папке audio/ рядом с проектом.
   | { type: 'uploadAudio'; name: string; dataBase64: string }
-  | { type: 'getAudio'; name: string };
+  | { type: 'getAudio'; name: string }
+  // Плейлисты: исполняет движок автономно (мастер-часы — тик движка).
+  | { type: 'playPlaylist'; playlistId: string; itemIndex?: number }
+  | { type: 'skipPlaylist'; dir: 1 | -1 }
+  | { type: 'stopPlaylist' };
 
 /** Движок → UI */
 export type ServerMessage =

@@ -1,4 +1,5 @@
 import { DMX_UNIVERSE_SIZE } from './dmx';
+import { sanitizePlaylists, sanitizeSchedule, type Playlist, type ScheduleEntry } from './playlist';
 import { sanitizeShows, type Show } from './show';
 
 /**
@@ -81,6 +82,8 @@ export interface Project {
   scenes: Scene[];
   sequences: Sequence[];
   shows: Show[];
+  playlists: Playlist[];
+  schedule: ScheduleEntry[];
 }
 
 /** Встроенные профили — типовые устройства фонтана. */
@@ -133,7 +136,17 @@ export const BUILTIN_PROFILES: DeviceProfile[] = [
 ];
 
 export function emptyProject(name = 'Новый проект'): Project {
-  return { formatVersion: 1, name, profiles: [], devices: [], scenes: [], sequences: [], shows: [] };
+  return {
+    formatVersion: 1,
+    name,
+    profiles: [],
+    devices: [],
+    scenes: [],
+    sequences: [],
+    shows: [],
+    playlists: [],
+    schedule: [],
+  };
 }
 
 /** Все профили проекта: встроенные + пользовательские (пользовательский с тем же id побеждает). */
@@ -240,6 +253,8 @@ export function sanitizeProject(raw: unknown): Project {
     scenes: [],
     sequences: [],
     shows: [],
+    playlists: [],
+    schedule: [],
   };
   if (Array.isArray(r.profiles)) {
     for (const p of r.profiles as DeviceProfile[]) {
@@ -307,5 +322,12 @@ export function sanitizeProject(raw: unknown): Project {
     new Set(project.sequences.map((q) => q.id)),
     deviceIds,
   );
+  project.playlists = sanitizePlaylists(r.playlists, new Set(project.shows.map((s) => s.id)));
+  project.schedule = sanitizeSchedule(r.schedule, {
+    playlists: new Set(project.playlists.map((p) => p.id)),
+    shows: new Set(project.shows.map((s) => s.id)),
+    sequences: new Set(project.sequences.map((q) => q.id)),
+    scenes: sceneIds,
+  });
   return project;
 }
