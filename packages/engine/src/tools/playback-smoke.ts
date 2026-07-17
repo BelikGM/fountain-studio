@@ -16,7 +16,9 @@ import {
   emptyProject,
   keptSegments,
   mergeCuts,
+  shiftDeviceAddresses,
   sourceToEditedMs,
+  swapDeviceAddresses,
   type PlaybackState,
   type Project,
   type ClientMessage,
@@ -384,6 +386,37 @@ async function main(): Promise<void> {
   send({ type: 'setScene', sceneId: null });
   await waitFor('сцена снята', () => ch(1) === 0);
 
+  console.log('— Калибровка min/max (0 остаётся 0, 1–255 → min–max) —');
+  send({
+    type: 'updateProject',
+    project: {
+      ...demo,
+      devices: demo.devices.map((d) => (d.id === 'pump1' ? { ...d, trim: [{ min: 50, max: 200 }] } : d)),
+    },
+  });
+  send({ type: 'setScene', sceneId: 'sceneA' });
+  // Сцена даёт насосу 200 → калибровка: 50 + 200·150/255 = 168.
+  await waitFor('калиброванный выход', () => ch(1) === 168 && ch(2) === 255);
+  check(true, 'насос 200 → 168 по калибровке 50–200; клапан без калибровки — 255');
+  send({ type: 'setScene', sceneId: null });
+  await waitFor('ноль остаётся нулём', () => ch(1) === 0);
+  check(true, 'выключенный канал не поднимается до min');
+
+  console.log('— Переадресация (хелперы патча) —');
+  const swapped = swapDeviceAddresses(demo, 'pump1', 'rgb1');
+  check(
+    swapped.devices.find((d) => d.id === 'pump1')!.address === 10 &&
+      swapped.devices.find((d) => d.id === 'rgb1')!.address === 1,
+    'swapDeviceAddresses: насос и RGB поменялись адресами',
+  );
+  const shifted = shiftDeviceAddresses(demo, ['pump1', 'valve1'], 5);
+  check(
+    shifted.devices.find((d) => d.id === 'pump1')!.address === 6 &&
+      shifted.devices.find((d) => d.id === 'valve1')!.address === 7 &&
+      shifted.devices.find((d) => d.id === 'rgb1')!.address === 10,
+    'shiftDeviceAddresses: выбранные +5, остальные на месте',
+  );
+
   console.log('— Хранилище аудио —');
   const audioData = Buffer.from('НЕ-НАСТОЯЩИЙ-MP3: проверка хранилища').toString('base64');
   send({ type: 'uploadAudio', name: 'тест.mp3', dataBase64: audioData });
@@ -399,8 +432,8 @@ async function main(): Promise<void> {
       saved.sequences.length === 1 &&
       saved.shows.length === 3 &&
       saved.playlists.length === 1 &&
-      saved.schedule.length === 1,
-    'fountain.project.json записан на диск (шоу, плейлисты, расписание)',
+      saved.devices.find((d) => d.id === 'pump1')?.trim?.[0]?.min === 50,
+    'fountain.project.json записан на диск (шоу, плейлисты, калибровка)',
   );
 
   console.log(failures.length === 0 ? '\nСМОУК-ТЕСТ ПРОЙДЕН' : `\nПРОВАЛОВ: ${failures.length}`);

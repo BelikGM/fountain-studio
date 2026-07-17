@@ -1,6 +1,8 @@
 import {
   DMX_UNIVERSE_SIZE,
   clampDmx,
+  profileMap,
+  type ChannelTrim,
   type EngineStats,
   type PlaybackState,
   type Project,
@@ -37,6 +39,8 @@ export class Engine {
   private framesSent = 0;
   /** Часы движка: время последнего тика (n * tickMs), мс. */
   private nowMs = 0;
+  /** Калибровка каналов из патча: universeId → (адрес-1 → min/max). */
+  private trims = new Map<number, Map<number, ChannelTrim>>();
 
   constructor(readonly config: EngineConfig) {
     for (const u of config.universes) {
@@ -81,6 +85,14 @@ export class Engine {
           const m = u.manual[ch]!;
           u.out[ch] = p > m ? p : m;
         }
+        // Калибровка приборов: 0 остаётся 0 (выключено), 1–255 растягиваются в min–max.
+        const trims = this.trims.get(u.id);
+        if (trims) {
+          for (const [idx, t] of trims) {
+            const v = u.out[idx]!;
+            if (v > 0) u.out[idx] = Math.round(t.min + (v * (t.max - t.min)) / 255);
+          }
+        }
       } else {
         fillTestPattern(this.pattern, tSec, i, u.out);
       }
@@ -115,6 +127,24 @@ export class Engine {
 
   setProject(project: Project): void {
     this.playback.setProject(project);
+    this.trims.clear();
+    const profiles = profileMap(project);
+    for (const d of project.devices) {
+      if (!d.trim) continue;
+      const profile = profiles.get(d.profileId);
+      if (!profile) continue;
+      let map = this.trims.get(d.universe);
+      if (!map) {
+        map = new Map();
+        this.trims.set(d.universe, map);
+      }
+      for (let k = 0; k < profile.channels.length && k < d.trim.length; k++) {
+        const t = d.trim[k]!;
+        if (t.min === 0 && t.max === 255) continue;
+        const idx = d.address - 1 + k;
+        if (idx >= 0 && idx < DMX_UNIVERSE_SIZE) map.set(idx, t);
+      }
+    }
   }
 
   setScene(sceneId: string | null): void {

@@ -4,7 +4,7 @@ import type { AudioStore } from './audio';
 import type { Engine } from './engine';
 import type { ProjectStore } from './project';
 
-export const ENGINE_VERSION = '0.3.0';
+export const ENGINE_VERSION = '0.4.0';
 
 /** WebSocket API движка: команды от редактора, поток статистики, кадров и состояния. */
 export function startServer(engine: Engine, store: ProjectStore, audio: AudioStore): WebSocketServer {
