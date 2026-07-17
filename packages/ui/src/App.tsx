@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useEngine } from './useEngine';
+import { KeysView } from './views/KeysView';
 import { ConsoleView } from './views/ConsoleView';
 import { PatchView } from './views/PatchView';
 import { ScenesView } from './views/ScenesView';
@@ -8,7 +9,7 @@ import { ShowView } from './views/ShowView';
 import { PlaylistsView } from './views/PlaylistsView';
 import { ScheduleView } from './views/ScheduleView';
 
-type Tab = 'console' | 'patch' | 'scenes' | 'sequences' | 'show' | 'playlists' | 'schedule';
+type Tab = 'console' | 'patch' | 'scenes' | 'sequences' | 'show' | 'playlists' | 'schedule' | 'keys';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'console', label: 'Консоль' },
@@ -18,12 +19,57 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'show', label: 'Шоу' },
   { id: 'playlists', label: 'Плейлисты' },
   { id: 'schedule', label: 'Расписание' },
+  { id: 'keys', label: 'Клавиши' },
 ];
 
 export function App() {
   const engine = useEngine();
-  const { connected, version, stats, project, playback } = engine;
+  const { connected, version, stats, project, playback, send } = engine;
   const [tab, setTab] = useState<Tab>('console');
+
+  // Глобальные клавиатурные привязки (вкладка «Клавиши»): работают из любой
+  // вкладки, когда фокус не в поле ввода и клавишу не перехватил экран
+  // (например, пробел на таймлайне шоу).
+  useEffect(() => {
+    if (!project || project.keys.length === 0) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented || e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+      const binding = project.keys.find((k) => k.code === e.code);
+      if (!binding) return;
+      e.preventDefault();
+      const a = binding.action;
+      switch (a.type) {
+        case 'scene':
+          send({ type: 'setScene', sceneId: playback.activeSceneId === a.refId ? null : a.refId! });
+          break;
+        case 'sequence':
+          if (playback.running.some((r) => r.sequenceId === a.refId)) {
+            send({ type: 'stopSequence', sequenceId: a.refId! });
+          } else {
+            send({ type: 'startSequence', sequenceId: a.refId! });
+          }
+          break;
+        case 'show':
+          if (playback.show?.showId === a.refId) send({ type: 'stopShow' });
+          else send({ type: 'playShow', showId: a.refId!, positionMs: 0 });
+          break;
+        case 'playlist':
+          if (playback.playlist?.playlistId === a.refId) send({ type: 'stopPlaylist' });
+          else send({ type: 'playPlaylist', playlistId: a.refId! });
+          break;
+        case 'stopAll':
+          send({ type: 'stopAllPlayback' });
+          break;
+        case 'blackout':
+          send({ type: 'blackout' });
+          break;
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [project, playback, send]);
 
   return (
     <div className="app">
@@ -51,6 +97,7 @@ export function App() {
       {tab === 'show' && <ShowView engine={engine} />}
       {tab === 'playlists' && <PlaylistsView engine={engine} />}
       {tab === 'schedule' && <ScheduleView engine={engine} />}
+      {tab === 'keys' && <KeysView engine={engine} />}
 
       <footer className="statusbar">
         {stats ? (

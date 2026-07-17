@@ -6,8 +6,11 @@ import {
   findPatchIssues,
   nextFreeAddress,
   profileMap,
+  shiftDeviceAddresses,
+  swapDeviceAddresses,
   uid,
   type ChannelRole,
+  type ChannelTrim,
   type DeviceKind,
   type DeviceProfile,
   type PatchedDevice,
@@ -192,12 +195,34 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
   const { project, universes, updateProject } = engine;
   const profiles = useMemo(() => profileMap(project!), [project]);
   const issues = useMemo(() => findPatchIssues(project!), [project]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [shiftBy, setShiftBy] = useState(1);
+  const [trimOpenId, setTrimOpenId] = useState<string | null>(null);
 
   const patchDevice = (id: string, patch: Partial<PatchedDevice>): void => {
     updateProject({
       ...project!,
       devices: project!.devices.map((d) => (d.id === id ? { ...d, ...patch } : d)),
     });
+  };
+
+  const toggleSelect = (id: string): void => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelected(next);
+  };
+
+  const selectedIds = [...selected].filter((id) => project!.devices.some((d) => d.id === id));
+
+  const doSwap = (): void => {
+    if (selectedIds.length !== 2) return;
+    updateProject(swapDeviceAddresses(project!, selectedIds[0]!, selectedIds[1]!));
+  };
+
+  const doShift = (): void => {
+    if (selectedIds.length === 0 || shiftBy === 0) return;
+    updateProject(shiftDeviceAddresses(project!, selectedIds, shiftBy));
   };
 
   const removeDevice = (id: string): void => {
@@ -226,70 +251,180 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
       {sorted.length === 0 ? (
         <div className="dim">Пока пусто — добавьте устройства выше.</div>
       ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Имя</th>
-              <th>Профиль</th>
-              <th>Вселенная</th>
-              <th>Адрес</th>
-              <th>Диапазон</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((d) => {
-              const range = deviceRange(d, profiles);
-              const bad = issues.collisions.has(d.id) || issues.outOfRange.has(d.id);
-              return (
-                <tr key={d.id} className={bad ? 'row-error' : ''}>
-                  <td>
-                    <input
-                      className="input"
-                      value={d.name}
-                      onChange={(e) => patchDevice(d.id, { name: e.target.value })}
-                    />
-                  </td>
-                  <td>{profiles.get(d.profileId)?.name ?? d.profileId}</td>
-                  <td>
-                    <select
-                      value={d.universe}
-                      onChange={(e) => patchDevice(d.id, { universe: Number(e.target.value) })}
-                    >
-                      {universes.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.label}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td>
-                    <input
-                      className="input input-num"
-                      type="number"
-                      min={1}
-                      max={DMX_UNIVERSE_SIZE}
-                      value={d.address}
-                      onChange={(e) => patchDevice(d.id, { address: Number(e.target.value) })}
-                    />
-                  </td>
-                  <td className="dim">
-                    {range.start}–{range.end}
-                    {issues.collisions.has(d.id) && <span className="error-text"> пересечение</span>}
-                    {issues.outOfRange.has(d.id) && <span className="error-text"> вне 1–512</span>}
-                  </td>
-                  <td>
-                    <button className="btn btn-small" onClick={() => removeDevice(d.id)}>
-                      ✕
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <>
+          <div className="form-row">
+            <span className="dim">Переадресация (физически перепутаны/заменены приборы): отметьте устройства →</span>
+            <button
+              className="btn"
+              disabled={selectedIds.length !== 2}
+              title="Обменять адреса и вселенные двух отмеченных устройств"
+              onClick={doSwap}
+            >
+              ⇄ Обменять адреса{selectedIds.length === 2 ? '' : ' (нужно 2)'}
+            </button>
+            <label className="field">
+              Сдвинуть на{' '}
+              <input
+                className="input input-num"
+                type="number"
+                value={shiftBy}
+                onChange={(e) => setShiftBy(Math.round(Number(e.target.value)) || 0)}
+              />
+            </label>
+            <button className="btn" disabled={selectedIds.length === 0 || shiftBy === 0} onClick={doShift}>
+              Сдвинуть адреса ({selectedIds.length} выбр.)
+            </button>
+            {selectedIds.length > 0 && (
+              <button className="btn btn-small" onClick={() => setSelected(new Set())}>
+                снять выбор
+              </button>
+            )}
+          </div>
+          <table className="table">
+            <thead>
+              <tr>
+                <th></th>
+                <th>Имя</th>
+                <th>Профиль</th>
+                <th>Вселенная</th>
+                <th>Адрес</th>
+                <th>Диапазон</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((d) => {
+                const range = deviceRange(d, profiles);
+                const bad = issues.collisions.has(d.id) || issues.outOfRange.has(d.id);
+                const profile = profiles.get(d.profileId);
+                const trimOpen = trimOpenId === d.id;
+                return [
+                  <tr key={d.id} className={bad ? 'row-error' : ''}>
+                    <td>
+                      <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} />
+                    </td>
+                    <td>
+                      <input
+                        className="input"
+                        value={d.name}
+                        onChange={(e) => patchDevice(d.id, { name: e.target.value })}
+                      />
+                    </td>
+                    <td>{profile?.name ?? d.profileId}</td>
+                    <td>
+                      <select
+                        value={d.universe}
+                        onChange={(e) => patchDevice(d.id, { universe: Number(e.target.value) })}
+                      >
+                        {universes.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.label}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <input
+                        className="input input-num"
+                        type="number"
+                        min={1}
+                        max={DMX_UNIVERSE_SIZE}
+                        value={d.address}
+                        onChange={(e) => patchDevice(d.id, { address: Number(e.target.value) })}
+                      />
+                    </td>
+                    <td className="dim">
+                      {range.start}–{range.end}
+                      {issues.collisions.has(d.id) && <span className="error-text"> пересечение</span>}
+                      {issues.outOfRange.has(d.id) && <span className="error-text"> вне 1–512</span>}
+                    </td>
+                    <td>
+                      <button
+                        className={d.trim ? 'btn btn-small active' : 'btn btn-small'}
+                        title="Калибровка min/max по каналам"
+                        onClick={() => setTrimOpenId(trimOpen ? null : d.id)}
+                      >
+                        ⚙
+                      </button>{' '}
+                      <button className="btn btn-small" onClick={() => removeDevice(d.id)}>
+                        ✕
+                      </button>
+                    </td>
+                  </tr>,
+                  trimOpen && profile ? (
+                    <tr key={`${d.id}-trim`}>
+                      <td colSpan={7}>
+                        <TrimEditor
+                          device={d}
+                          profile={profile}
+                          onChange={(trim) => patchDevice(d.id, { trim })}
+                        />
+                      </td>
+                    </tr>
+                  ) : null,
+                ];
+              })}
+            </tbody>
+          </table>
+        </>
       )}
     </section>
+  );
+}
+
+/** Калибровка рабочего диапазона: 0 остаётся 0, значения 1–255 растягиваются в min–max. */
+function TrimEditor({
+  device,
+  profile,
+  onChange,
+}: {
+  device: PatchedDevice;
+  profile: DeviceProfile;
+  onChange: (trim: ChannelTrim[] | undefined) => void;
+}) {
+  const trim: ChannelTrim[] = profile.channels.map((_, k) => device.trim?.[k] ?? { min: 0, max: 255 });
+
+  const set = (k: number, patch: Partial<ChannelTrim>): void => {
+    const next = trim.map((t, i) => (i === k ? { ...t, ...patch } : { ...t }));
+    const t = next[k]!;
+    t.min = Math.max(0, Math.min(255, Math.round(t.min)));
+    t.max = Math.max(t.min, Math.min(255, Math.round(t.max)));
+    onChange(next.every((x) => x.min === 0 && x.max === 255) ? undefined : next);
+  };
+
+  return (
+    <div className="trim-editor">
+      <span className="dim">
+        Калибровка «{device.name}»: 0 остаётся 0 (выключено), 1–255 растягиваются в min–max выхода.
+      </span>
+      {profile.channels.map((c, k) => (
+        <label className="field" key={k}>
+          {c.name}: min{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={0}
+            max={255}
+            value={trim[k]!.min}
+            onChange={(e) => set(k, { min: Number(e.target.value) })}
+          />{' '}
+          max{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={0}
+            max={255}
+            value={trim[k]!.max}
+            onChange={(e) => set(k, { max: Number(e.target.value) })}
+          />
+        </label>
+      ))}
+      {device.trim && (
+        <button className="btn btn-small" onClick={() => onChange(undefined)}>
+          Сбросить (0–255)
+        </button>
+      )}
+    </div>
   );
 }
 

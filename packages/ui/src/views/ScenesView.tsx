@@ -1,17 +1,22 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
+  DMX_UNIVERSE_SIZE,
   profileMap,
   uid,
   type DeviceProfile,
   type PatchedDevice,
+  type Project,
   type Scene,
 } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
+
+const PAGE_SIZE = 32;
 
 /** Сцены: статические картины. Значения задаются контролами по типу устройства. */
 export function ScenesView({ engine }: { engine: EngineConnection }) {
   const { project, playback, frames, send, updateProject } = engine;
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [mode, setMode] = useState<'devices' | 'addresses'>('devices');
 
   const scenes = project?.scenes ?? [];
   const selected = scenes.find((s) => s.id === selectedId) ?? null;
@@ -125,9 +130,24 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
               <button className="btn" onClick={captureFromConsole} title="Записать в сцену текущие значения консоли">
                 Снять значения с консоли
               </button>
+              <span className="spacer" />
+              <button
+                className={mode === 'devices' ? 'btn btn-small active' : 'btn btn-small'}
+                onClick={() => setMode('devices')}
+              >
+                Устройства
+              </button>
+              <button
+                className={mode === 'addresses' ? 'btn btn-small active' : 'btn btn-small'}
+                onClick={() => setMode('addresses')}
+              >
+                Адреса
+              </button>
             </div>
             {project.devices.length === 0 ? (
               <div className="dim">В патче нет устройств — добавьте их на вкладке «Патч».</div>
+            ) : mode === 'addresses' ? (
+              <AddressPages engine={engine} project={project} scene={selected} onChange={updateScene} />
             ) : (
               <div className="device-grid">
                 {[...project.devices]
@@ -149,6 +169,119 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
         )}
       </section>
     </main>
+  );
+}
+
+/**
+ * Страницы адресов (как в FontanPlay): вселенная → страницы по 32 адреса,
+ * значение сцены правится прямо в ячейке адреса. Адрес принадлежит каналу
+ * устройства из патча; свободные адреса пусты (сцена хранит значения по
+ * устройствам, поэтому переадресация не ломает картины).
+ */
+function AddressPages({
+  engine,
+  project,
+  scene,
+  onChange,
+}: {
+  engine: EngineConnection;
+  project: Project;
+  scene: Scene;
+  onChange: (scene: Scene) => void;
+}) {
+  const { universes } = engine;
+  const [universeId, setUniverseId] = useState(universes[0]?.id ?? 1);
+  const [page, setPage] = useState(0);
+
+  /** адрес-1 → устройство и индекс канала. */
+  const slots = useMemo(() => {
+    const profiles = profileMap(project);
+    const map = new Map<number, { device: PatchedDevice; channel: number; channelName: string }>();
+    for (const d of project.devices) {
+      if (d.universe !== universeId) continue;
+      const profile = profiles.get(d.profileId);
+      if (!profile) continue;
+      for (let k = 0; k < profile.channels.length; k++) {
+        const idx = d.address - 1 + k;
+        if (idx >= 0 && idx < DMX_UNIVERSE_SIZE) {
+          map.set(idx, { device: d, channel: k, channelName: profile.channels[k]!.name });
+        }
+      }
+    }
+    return map;
+  }, [project, universeId]);
+
+  const valueAt = (idx: number): number => {
+    const slot = slots.get(idx);
+    if (!slot) return 0;
+    return scene.values[slot.device.id]?.[slot.channel] ?? 0;
+  };
+
+  const setValueAt = (idx: number, v: number): void => {
+    const slot = slots.get(idx);
+    if (!slot) return;
+    const profiles = profileMap(project);
+    const count = profiles.get(slot.device.profileId)?.channels.length ?? 0;
+    const vals = Array.from({ length: count }, (_, k) => scene.values[slot.device.id]?.[k] ?? 0);
+    vals[slot.channel] = Math.max(0, Math.min(255, Math.round(v)));
+    onChange({ ...scene, values: { ...scene.values, [slot.device.id]: vals } });
+  };
+
+  const pages = DMX_UNIVERSE_SIZE / PAGE_SIZE;
+  const start = page * PAGE_SIZE;
+
+  return (
+    <div>
+      <div className="form-row">
+        <label className="field">
+          Вселенная:{' '}
+          <select value={universeId} onChange={(e) => setUniverseId(Number(e.target.value))}>
+            {universes.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="days">
+          {Array.from({ length: pages }, (_, p) => (
+            <button
+              key={p}
+              className={p === page ? 'btn btn-small active' : 'btn btn-small'}
+              onClick={() => setPage(p)}
+            >
+              {p * PAGE_SIZE + 1}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="addr-grid">
+        {Array.from({ length: PAGE_SIZE }, (_, i) => {
+          const idx = start + i;
+          const slot = slots.get(idx);
+          const v = valueAt(idx);
+          return (
+            <div
+              key={idx}
+              className={slot ? (v > 0 ? 'addr-cell addr-set' : 'addr-cell') : 'addr-cell addr-free'}
+              title={slot ? `${slot.device.name} · ${slot.channelName}` : 'адрес свободен'}
+            >
+              <span className="addr-num">{idx + 1}</span>
+              <span className="addr-owner">{slot ? `${slot.device.name}·${slot.channelName}` : '—'}</span>
+              <input
+                className="input input-mini addr-value"
+                type="number"
+                min={0}
+                max={255}
+                disabled={!slot}
+                value={slot ? v : ''}
+                onChange={(e) => setValueAt(idx, Number(e.target.value))}
+              />
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

@@ -621,3 +621,40 @@ select {
 /* ── Расписание ──────────────────────────────────────────── */
 .days { display: flex; gap: 2px; }
 .row-disabled td { opacity: 0.45; }
+
+/* ── Калибровка и страницы адресов в сценах ──────────────── */
+.trim-editor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 4px;
+  background: var(--bg);
+  border-radius: 4px;
+}
+.addr-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 4px;
+}
+.addr-cell {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.addr-free { opacity: 0.4; }
+.addr-set { border-color: var(--accent); }
+.addr-num { font-size: 11px; color: var(--fg-dim); }
+.addr-owner {
+  font-size: 10px;
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.addr-value { width: 100%; }
