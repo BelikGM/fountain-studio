@@ -4,14 +4,16 @@ import { ConsoleView } from './views/ConsoleView';
 import { PatchView } from './views/PatchView';
 import { ScenesView } from './views/ScenesView';
 import { SequencesView } from './views/SequencesView';
+import { ShowView } from './views/ShowView';
 
-type Tab = 'console' | 'patch' | 'scenes' | 'sequences';
+type Tab = 'console' | 'patch' | 'scenes' | 'sequences' | 'show';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'console', label: 'Консоль' },
   { id: 'patch', label: 'Патч' },
   { id: 'scenes', label: 'Сцены' },
   { id: 'sequences', label: 'Секвенсоры' },
+  { id: 'show', label: 'Шоу' },
 ];
 
 export function App() {
@@ -42,6 +44,7 @@ export function App() {
       {tab === 'patch' && <PatchView engine={engine} />}
       {tab === 'scenes' && <ScenesView engine={engine} />}
       {tab === 'sequences' && <SequencesView engine={engine} />}
+      {tab === 'show' && <ShowView engine={engine} />}
 
       <footer className="statusbar">
         {stats ? (
@@ -51,8 +54,10 @@ export function App() {
             <span>max {stats.maxJitterMs} мс</span>
             <span>кадров {stats.framesSent.toLocaleString('ru-RU')}</span>
             <span>
-              {playback.activeSceneId !== null || playback.running.length > 0
-                ? `воспроизведение: ${playback.running.length} секв.${playback.activeSceneId !== null ? ' + сцена' : ''}`
+              {playback.activeSceneId !== null || playback.running.length > 0 || playback.show !== null
+                ? `воспроизведение: ${playback.running.length} секв.${playback.activeSceneId !== null ? ' + сцена' : ''}${
+                    playback.show !== null ? ` + шоу (${playback.show.playing ? 'играет' : 'пауза'})` : ''
+                  }`
                 : 'воспроизведение остановлено'}
             </span>
           </>

@@ -22,6 +22,8 @@ export interface EngineConnection {
   send: (msg: ClientMessage) => void;
   /** Применяет правку проекта локально и отправляет движку. */
   updateProject: (project: Project) => void;
+  /** Запрашивает аудиофайл из хранилища движка (null — файла нет). */
+  requestAudio: (name: string) => Promise<Uint8Array | null>;
 }
 
 const ENGINE_URL = `ws://${location.hostname}:9520`;
@@ -35,10 +37,12 @@ export function useEngine(): EngineConnection {
   const [stats, setStats] = useState<EngineStats | null>(null);
   const [frames, setFrames] = useState<Record<number, Uint8Array>>({});
   const [project, setProject] = useState<Project | null>(null);
-  const [playback, setPlayback] = useState<PlaybackState>({ activeSceneId: null, running: [] });
+  const [playback, setPlayback] = useState<PlaybackState>({ activeSceneId: null, running: [], show: null });
   const wsRef = useRef<WebSocket | null>(null);
   /** Сколько наших правок ещё «в полёте» — их эхо от движка не применяем, чтобы не сбивать ввод. */
   const pendingEditsRef = useRef(0);
+  /** Ожидающие ответа getAudio: имя файла → колбэки. */
+  const audioWaitersRef = useRef(new Map<string, ((data: Uint8Array | null) => void)[]>());
 
   useEffect(() => {
     let disposed = false;
@@ -77,6 +81,13 @@ export function useEngine(): EngineConnection {
           case 'playback':
             setPlayback(msg.state);
             break;
+          case 'audio': {
+            const waiters = audioWaitersRef.current.get(msg.name) ?? [];
+            audioWaitersRef.current.delete(msg.name);
+            const data = msg.dataBase64 === '' ? null : base64ToBytes(msg.dataBase64);
+            for (const resolve of waiters) resolve(data);
+            break;
+          }
         }
       };
     };
@@ -103,7 +114,21 @@ export function useEngine(): EngineConnection {
     [send],
   );
 
-  return { connected, version, tickMs, universes, stats, frames, project, playback, send, updateProject };
+  const requestAudio = useCallback(
+    (name: string) =>
+      new Promise<Uint8Array | null>((resolve) => {
+        const waiters = audioWaitersRef.current.get(name);
+        if (waiters) {
+          waiters.push(resolve);
+        } else {
+          audioWaitersRef.current.set(name, [resolve]);
+          send({ type: 'getAudio', name });
+        }
+      }),
+    [send],
+  );
+
+  return { connected, version, tickMs, universes, stats, frames, project, playback, send, updateProject, requestAudio };
 }
 
 function base64ToBytes(b64: string): Uint8Array {
