@@ -9,6 +9,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "monitor": "tsx src/tools/artnet-monitor.ts",
+    "watchdog": "tsx src/tools/watchdog.ts",
     "typecheck": "tsc --noEmit",
     "smoke": "tsx src/tools/playback-smoke.ts"
   },

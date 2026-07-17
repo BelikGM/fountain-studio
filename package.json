@@ -11,6 +11,7 @@
     "dev:engine": "npm -w @fountain-studio/engine run dev",
     "dev:ui": "npm -w @fountain-studio/ui run dev",
     "start:engine": "npm -w @fountain-studio/engine run start",
+    "engine:watchdog": "npm -w @fountain-studio/engine run watchdog",
     "monitor": "tsx packages/engine/src/tools/artnet-monitor.ts",
     "build": "npm -w @fountain-studio/ui run build",
     "typecheck": "npm run typecheck --workspaces --if-present",
