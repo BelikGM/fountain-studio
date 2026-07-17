@@ -35,11 +35,19 @@ export interface RunningSequenceInfo {
   paused: boolean;
 }
 
+/** Состояние транспорта шоу в движке. */
+export interface ShowTransportState {
+  showId: string;
+  positionMs: number;
+  playing: boolean;
+}
+
 /** Состояние воспроизведения движка. */
 export interface PlaybackState {
   /** Включённая статическая сцена (картина) или null. */
   activeSceneId: string | null;
   running: RunningSequenceInfo[];
+  show: ShowTransportState | null;
 }
 
 /** UI → Движок */
@@ -56,7 +64,17 @@ export type ClientMessage =
   | { type: 'pauseSequence'; sequenceId: string }
   | { type: 'resumeSequence'; sequenceId: string }
   | { type: 'stopSequence'; sequenceId: string }
-  | { type: 'stopAllPlayback' };
+  | { type: 'stopAllPlayback' }
+  // Транспорт шоу. Аудио играет редактор; syncShow — периодическая коррекция
+  // позиции движка по аудио-часам (мастер-клок — звук).
+  | { type: 'playShow'; showId: string; positionMs: number }
+  | { type: 'pauseShow' }
+  | { type: 'seekShow'; positionMs: number }
+  | { type: 'syncShow'; positionMs: number }
+  | { type: 'stopShow' }
+  // Аудиофайлы шоу: хранятся движком в папке audio/ рядом с проектом.
+  | { type: 'uploadAudio'; name: string; dataBase64: string }
+  | { type: 'getAudio'; name: string };
 
 /** Движок → UI */
 export type ServerMessage =
@@ -64,4 +82,6 @@ export type ServerMessage =
   | { type: 'stats'; stats: EngineStats }
   | { type: 'frame'; universe: number; data: string }
   | { type: 'project'; project: Project }
-  | { type: 'playback'; state: PlaybackState };
+  | { type: 'playback'; state: PlaybackState }
+  /** Ответ на getAudio (только запросившему клиенту); dataBase64 = '' — файла нет. */
+  | { type: 'audio'; name: string; dataBase64: string };

@@ -1,4 +1,5 @@
 import { DMX_UNIVERSE_SIZE } from './dmx';
+import { sanitizeShows, type Show } from './show';
 
 /**
  * Модель проекта Fountain Studio: профили устройств, патч (привязка к адресам),
@@ -79,6 +80,7 @@ export interface Project {
   devices: PatchedDevice[];
   scenes: Scene[];
   sequences: Sequence[];
+  shows: Show[];
 }
 
 /** Встроенные профили — типовые устройства фонтана. */
@@ -131,7 +133,7 @@ export const BUILTIN_PROFILES: DeviceProfile[] = [
 ];
 
 export function emptyProject(name = 'Новый проект'): Project {
-  return { formatVersion: 1, name, profiles: [], devices: [], scenes: [], sequences: [] };
+  return { formatVersion: 1, name, profiles: [], devices: [], scenes: [], sequences: [], shows: [] };
 }
 
 /** Все профили проекта: встроенные + пользовательские (пользовательский с тем же id побеждает). */
@@ -237,6 +239,7 @@ export function sanitizeProject(raw: unknown): Project {
     devices: [],
     scenes: [],
     sequences: [],
+    shows: [],
   };
   if (Array.isArray(r.profiles)) {
     for (const p of r.profiles as DeviceProfile[]) {
@@ -281,6 +284,7 @@ export function sanitizeProject(raw: unknown): Project {
   }
   const sceneIds = new Set(project.scenes.map((s) => s.id));
   if (Array.isArray(r.sequences)) {
+    // (шоу санируются ниже, когда известны id сцен и секвенсоров)
     for (const q of r.sequences as Sequence[]) {
       if (!q || typeof q.id !== 'string') continue;
       project.sequences.push({
@@ -297,5 +301,11 @@ export function sanitizeProject(raw: unknown): Project {
       });
     }
   }
+  project.shows = sanitizeShows(
+    r.shows,
+    sceneIds,
+    new Set(project.sequences.map((q) => q.id)),
+    deviceIds,
+  );
   return project;
 }
