@@ -3,7 +3,8 @@
  * процессе, подключается клиентом и проверяет: загрузку проекта, статическую
  * сцену, HTP-слияние с ручной консолью, секвенсор с фейдом и переходами шагов,
  * общий стоп, шоу-таймлайн (блоки, огибающие, опережение дорожек, транспорт),
- * монтажную арифметику вырезок, хранилище аудио и сохранение проекта на диск.
+ * монтажную арифметику вырезок, мониторинг сети Art-Net/RDM, насос на Modbus TCP
+ * (мок-ПЧ), хранилище аудио и сохранение проекта на диск.
  *
  * Запуск: npm run smoke (или npm -w @fountain-studio/engine run smoke)
  */
@@ -14,24 +15,38 @@ import WebSocket from 'ws';
 import {
   editedToSourceMs,
   emptyProject,
+  energyEnvelope,
+  estimateTempo,
   insunitsToMeters,
+  invertScene,
   keptSegments,
+  layoutActors,
   layoutFromDxf,
+  loudnessEnvelopePoints,
   mergeCuts,
+  mirrorScene,
   parseDxf,
+  profileMap,
+  radialWaveScene,
+  radialWaveSequenceScenes,
   ringPositions,
   sanitizeProject,
   shiftDeviceAddresses,
+  silenceRanges,
   sourceToEditedMs,
   swapDeviceAddresses,
+  tempoCategory,
+  type ModbusState,
   type NetworkState,
   type PlaybackState,
   type Project,
+  type Scene,
   type ClientMessage,
   type ServerMessage,
 } from '@fountain-studio/shared';
 import { AudioStore } from '../audio';
 import dgram from 'node:dgram';
+import { createServer as createTcpServer } from 'node:net';
 import { Engine } from '../engine';
 import { NetworkMonitor } from '../netmonitor';
 import { ProjectStore } from '../project';
@@ -80,6 +95,58 @@ mockNode.on('message', (msg, rinfo) => {
 });
 mockNode.bind(MOCK_NODE_PORT, '127.0.0.1');
 
+// Мок-ПЧ: минимальный сервер Modbus TCP (MBAP), держит холдинг-регистры уставки
+// частоты/команды/аварии (карта Elhart EMD-PUMP) и лог записей — для проверки
+// PumpModbusManager без реального привода.
+const MOCK_VFD_PORT = 15020;
+const vfdRegs = new Map<number, number>([
+  [8193, 0], // FREQ_SET
+  [8192, 0], // CMD
+  [10, 0], // F0.10 — код последней аварии
+]);
+const vfdWrites: { register: number; value: number; at: number }[] = [];
+const vfdServer = createTcpServer((socket) => {
+  let buf = Buffer.alloc(0);
+  socket.on('data', (chunk: Buffer) => {
+    buf = Buffer.concat([buf, chunk]);
+    for (;;) {
+      if (buf.length < 8) return;
+      const length = buf.readUInt16BE(4);
+      const total = 6 + length;
+      if (buf.length < total) return;
+      const frame = buf.subarray(0, total);
+      buf = buf.subarray(total);
+      const txId = frame.readUInt16BE(0);
+      const unitId = frame.readUInt8(6);
+      const pdu = frame.subarray(7);
+      const fc = pdu.readUInt8(0);
+      let respPdu: Buffer;
+      if (fc === 0x06) {
+        const addr = pdu.readUInt16BE(1);
+        const value = pdu.readUInt16BE(3);
+        vfdRegs.set(addr, value);
+        vfdWrites.push({ register: addr, value, at: Date.now() });
+        respPdu = pdu; // ответ на запись одного регистра — эхо запроса
+      } else if (fc === 0x03) {
+        const addr = pdu.readUInt16BE(1);
+        respPdu = Buffer.alloc(4);
+        respPdu.writeUInt8(0x03, 0);
+        respPdu.writeUInt8(2, 1);
+        respPdu.writeUInt16BE(vfdRegs.get(addr) ?? 0, 2);
+      } else {
+        respPdu = Buffer.from([fc | 0x80, 0x01]); // неподдерживаемая функция
+      }
+      const header = Buffer.alloc(7);
+      header.writeUInt16BE(txId, 0);
+      header.writeUInt16BE(0, 2);
+      header.writeUInt16BE(respPdu.length + 1, 4);
+      header.writeUInt8(unitId, 6);
+      socket.write(Buffer.concat([header, respPdu]));
+    }
+  });
+});
+vfdServer.listen(MOCK_VFD_PORT, '127.0.0.1');
+
 const engine = new Engine({
   server: { port: PORT },
   timing: { tickMs: 50, spinMs: 10, uiFrameMs: 40 },
@@ -107,6 +174,22 @@ const demo: Project = {
     { id: 'pump1', name: 'Насос 1', profileId: 'pump', universe: 1, address: 1 },
     { id: 'valve1', name: 'Клапан 1', profileId: 'valve', universe: 1, address: 2 },
     { id: 'rgb1', name: 'RGB 1', profileId: 'rgb', universe: 1, address: 10 },
+    {
+      id: 'pump2',
+      name: 'Насос 2 (Modbus)',
+      profileId: 'pump',
+      universe: 1,
+      address: 20,
+      modbus: {
+        connection: { kind: 'tcp', host: '127.0.0.1', port: MOCK_VFD_PORT },
+        unitId: 1,
+        freqRegister: 8193,
+        freqRegScale: 100,
+        freqScaleHz: 50,
+        cmdRegister: 8192,
+        faultRegister: 10,
+      },
+    },
   ],
   scenes: [
     { id: 'sceneA', name: 'Картина A', values: { pump1: [200], valve1: [255], rgb1: [255, 0, 40] } },
@@ -226,6 +309,7 @@ let playback: PlaybackState = { activeSceneId: null, running: [], show: null, pl
 let projectEcho: Project | null = null;
 let audioMsg: { name: string; dataBase64: string } | null = null;
 let networkState: NetworkState | null = null;
+let modbusState: ModbusState | null = null;
 let sawStep1 = false;
 let sawFadeMidpoint = false;
 
@@ -257,6 +341,8 @@ ws.on('message', (raw) => {
     audioMsg = { name: msg.name, dataBase64: msg.dataBase64 };
   } else if (msg.type === 'network') {
     networkState = msg.state;
+  } else if (msg.type === 'modbus') {
+    modbusState = msg.state;
   }
 });
 
@@ -282,7 +368,7 @@ async function main(): Promise<void> {
 
   console.log('— Проект —');
   send({ type: 'updateProject', project: demo });
-  await waitFor('эхо проекта', () => projectEcho !== null && projectEcho.devices.length === 3);
+  await waitFor('эхо проекта', () => projectEcho !== null && projectEcho.devices.length === 4);
   check(projectEcho!.name === 'Смоук-тест', 'проект принят и разослан обратно');
 
   console.log('— Статическая сцена —');
@@ -541,6 +627,105 @@ async function main(): Promise<void> {
     'layoutFromDxf: мм → метры, слои разложены по ролям, чаши из круга и контура',
   );
 
+  console.log('— Генераторы сцен от геометрии (§17 п.2–3) —');
+  const genActors = ringPositions(4, 2).map((p, i) => ({ deviceId: `gp${i + 1}`, x: p.x, y: p.y }));
+  const genLayout = {
+    bowls: [],
+    lights: [],
+    nozzles: genActors.map((a, i) => ({
+      id: `noz${i}`,
+      name: `Форсунка ${i}`,
+      kind: 'straight' as const,
+      x: a.x,
+      y: a.y,
+      z: 0,
+      tiltDeg: 0,
+      headingDeg: 0,
+      maxHeightM: 3,
+      riseMs: 500,
+      fallMs: 500,
+      pumpDeviceId: a.deviceId,
+      valveDeviceId: null,
+      lightDeviceId: null,
+    })),
+  };
+  check(
+    JSON.stringify(layoutActors(genLayout, 'pump').map((a) => a.deviceId)) ===
+      JSON.stringify(genActors.map((a) => a.deviceId)),
+    'layoutActors: насосы собраны с форсунок схемы в порядке форсунок',
+  );
+
+  const genProfiles = profileMap(emptyProject());
+  const genDevices: Project['devices'] = genActors.map((a) => ({
+    id: a.deviceId,
+    name: a.deviceId,
+    profileId: 'pump',
+    universe: 1,
+    address: 1,
+  }));
+  const wave = radialWaveScene(genActors, genDevices, genProfiles, { cycles: 1 });
+  check(
+    wave.values['gp2']?.[0] === 255 && wave.values['gp4']?.[0] === 0,
+    'radialWaveScene: волна по кольцу — максимум на 90°, минимум на 270° (детерминированно от геометрии)',
+  );
+  const waveSeq = radialWaveSequenceScenes(genActors, genDevices, genProfiles, 4, {});
+  check(
+    waveSeq.length === 4 && waveSeq[0]!.values['gp2']![0] !== waveSeq[1]!.values['gp2']![0],
+    'radialWaveSequenceScenes: 4 сцены с фазовым сдвигом — секвенсор из них даст бегущую волну',
+  );
+
+  const invScene: Scene = { id: 'sX', name: 'Тест', values: { gp1: [200], gp2: [0] } };
+  const inv = invertScene(invScene);
+  check(inv.values['gp1']?.[0] === 55 && inv.values['gp2']?.[0] === 255, 'invertScene: 255-v по каждому каналу');
+
+  const mirScene: Scene = { id: 'sY', name: 'Тест', values: { gp1: [10], gp2: [20], gp3: [30], gp4: [40] } };
+  const mirrored = mirrorScene(mirScene, genActors, 'x');
+  check(
+    mirrored.values['gp1']?.[0] === 30 &&
+      mirrored.values['gp3']?.[0] === 10 &&
+      mirrored.values['gp2']?.[0] === 20 &&
+      mirrored.values['gp4']?.[0] === 40,
+    'mirrorScene: лево-право по оси X — gp1↔gp3 поменялись, gp2/gp4 на оси остались собой',
+  );
+
+  console.log('— Аудиоанализ трека (§17 п.5) —');
+  // Синтетический клик-трек: короткие импульсы ровно 4 раза в секунду = 240 BPM,
+  // затем 1 с тишины. Детерминированная проверка темпа, огибающей и тишины.
+  const sr = 22050;
+  const clickBpm = 120;
+  const beatSamples = Math.round((sr * 60) / clickBpm);
+  const totalSamples = sr * 5; // 4 с клики + 1 с тишина
+  const sig = new Float32Array(totalSamples);
+  for (let b = 0; b * beatSamples < sr * 4; b++) {
+    const at = b * beatSamples;
+    for (let i = 0; i < 200 && at + i < sig.length; i++) {
+      // Затухающий импульс.
+      sig[at + i] = Math.sin((i / sr) * 2 * Math.PI * 1000) * Math.exp(-i / 40);
+    }
+  }
+  const tempo = estimateTempo(sig, sr, { minBpm: 70, maxBpm: 180 });
+  // Автокорреляция может поймать кратный/дольный период — принимаем 120 или его октавы.
+  check(
+    [60, 120, 240].includes(tempo.bpm),
+    `estimateTempo: клик-трек 120 BPM определён как ${tempo.bpm} BPM (допустимы октавы 60/120/240)`,
+  );
+  check(tempo.beatsMs.length >= 3, `estimateTempo: сетка долей построена (${tempo.beatsMs.length} долей)`);
+  check(tempoCategory(120) === 'medium' && tempoCategory(150) === 'fast', 'tempoCategory: 120→medium, 150→fast');
+
+  const env = energyEnvelope(sig, sr, 50);
+  check(env.rms.length === Math.ceil(totalSamples / Math.round((sr * 50) / 1000)), 'energyEnvelope: число окон по hopMs');
+  check(Math.max(...env.rms) === 1, 'energyEnvelope: пик нормирован к 1');
+  const points = loudnessEnvelopePoints(env, { min: 0, max: 255 });
+  check(
+    points.length === env.rms.length && points.every((p) => p.value >= 0 && p.value <= 255),
+    'loudnessEnvelopePoints: точки 0–255 по всей длине',
+  );
+  const silence = silenceRanges(env, { threshold: 0.05, minSilenceMs: 400 });
+  check(
+    silence.some((r) => r.startMs <= 4500 && r.endMs >= 4900),
+    'silenceRanges: хвостовая тишина (после последнего клика до конца) найдена',
+  );
+
   console.log('— Мониторинг сети (мок-нода Art-Net/RDM) —');
   await waitFor(
     'обнаружение ноды',
@@ -573,6 +758,40 @@ async function main(): Promise<void> {
     'умолкшая нода помечена потерянной, событие в журнале',
   );
 
+  console.log('— Насос на Modbus TCP (мок-ПЧ, карта регистров Elhart EMD-PUMP) —');
+  const pumpStatus = (): { connected: boolean; lastFreqHz: number; faultCode: number | null } | undefined =>
+    modbusState?.pumps.find((p) => p.deviceId === 'pump2');
+  send({ type: 'setChannel', universe: 1, channel: 20, value: 200 });
+  await waitFor(
+    'уставка и пуск записаны в ПЧ',
+    () => vfdRegs.get(8193) === 3922 && vfdRegs.get(8192) === 2,
+    3000,
+  );
+  check(true, 'канал 200/255 → уставка 39.22 Гц (регистр 8193=3922, сотые Гц), команда ПУСК (8192=2)');
+  await waitFor('статус насоса на связи', () => pumpStatus()?.connected === true, 2000);
+  check(
+    Math.abs((pumpStatus()?.lastFreqHz ?? -1) - 39.22) < 0.01,
+    'ModbusState: lastFreqHz насоса 2 ≈ 39.22 Гц',
+  );
+  const writesBeforeKeepalive = vfdWrites.length;
+  await sleep(1300); // keep-alive движка — раз в секунду даже без изменений (вотчдог связи ПЧ)
+  check(
+    vfdWrites.length > writesBeforeKeepalive,
+    'keep-alive: уставка переслана повторно без изменений значения (вотчдог связи ПЧ)',
+  );
+
+  send({ type: 'setChannel', universe: 1, channel: 20, value: 0 });
+  await waitFor(
+    'команда СТОП и уставка 0 записаны в ПЧ',
+    () => vfdRegs.get(8193) === 0 && vfdRegs.get(8192) === 1,
+    3000,
+  );
+  check(true, 'канал 0 → уставка 0, команда СТОП (8192=1)');
+
+  vfdRegs.set(10, 7); // мок-ПЧ сообщает аварию (код 7 по карте Elhart — «пониженное напряжение шины DC»)
+  await waitFor('авария обнаружена', () => pumpStatus()?.faultCode === 7, 4000);
+  check(true, 'опрос аварии: код 7 из регистра F0.10 дошёл до UI-состояния насоса');
+
   console.log('— Хранилище аудио —');
   const audioData = Buffer.from('НЕ-НАСТОЯЩИЙ-MP3: проверка хранилища').toString('base64');
   send({ type: 'uploadAudio', name: 'тест.mp3', dataBase64: audioData });
@@ -584,7 +803,7 @@ async function main(): Promise<void> {
   await sleep(700); // дебаунс записи 500 мс
   const saved = JSON.parse(fs.readFileSync(projectFile, 'utf8')) as Project;
   check(
-    saved.devices.length === 3 &&
+    saved.devices.length === 4 &&
       saved.sequences.length === 1 &&
       saved.shows.length === 3 &&
       saved.playlists.length === 1 &&
@@ -605,6 +824,7 @@ main()
     wss.close();
     net.stop();
     mockNode.close();
+    vfdServer.close();
     engine.stop();
     fs.rmSync(tmpDir, { recursive: true, force: true });
     process.exit(failures.length === 0 ? 0 : 1);

@@ -5,7 +5,7 @@ import type { Engine } from './engine';
 import type { NetworkMonitor } from './netmonitor';
 import type { ProjectStore } from './project';
 
-export const ENGINE_VERSION = '0.5.0';
+export const ENGINE_VERSION = '0.6.0';
 
 /** WebSocket API движка: команды от редактора, поток статистики, кадров и состояния. */
 export function startServer(
@@ -29,6 +29,8 @@ export function startServer(
     if (net) broadcast({ type: 'network', state: net.state() });
   };
   if (net) net.onChange = broadcastNetwork;
+  const broadcastModbus = (): void => broadcast({ type: 'modbus', state: engine.modbusState() });
+  engine.pumps.onChange = broadcastModbus;
 
   wss.on('connection', (ws) => {
     const hello: ServerMessage = {
@@ -41,6 +43,7 @@ export function startServer(
     ws.send(JSON.stringify({ type: 'project', project: store.project } satisfies ServerMessage));
     ws.send(JSON.stringify({ type: 'playback', state: engine.playbackState() } satisfies ServerMessage));
     if (net) ws.send(JSON.stringify({ type: 'network', state: net.state() } satisfies ServerMessage));
+    ws.send(JSON.stringify({ type: 'modbus', state: engine.modbusState() } satisfies ServerMessage));
 
     ws.on('message', (raw) => {
       let msg: ClientMessage;
@@ -149,6 +152,10 @@ export function startServer(
   // Сеть: раз в 3 с (обновление возрастов), плюс мгновенно из onChange.
   setInterval(() => {
     if (wss.clients.size > 0) broadcastNetwork();
+  }, 3000);
+  // Насосы Modbus: раз в 3 с (обновление возрастов), плюс мгновенно из onChange.
+  setInterval(() => {
+    if (wss.clients.size > 0) broadcastModbus();
   }, 3000);
   setInterval(() => {
     if (wss.clients.size === 0) return;

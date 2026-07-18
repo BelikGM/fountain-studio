@@ -4,6 +4,7 @@ import {
   profileMap,
   type ChannelTrim,
   type EngineStats,
+  type ModbusState,
   type PlaybackState,
   type Project,
   type TestPatternMode,
@@ -15,6 +16,7 @@ import { ArtNetOutput } from './drivers/artnet';
 import { SacnOutput } from './drivers/sacn';
 import type { UniverseOutput } from './drivers/output';
 import { Playback } from './playback';
+import { PumpModbusManager } from './pumpmodbus';
 
 interface UniverseState {
   id: number;
@@ -34,6 +36,8 @@ interface UniverseState {
 export class Engine {
   readonly universes: UniverseState[] = [];
   readonly playback: Playback;
+  /** Насосы с прямым управлением по Modbus (§12 п.9) — читают то же u.out, что уходит в DMX. */
+  readonly pumps = new PumpModbusManager();
   private readonly ticker: Ticker;
   private pattern: TestPatternMode = 'off';
   private framesSent = 0;
@@ -41,6 +45,8 @@ export class Engine {
   private nowMs = 0;
   /** Калибровка каналов из патча: universeId → (адрес-1 → min/max). */
   private trims = new Map<number, Map<number, ChannelTrim>>();
+  /** Устройства с modbus-конфигом: индекс вселенной в this.universes + адрес-1. */
+  private modbusPumps: { universeIndex: number; addressIdx: number; deviceId: string }[] = [];
 
   constructor(readonly config: EngineConfig) {
     for (const u of config.universes) {
@@ -69,6 +75,7 @@ export class Engine {
   stop(): void {
     this.ticker.stop();
     for (const u of this.universes) for (const o of u.outputs) o.close();
+    this.pumps.stop();
   }
 
   private tick(n: number): void {
@@ -100,6 +107,12 @@ export class Engine {
         o.send(u.out);
         this.framesSent++;
       }
+    }
+    // Насосы на Modbus: тот же посчитанный кадр (включая тест-паттерны — пусконаладка),
+    // что уходит в DMX-выходы, идёт и на прямое управление ПЧ.
+    for (const p of this.modbusPumps) {
+      const u = this.universes[p.universeIndex];
+      if (u) this.pumps.update(p.deviceId, u.out[p.addressIdx]!);
     }
   }
 
@@ -145,6 +158,18 @@ export class Engine {
         if (idx >= 0 && idx < DMX_UNIVERSE_SIZE) map.set(idx, t);
       }
     }
+    this.modbusPumps = [];
+    for (const d of project.devices) {
+      if (!d.modbus) continue;
+      const universeIndex = this.universes.findIndex((u) => u.id === d.universe);
+      if (universeIndex < 0) continue;
+      this.modbusPumps.push({ universeIndex, addressIdx: d.address - 1, deviceId: d.id });
+    }
+    this.pumps.setDevices(project.devices);
+  }
+
+  modbusState(): ModbusState {
+    return this.pumps.state();
   }
 
   setScene(sceneId: string | null): void {
