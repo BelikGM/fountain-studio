@@ -1,5 +1,6 @@
 import { DMX_UNIVERSE_SIZE } from './dmx';
 import { sanitizeKeys, type KeyBinding } from './keys';
+import { emptyLayout, sanitizeLayout, type FountainLayout } from './layout';
 import { sanitizePlaylists, sanitizeSchedule, type Playlist, type ScheduleEntry } from './playlist';
 import { sanitizeShows, type Show } from './show';
 
@@ -124,6 +125,8 @@ export interface Project {
   playlists: Playlist[];
   schedule: ScheduleEntry[];
   keys: KeyBinding[];
+  /** 3D-схема фонтана (вкладка «3D»). */
+  layout: FountainLayout;
 }
 
 /** Встроенные профили — типовые устройства фонтана. */
@@ -187,6 +190,7 @@ export function emptyProject(name = 'Новый проект'): Project {
     playlists: [],
     schedule: [],
     keys: [],
+    layout: emptyLayout(),
   };
 }
 
@@ -297,6 +301,7 @@ export function sanitizeProject(raw: unknown): Project {
     playlists: [],
     schedule: [],
     keys: [],
+    layout: emptyLayout(),
   };
   if (Array.isArray(r.profiles)) {
     for (const p of r.profiles as DeviceProfile[]) {
@@ -390,5 +395,6 @@ export function sanitizeProject(raw: unknown): Project {
     shows: new Set(project.shows.map((s) => s.id)),
     playlists: new Set(project.playlists.map((p) => p.id)),
   });
+  project.layout = sanitizeLayout(r.layout, deviceIds);
   return project;
 }

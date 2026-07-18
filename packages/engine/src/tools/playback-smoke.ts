@@ -14,8 +14,13 @@ import WebSocket from 'ws';
 import {
   editedToSourceMs,
   emptyProject,
+  insunitsToMeters,
   keptSegments,
+  layoutFromDxf,
   mergeCuts,
+  parseDxf,
+  ringPositions,
+  sanitizeProject,
   shiftDeviceAddresses,
   sourceToEditedMs,
   swapDeviceAddresses,
@@ -415,6 +420,72 @@ async function main(): Promise<void> {
       shifted.devices.find((d) => d.id === 'valve1')!.address === 7 &&
       shifted.devices.find((d) => d.id === 'rgb1')!.address === 10,
     'shiftDeviceAddresses: выбранные +5, остальные на месте',
+  );
+
+  console.log('— 3D-схема и DXF —');
+  const layoutRaw = {
+    bowls: [{ id: 'bowl1', name: 'Чаша', shape: 'circle', x: 0, y: 0, radius: 5, width: 10, length: 10, height: 0.3 }],
+    nozzles: [
+      { id: 'noz1', name: 'Ф1', kind: 'straight', x: 1, y: 2, z: 0, tiltDeg: 0, headingDeg: 0, maxHeightM: 5, riseMs: 800, fallMs: 1100, pumpDeviceId: 'pump1', valveDeviceId: 'нет-такого', lightDeviceId: 'rgb1' },
+      { id: 'noz2', name: 'Ф2', kind: 'не-тип', x: 9999, y: 0, z: 0, tiltDeg: 200 },
+    ],
+    lights: [{ id: 'lt1', name: 'П1', x: 0, y: 1, z: -0.2, deviceId: 'rgb1' }],
+  };
+  const sanitized = sanitizeProject({ ...demo, layout: layoutRaw });
+  const noz1 = sanitized.layout.nozzles.find((n) => n.id === 'noz1')!;
+  const noz2 = sanitized.layout.nozzles.find((n) => n.id === 'noz2')!;
+  check(
+    sanitized.layout.bowls.length === 1 &&
+      noz1.pumpDeviceId === 'pump1' &&
+      noz1.valveDeviceId === null &&
+      noz1.lightDeviceId === 'rgb1' &&
+      noz2.kind === 'straight' &&
+      noz2.x === 1000 &&
+      noz2.tiltDeg === 85 &&
+      sanitized.layout.lights[0]!.deviceId === 'rgb1',
+    'sanitizeLayout: битые ссылки и значения приведены, элементы сохранены',
+  );
+  const ring = ringPositions(4, 2);
+  check(
+    ring.length === 4 &&
+      Math.abs(ring[0]!.x - 2) < 1e-9 &&
+      Math.abs(ring[1]!.y - 2) < 1e-9 &&
+      Math.abs(ring[2]!.x + 2) < 1e-9,
+    'ringPositions: 4 точки по кольцу радиуса 2',
+  );
+  const dxfText = [
+    '0', 'SECTION', '2', 'HEADER', '9', '$INSUNITS', '70', '4', '0', 'ENDSEC',
+    '0', 'SECTION', '2', 'ENTITIES',
+    '0', 'POINT', '8', 'FORSUNKI', '10', '1000', '20', '2000',
+    '0', 'CIRCLE', '8', 'CHASHA', '10', '0', '20', '0', '40', '5000',
+    '0', 'INSERT', '8', 'SVET', '2', 'LAMP', '10', '3000', '20', '0',
+    '0', 'LWPOLYLINE', '8', 'BORT', '70', '1', '90', '4',
+    '10', '-1000', '20', '-1000', '10', '1000', '20', '-1000', '10', '1000', '20', '1000', '10', '-1000', '20', '1000',
+    '0', 'ENDSEC', '0', 'EOF',
+  ].join('\n');
+  const dxf = parseDxf(dxfText);
+  check(
+    dxf.insunits === 4 &&
+      dxf.points.length === 3 &&
+      dxf.polylines.length === 1 &&
+      dxf.polylines[0]!.closed &&
+      dxf.layers.join(',') === 'BORT,CHASHA,FORSUNKI,SVET',
+    'parseDxf: точки, окружность, вставка, полилиния и $INSUNITS разобраны',
+  );
+  const imported = layoutFromDxf(dxf, {
+    unitScale: insunitsToMeters(dxf.insunits),
+    layerRoles: { FORSUNKI: 'nozzle', SVET: 'light', CHASHA: 'bowl', BORT: 'bowl' },
+    center: false,
+  });
+  check(
+    imported.nozzles.length === 1 &&
+      Math.abs(imported.nozzles[0]!.x - 1) < 1e-9 &&
+      Math.abs(imported.nozzles[0]!.y - 2) < 1e-9 &&
+      imported.lights.length === 1 &&
+      imported.bowls.length === 2 &&
+      imported.bowls.find((b) => b.shape === 'circle')!.radius === 5 &&
+      imported.bowls.find((b) => b.shape === 'rect')!.width === 2,
+    'layoutFromDxf: мм → метры, слои разложены по ролям, чаши из круга и контура',
   );
 
   console.log('— Хранилище аудио —');
