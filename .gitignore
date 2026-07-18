@@ -10,6 +10,7 @@ Thumbs.db
 # Данные проекта фонтана (создаются движком в рабочей папке)
 fountain.project.json
 fountain.project.json.broken
+audio/
 
 # Артефакты сборки настольного приложения (packages/app)
 packages/app/engine.cjs
