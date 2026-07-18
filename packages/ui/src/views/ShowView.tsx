@@ -2,9 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   cutsTotalMs,
   editedToSourceMs,
+  energyEnvelope,
+  estimateTempo,
   keptSegments,
+  loudnessEnvelopePoints,
   mergeCuts,
   profileMap,
+  sourceToEditedMs,
   uid,
   type BlocksTrack,
   type CutRange,
@@ -468,6 +472,69 @@ function ShowEditor({
     onChange({ ...show, tracks: [...show.tracks, track] });
   };
 
+  // ── Автопостановка от аудиоанализа (§17 п.5) ───────────────────────────────
+  const [autoStatus, setAutoStatus] = useState<string | null>(null);
+
+  const autoStage = (): void => {
+    if (!buffer || !project) return;
+    // Downmix в моно.
+    const ch0 = buffer.getChannelData(0);
+    const mono = new Float32Array(ch0.length);
+    const nCh = buffer.numberOfChannels;
+    for (let c = 0; c < nCh; c++) {
+      const d = buffer.getChannelData(c);
+      for (let i = 0; i < d.length; i++) mono[i]! += d[i]! / nCh;
+    }
+    const sr = buffer.sampleRate;
+
+    const tempo = estimateTempo(mono, sr, {});
+    const env = energyEnvelope(mono, sr, 80);
+    const srcPoints = loudnessEnvelopePoints(env, { min: 0, max: 255, gamma: 1.4 });
+
+    // Источник → монтаж: точки внутри вырезок отбрасываем, остальные переводим
+    // в смонтированное время; затем прореживаем (шаг > 250 мс или скачок > 6).
+    const cuts = show.cuts;
+    const inCut = (srcMs: number): boolean => cuts.some((c) => srcMs >= c.startMs && srcMs < c.endMs);
+    const edited: { tMs: number; value: number }[] = [];
+    let lastT = -Infinity;
+    let lastV = -Infinity;
+    for (const p of srcPoints) {
+      if (inCut(p.tMs)) continue;
+      const t = Math.round(sourceToEditedMs(cuts, p.tMs));
+      if (t > show.durationMs) break;
+      if (t - lastT < 250 && Math.abs(p.value - lastV) < 6) continue;
+      edited.push({ tMs: t, value: p.value });
+      lastT = t;
+      lastV = p.value;
+    }
+
+    // Целевые устройства: все с каналом intensity (насосы/диммеры). Нет таких — огибающая не создаётся.
+    const intensityDevices = project.devices.filter((d) =>
+      profiles.get(d.profileId)?.channels.some((c) => c.role === 'intensity'),
+    );
+    if (intensityDevices.length === 0) {
+      setAutoStatus('Нет устройств с каналом «яркость/мощность» — добавьте насос или диммер в патч.');
+      return;
+    }
+    // Одна огибающая громкости на первое такое устройство; остальные пользователь
+    // размножит копированием дорожки. Опережение воды по инерции — offsetMs правит вручную.
+    const target = intensityDevices[0]!;
+    const channel = profiles.get(target.profileId)!.channels.findIndex((c) => c.role === 'intensity');
+    const track: EnvelopeTrack = {
+      id: uid(),
+      name: `Громкость → ${target.name}`,
+      kind: 'envelope',
+      offsetMs: 0,
+      muted: false,
+      deviceId: target.id,
+      channel: Math.max(0, channel),
+      points: edited,
+    };
+    onChange({ ...show, tracks: [...show.tracks, track] });
+    const bpmText = tempo.bpm > 0 ? `темп ≈ ${tempo.bpm} BPM` : 'темп не определён';
+    setAutoStatus(`Черновик: огибающая громкости на «${target.name}» (${edited.length} точек), ${bpmText}. Правьте на таймлайне.`);
+  };
+
   const updateTrack = (next: ShowTrack): void => {
     onChange({ ...show, tracks: show.tracks.map((t) => (t.id === next.id ? next : t)) });
   };
@@ -637,7 +704,16 @@ function ShowEditor({
         <button className="btn" onClick={addEnvelopeTrack} disabled={devices.length === 0}>
           + Огибающая
         </button>
+        <button
+          className="btn"
+          onClick={autoStage}
+          disabled={!buffer}
+          title="Аудиоанализ трека: черновая огибающая громкости на насос/диммер + оценка темпа (§17)"
+        >
+          ⚡ Автопостановка
+        </button>
       </div>
+      {autoStatus && <div className="dim" style={{ padding: '4px 12px' }}>{autoStatus}</div>}
 
       <div className="tl-scroll">
         <div className="tl-inner" style={{ width: HEAD_W + laneW }}>

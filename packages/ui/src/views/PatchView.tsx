@@ -13,7 +13,10 @@ import {
   type ChannelTrim,
   type DeviceKind,
   type DeviceProfile,
+  type ModbusConnection,
+  type ModbusPumpConfig,
   type PatchedDevice,
+  type PumpModbusStatus,
 } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
 
@@ -198,6 +201,7 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [shiftBy, setShiftBy] = useState(1);
   const [trimOpenId, setTrimOpenId] = useState<string | null>(null);
+  const [modbusOpenId, setModbusOpenId] = useState<string | null>(null);
 
   const patchDevice = (id: string, patch: Partial<PatchedDevice>): void => {
     updateProject({
@@ -298,6 +302,7 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                 const bad = issues.collisions.has(d.id) || issues.outOfRange.has(d.id);
                 const profile = profiles.get(d.profileId);
                 const trimOpen = trimOpenId === d.id;
+                const modbusOpen = modbusOpenId === d.id;
                 return [
                   <tr key={d.id} className={bad ? 'row-error' : ''}>
                     <td>
@@ -346,6 +351,15 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                       >
                         ⚙
                       </button>{' '}
+                      {profile?.kind === 'pump' && (
+                        <button
+                          className={d.modbus ? 'btn btn-small active' : 'btn btn-small'}
+                          title="Прямое управление через Modbus (ПЧ), в обход DMX→аналог"
+                          onClick={() => setModbusOpenId(modbusOpen ? null : d.id)}
+                        >
+                          ПЧ
+                        </button>
+                      )}{' '}
                       <button className="btn btn-small" onClick={() => removeDevice(d.id)}>
                         ✕
                       </button>
@@ -358,6 +372,17 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                           device={d}
                           profile={profile}
                           onChange={(trim) => patchDevice(d.id, { trim })}
+                        />
+                      </td>
+                    </tr>
+                  ) : null,
+                  modbusOpen ? (
+                    <tr key={`${d.id}-modbus`}>
+                      <td colSpan={7}>
+                        <ModbusEditor
+                          device={d}
+                          status={engine.modbus?.pumps.find((p) => p.deviceId === d.id) ?? null}
+                          onChange={(modbus) => patchDevice(d.id, { modbus })}
                         />
                       </td>
                     </tr>
@@ -423,6 +448,199 @@ function TrimEditor({
         <button className="btn btn-small" onClick={() => onChange(undefined)}>
           Сбросить (0–255)
         </button>
+      )}
+    </div>
+  );
+}
+
+/** Дефолты — карта регистров Elhart EMD-PUMP (github.com/BelikGM/Modbus); для другого ПЧ сверить с его картой. */
+function defaultModbusConfig(): ModbusPumpConfig {
+  return {
+    connection: { kind: 'tcp', host: '192.168.0.', port: 502 },
+    unitId: 1,
+    freqRegister: 8193,
+    freqRegScale: 100,
+    freqScaleHz: 50,
+    cmdRegister: 8192,
+    faultRegister: 10,
+  };
+}
+
+/**
+ * Прямое управление насосом через Modbus (ПЧ), в обход DMX→аналог (§12 п.9) —
+ * простое включение/уставка частоты от сцен/шоу, не конфигуратор параметров ПЧ
+ * (для тонкой настройки самого привода — отдельный проект github.com/BelikGM/Modbus).
+ */
+function ModbusEditor({
+  device,
+  status,
+  onChange,
+}: {
+  device: PatchedDevice;
+  status: PumpModbusStatus | null;
+  onChange: (modbus: ModbusPumpConfig | undefined) => void;
+}) {
+  const enabled = device.modbus !== undefined;
+  const config = device.modbus ?? defaultModbusConfig();
+
+  const set = (patch: Partial<ModbusPumpConfig>): void => onChange({ ...config, ...patch });
+  const setTcp = (patch: Partial<Extract<ModbusConnection, { kind: 'tcp' }>>): void => {
+    if (config.connection.kind !== 'tcp') return;
+    onChange({ ...config, connection: { ...config.connection, ...patch } });
+  };
+  const setRtu = (patch: Partial<Extract<ModbusConnection, { kind: 'rtu' }>>): void => {
+    if (config.connection.kind !== 'rtu') return;
+    onChange({ ...config, connection: { ...config.connection, ...patch } });
+  };
+
+  return (
+    <div className="trim-editor">
+      <label className="field">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => onChange(e.target.checked ? config : undefined)}
+        />{' '}
+        Управлять «{device.name}» напрямую по Modbus (ПЧ), в обход DMX→аналог
+      </label>
+      {enabled && (
+        <>
+          {status && (
+            <div className={status.faultCode ? 'error-text' : 'dim'}>
+              {status.connected ? '✔ на связи' : '✖ нет связи'} · уставка {status.lastFreqHz.toFixed(1)} Гц
+              {status.faultCode ? ` · АВАРИЯ, код ${status.faultCode}` : ''}
+              {status.lastError ? ` · ${status.lastError}` : ''}
+            </div>
+          )}
+          <div className="form-row">
+            <label className="field">
+              Подключение:{' '}
+              <select
+                value={config.connection.kind}
+                onChange={(e) =>
+                  set({
+                    connection:
+                      e.target.value === 'tcp'
+                        ? { kind: 'tcp', host: '192.168.0.', port: 502 }
+                        : { kind: 'rtu', serialPort: 'COM5', baudRate: 9600 },
+                  })
+                }
+              >
+                <option value="tcp">TCP (шлюз RTU↔TCP по сети)</option>
+                <option value="rtu">RS-485 (USB-адаптер, COM-порт)</option>
+              </select>
+            </label>
+            <label className="field">
+              Адрес прибора (unitId):{' '}
+              <input
+                className="input input-num"
+                type="number"
+                min={0}
+                max={255}
+                value={config.unitId ?? 1}
+                onChange={(e) => set({ unitId: Number(e.target.value) })}
+              />
+            </label>
+          </div>
+          {config.connection.kind === 'tcp' ? (
+            <div className="form-row">
+              <label className="field">
+                IP шлюза:{' '}
+                <input className="input" value={config.connection.host} onChange={(e) => setTcp({ host: e.target.value })} />
+              </label>
+              <label className="field">
+                Порт:{' '}
+                <input
+                  className="input input-num"
+                  type="number"
+                  value={config.connection.port ?? 502}
+                  onChange={(e) => setTcp({ port: Number(e.target.value) })}
+                />
+              </label>
+            </div>
+          ) : (
+            <div className="form-row">
+              <label className="field">
+                COM-порт:{' '}
+                <input
+                  className="input"
+                  placeholder="COM5"
+                  value={config.connection.serialPort}
+                  onChange={(e) => setRtu({ serialPort: e.target.value })}
+                />
+              </label>
+              <label className="field">
+                Скорость:{' '}
+                <input
+                  className="input input-num"
+                  type="number"
+                  value={config.connection.baudRate ?? 9600}
+                  onChange={(e) => setRtu({ baudRate: Number(e.target.value) })}
+                />
+              </label>
+            </div>
+          )}
+          <div className="form-row">
+            <label className="field">
+              Регистр уставки частоты:{' '}
+              <input
+                className="input input-num"
+                type="number"
+                min={0}
+                value={config.freqRegister}
+                onChange={(e) => set({ freqRegister: Number(e.target.value) })}
+              />
+            </label>
+            <label className="field">
+              Частота при 255 (Гц):{' '}
+              <input
+                className="input input-num"
+                type="number"
+                min={0}
+                value={config.freqScaleHz}
+                onChange={(e) => set({ freqScaleHz: Number(e.target.value) })}
+              />
+            </label>
+            <label className="field">
+              Единиц регистра/Гц:{' '}
+              <input
+                className="input input-num"
+                type="number"
+                min={1}
+                value={config.freqRegScale ?? 100}
+                onChange={(e) => set({ freqRegScale: Number(e.target.value) })}
+              />
+            </label>
+          </div>
+          <div className="form-row">
+            <label className="field">
+              Регистр команд пуск/стоп:{' '}
+              <input
+                className="input input-num"
+                type="number"
+                min={0}
+                value={config.cmdRegister ?? ''}
+                placeholder="не задан — без команды"
+                onChange={(e) => set({ cmdRegister: e.target.value === '' ? undefined : Number(e.target.value) })}
+              />
+            </label>
+            <label className="field">
+              Регистр кода аварии:{' '}
+              <input
+                className="input input-num"
+                type="number"
+                min={0}
+                value={config.faultRegister ?? ''}
+                placeholder="не задан — без опроса"
+                onChange={(e) => set({ faultRegister: e.target.value === '' ? undefined : Number(e.target.value) })}
+              />
+            </label>
+          </div>
+          <span className="dim">
+            Дефолты полей — карта регистров Elhart EMD-PUMP: 8193 = уставка частоты (сотые Гц), 8192 = команда
+            (2=пуск, 1=стоп), 10 = код последней аварии. Для другой модели ПЧ сверьте с её картой регистров.
+          </span>
+        </>
       )}
     </div>
   );

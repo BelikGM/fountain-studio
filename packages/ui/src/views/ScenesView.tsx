@@ -1,12 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   DMX_UNIVERSE_SIZE,
+  invertScene,
+  layoutActors,
+  mirrorScene,
   profileMap,
+  radialWaveScene,
+  radialWaveSequenceScenes,
   uid,
+  type ActorRole,
   type DeviceProfile,
   type PatchedDevice,
   type Project,
   type Scene,
+  type Sequence,
 } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
 
@@ -17,6 +24,7 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
   const { project, playback, frames, send, updateProject } = engine;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mode, setMode] = useState<'devices' | 'addresses'>('devices');
+  const [showGenerator, setShowGenerator] = useState(false);
 
   const scenes = project?.scenes ?? [];
   const selected = scenes.find((s) => s.id === selectedId) ?? null;
@@ -130,6 +138,13 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
               <button className="btn" onClick={captureFromConsole} title="Записать в сцену текущие значения консоли">
                 Снять значения с консоли
               </button>
+              <button
+                className={showGenerator ? 'btn btn-small active' : 'btn btn-small'}
+                onClick={() => setShowGenerator(!showGenerator)}
+                title="Генерация сцен от геометрии схемы: инверсия, зеркало, волна по кольцу"
+              >
+                ⚡ Генератор
+              </button>
               <span className="spacer" />
               <button
                 className={mode === 'devices' ? 'btn btn-small active' : 'btn btn-small'}
@@ -144,6 +159,14 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
                 Адреса
               </button>
             </div>
+            {showGenerator && (
+              <GeneratorPanel
+                project={project}
+                selected={selected}
+                updateProject={updateProject}
+                setSelectedId={setSelectedId}
+              />
+            )}
             {project.devices.length === 0 ? (
               <div className="dim">В патче нет устройств — добавьте их на вкладке «Патч».</div>
             ) : mode === 'addresses' ? (
@@ -169,6 +192,185 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
         )}
       </section>
     </main>
+  );
+}
+
+const ROLE_LABEL: Record<ActorRole, string> = {
+  pump: 'Насосы (с форсунок схемы)',
+  valve: 'Клапаны (с форсунок схемы)',
+  light: 'Прожекторы (со схемы)',
+};
+
+/**
+ * Генератор сцен от геометрии схемы (§17 п.2–3): инверсия/зеркало существующей
+ * сцены и волна по кольцу форсунок/прожекторов из вкладки «3D». Волна работает
+ * только с одноканальными устройствами (насос/клапан/диммер) — для RGB генератор
+ * ничего не пишет, чтобы не гадать раскладку по цвету. Секвенсор «бегущая волна»
+ * — набор сцен с фазовым сдвигом плюс обычный секвенсор в режиме «по кругу»,
+ * ничего нового в движке для этого не требуется.
+ */
+function GeneratorPanel({
+  project,
+  selected,
+  updateProject,
+  setSelectedId,
+}: {
+  project: Project;
+  selected: Scene | null;
+  updateProject: (p: Project) => void;
+  setSelectedId: (id: string) => void;
+}) {
+  const [role, setRole] = useState<ActorRole>('pump');
+  const [cycles, setCycles] = useState(1);
+  const [min, setMin] = useState(0);
+  const [max, setMax] = useState(255);
+  const [steps, setSteps] = useState(12);
+  const [holdMs, setHoldMs] = useState(150);
+  const [fadeMs, setFadeMs] = useState(100);
+
+  const actors = useMemo(() => layoutActors(project.layout, role), [project.layout, role]);
+  const profiles = useMemo(() => profileMap(project), [project]);
+
+  const addScenes = (scenes: Scene[]): void => {
+    updateProject({ ...project, scenes: [...project.scenes, ...scenes] });
+    if (scenes[0]) setSelectedId(scenes[0].id);
+  };
+
+  const doInvert = (): void => {
+    if (selected) addScenes([invertScene(selected)]);
+  };
+  const doMirror = (axis: 'x' | 'y'): void => {
+    if (selected) addScenes([mirrorScene(selected, actors, axis)]);
+  };
+  const doWave = (): void => {
+    addScenes([radialWaveScene(actors, project.devices, profiles, { cycles, min, max })]);
+  };
+  const doWaveSequence = (): void => {
+    const scenes = radialWaveSequenceScenes(actors, project.devices, profiles, steps, { cycles, min, max });
+    const sequence: Sequence = {
+      id: uid(),
+      name: `Волна по кольцу (${steps} шаг.)`,
+      mode: 'loop',
+      steps: scenes.map((s) => ({ sceneId: s.id, holdMs, fadeMs })),
+    };
+    updateProject({
+      ...project,
+      scenes: [...project.scenes, ...scenes],
+      sequences: [...project.sequences, sequence],
+    });
+  };
+
+  return (
+    <div className="trim-editor">
+      <div className="form-row">
+        <label className="field">
+          Геометрия по роли:{' '}
+          <select value={role} onChange={(e) => setRole(e.target.value as ActorRole)}>
+            {(Object.keys(ROLE_LABEL) as ActorRole[]).map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABEL[r]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="dim">
+          {actors.length === 0
+            ? 'нет устройств с координатами — расставьте их на вкладке «3D»'
+            : `${actors.length} устройств с координатами в схеме`}
+        </span>
+      </div>
+
+      <div className="form-row">
+        <span className="dim">Из выбранной сцены («{selected?.name ?? '—'}»):</span>
+        <button className="btn" disabled={!selected} onClick={doInvert}>
+          Инвертировать → новая сцена
+        </button>
+        <button className="btn" disabled={!selected || actors.length === 0} onClick={() => doMirror('x')}>
+          Зеркало лево-право → новая сцена
+        </button>
+        <button className="btn" disabled={!selected || actors.length === 0} onClick={() => doMirror('y')}>
+          Зеркало верх-низ → новая сцена
+        </button>
+      </div>
+
+      <div className="form-row">
+        <span className="dim">Волна по кольцу (только насосы/клапаны/диммеры — одноканальные):</span>
+        <label className="field">
+          Волн по кругу:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={1}
+            max={8}
+            value={cycles}
+            onChange={(e) => setCycles(Math.max(1, Number(e.target.value)))}
+          />
+        </label>
+        <label className="field">
+          Мин:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={0}
+            max={255}
+            value={min}
+            onChange={(e) => setMin(Number(e.target.value))}
+          />
+        </label>
+        <label className="field">
+          Макс:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={0}
+            max={255}
+            value={max}
+            onChange={(e) => setMax(Number(e.target.value))}
+          />
+        </label>
+        <button className="btn" disabled={actors.length === 0} onClick={doWave}>
+          Создать сцену-волну
+        </button>
+      </div>
+
+      <div className="form-row">
+        <span className="dim">Бегущая волна/погоня — секвенсор из шагов со сдвигом фазы:</span>
+        <label className="field">
+          Шагов:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={2}
+            max={64}
+            value={steps}
+            onChange={(e) => setSteps(Math.max(2, Number(e.target.value)))}
+          />
+        </label>
+        <label className="field">
+          Держать, мс:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={20}
+            value={holdMs}
+            onChange={(e) => setHoldMs(Math.max(20, Number(e.target.value)))}
+          />
+        </label>
+        <label className="field">
+          Фейд, мс:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={0}
+            value={fadeMs}
+            onChange={(e) => setFadeMs(Math.max(0, Number(e.target.value)))}
+          />
+        </label>
+        <button className="btn active" disabled={actors.length === 0} onClick={doWaveSequence}>
+          Создать секвенсор «бегущая волна»
+        </button>
+      </div>
+    </div>
   );
 }
 

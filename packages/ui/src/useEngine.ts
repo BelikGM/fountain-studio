@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   ClientMessage,
   EngineStats,
+  ModbusState,
   NetworkState,
   PlaybackState,
   Project,
@@ -22,6 +23,8 @@ export interface EngineConnection {
   playback: PlaybackState;
   /** Состояние сети Art-Net/RDM (null — мониторинг не активен). */
   network: NetworkState | null;
+  /** Состояние насосов на Modbus (null — движок ещё не прислал; пуст — насосов на Modbus нет). */
+  modbus: ModbusState | null;
   send: (msg: ClientMessage) => void;
   /** Применяет правку проекта локально и отправляет движку. */
   updateProject: (project: Project) => void;
@@ -42,6 +45,7 @@ export function useEngine(): EngineConnection {
   const [frames, setFrames] = useState<Record<number, Uint8Array>>({});
   const [project, setProject] = useState<Project | null>(null);
   const [network, setNetwork] = useState<NetworkState | null>(null);
+  const [modbus, setModbus] = useState<ModbusState | null>(null);
   const [playback, setPlayback] = useState<PlaybackState>({
     activeSceneId: null,
     running: [],
@@ -94,6 +98,9 @@ export function useEngine(): EngineConnection {
           case 'network':
             setNetwork(msg.state);
             break;
+          case 'modbus':
+            setModbus(msg.state);
+            break;
           case 'audio': {
             const waiters = audioWaitersRef.current.get(msg.name) ?? [];
             audioWaitersRef.current.delete(msg.name);
@@ -141,7 +148,21 @@ export function useEngine(): EngineConnection {
     [send],
   );
 
-  return { connected, version, tickMs, universes, stats, frames, project, playback, network, send, updateProject, requestAudio };
+  return {
+    connected,
+    version,
+    tickMs,
+    universes,
+    stats,
+    frames,
+    project,
+    playback,
+    network,
+    modbus,
+    send,
+    updateProject,
+    requestAudio,
+  };
 }
 
 function base64ToBytes(b64: string): Uint8Array {
