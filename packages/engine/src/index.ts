@@ -2,6 +2,7 @@ import path from 'node:path';
 import { AudioStore } from './audio';
 import { AudioPlayer } from './audioplayer';
 import { loadConfig } from './config';
+import { DmxCapture } from './dmxcapture';
 import { Engine } from './engine';
 import { NetworkMonitor } from './netmonitor';
 import { ProjectStore } from './project';
@@ -35,9 +36,12 @@ const net =
         universes: [...new Set(artnetOutputs.map((o) => o.universe))],
       })
     : undefined;
+// Захват входящего ArtDMX (§17 п.1): снятие готовых сцен с внешнего источника.
+const capture = new DmxCapture();
+if (net) net.onDmx = (universe, data, fromIp) => capture.handle(universe, data, fromIp);
 net?.start();
 
-startServer(engine, store, audio, net);
+startServer(engine, store, audio, net, capture);
 
 // Расписание по системному времени ПК — работает, пока запущен движок.
 const scheduler = new Scheduler(engine, () => store.project.schedule);

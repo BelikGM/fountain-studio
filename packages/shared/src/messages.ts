@@ -143,7 +143,10 @@ export type ClientMessage =
   | { type: 'skipPlaylist'; dir: 1 | -1 }
   | { type: 'stopPlaylist' }
   // Немедленный опрос сети (ArtPoll + ArtTodRequest вне расписания).
-  | { type: 'refreshNetwork' };
+  | { type: 'refreshNetwork' }
+  // Захват входящего ArtDMX (§17 п.1): снимок кадра вселенной проекта и период цикла.
+  | { type: 'getDmxCapture'; universe: number }
+  | { type: 'measureDmxCycle'; universe: number };
 
 /** Движок → UI */
 export type ServerMessage =
@@ -155,4 +158,8 @@ export type ServerMessage =
   | { type: 'network'; state: NetworkState }
   | { type: 'modbus'; state: ModbusState }
   /** Ответ на getAudio (только запросившему клиенту); dataBase64 = '' — файла нет. */
-  | { type: 'audio'; name: string; dataBase64: string };
+  | { type: 'audio'; name: string; dataBase64: string }
+  /** Ответ на getDmxCapture: последний кадр внешнего ArtDMX; data = '' — захвата нет. */
+  | { type: 'dmxCapture'; universe: number; data: string; ageMs: number; fromIp: string; frames: number }
+  /** Ответ на measureDmxCycle. */
+  | { type: 'dmxCycle'; universe: number; periodMs: number | null; confidence: number; analyzedMs: number };

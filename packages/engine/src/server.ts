@@ -1,6 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { sanitizeProject, type ClientMessage, type ServerMessage } from '@fountain-studio/shared';
 import type { AudioStore } from './audio';
+import type { DmxCapture } from './dmxcapture';
 import type { Engine } from './engine';
 import type { NetworkMonitor } from './netmonitor';
 import type { ProjectStore } from './project';
@@ -13,6 +14,7 @@ export function startServer(
   store: ProjectStore,
   audio: AudioStore,
   net?: NetworkMonitor,
+  capture?: DmxCapture,
 ): WebSocketServer {
   const port = engine.config.server.port;
   const wss = new WebSocketServer({ port });
@@ -135,6 +137,43 @@ export function startServer(
           net?.poll();
           broadcastNetwork();
           break;
+        case 'getDmxCapture': {
+          // Логическая вселенная проекта → Art-Net Port-Address первого artnet-выхода.
+          const protoUniverse = engine.config.universes
+            .find((u) => u.id === msg.universe)
+            ?.outputs.find((o) => o.type === 'artnet')?.universe;
+          const snap = protoUniverse !== undefined ? capture?.snapshot(protoUniverse) : null;
+          ws.send(
+            JSON.stringify({
+              type: 'dmxCapture',
+              universe: msg.universe,
+              data: snap ? Buffer.from(snap.data).toString('base64') : '',
+              ageMs: snap?.ageMs ?? -1,
+              fromIp: snap?.fromIp ?? '',
+              frames: snap?.frames ?? 0,
+            } satisfies ServerMessage),
+          );
+          break;
+        }
+        case 'measureDmxCycle': {
+          const protoUniverse = engine.config.universes
+            .find((u) => u.id === msg.universe)
+            ?.outputs.find((o) => o.type === 'artnet')?.universe;
+          const m =
+            protoUniverse !== undefined && capture
+              ? capture.measureCycle(protoUniverse)
+              : { periodMs: null, confidence: 0, analyzedMs: 0 };
+          ws.send(
+            JSON.stringify({
+              type: 'dmxCycle',
+              universe: msg.universe,
+              periodMs: m.periodMs,
+              confidence: m.confidence,
+              analyzedMs: m.analyzedMs,
+            } satisfies ServerMessage),
+          );
+          break;
+        }
         case 'uploadAudio':
           audio.save(msg.name, msg.dataBase64);
           break;

@@ -17,6 +17,7 @@ import { ARTNET_PORT } from './drivers/artnet';
 
 const OP_POLL = 0x2000;
 const OP_POLL_REPLY = 0x2100;
+const OP_DMX = 0x5000;
 const OP_TOD_REQUEST = 0x8000;
 const OP_TOD_DATA = 0x8100;
 
@@ -51,6 +52,8 @@ export interface NetMonitorOptions {
 export class NetworkMonitor {
   /** Вызывается при каждом изменении состояния (новая нода, пропажа и т.п.). */
   onChange: (() => void) | null = null;
+  /** Входящий ArtDMX с линии (внешний источник): Port-Address, кадр, IP отправителя. */
+  onDmx: ((universe: number, data: Uint8Array, fromIp: string) => void) | null = null;
 
   private readonly opts: Required<NetMonitorOptions>;
   private socket: dgram.Socket | null = null;
@@ -147,6 +150,15 @@ export class NetworkMonitor {
     const op = msg.readUInt16LE(8);
     if (op === OP_POLL_REPLY) this.parsePollReply(msg, fromIp);
     else if (op === OP_TOD_DATA) this.parseTodData(msg, fromIp);
+    else if (op === OP_DMX) this.parseDmx(msg, fromIp);
+  }
+
+  private parseDmx(msg: Buffer, fromIp: string): void {
+    if (!this.onDmx || msg.length < 18) return;
+    const universe = msg.readUInt8(14) | ((msg.readUInt8(15) & 0x7f) << 8);
+    const length = Math.min((msg.readUInt8(16) << 8) | msg.readUInt8(17), msg.length - 18);
+    if (length <= 0) return;
+    this.onDmx(universe, new Uint8Array(msg.subarray(18, 18 + length)), fromIp);
   }
 
   private parsePollReply(msg: Buffer, fromIp: string): void {

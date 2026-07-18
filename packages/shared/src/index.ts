@@ -1,5 +1,6 @@
 export * from './audioanalysis';
 export * from './dmx';
+export * from './dmxcycle';
 export * from './dxf';
 export * from './keys';
 export * from './layout';

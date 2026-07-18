@@ -23,6 +23,7 @@ import {
   layoutActors,
   layoutFromDxf,
   loudnessEnvelopePoints,
+  measureCyclePeriodMs,
   mergeCuts,
   mirrorScene,
   parseDxf,
@@ -47,6 +48,7 @@ import {
 import { AudioStore } from '../audio';
 import dgram from 'node:dgram';
 import { createServer as createTcpServer } from 'node:net';
+import { DmxCapture } from '../dmxcapture';
 import { Engine } from '../engine';
 import { NetworkMonitor } from '../netmonitor';
 import { ProjectStore } from '../project';
@@ -76,6 +78,20 @@ mockNode.on('message', (msg, rinfo) => {
     reply.writeUInt8(0x80, 174); // PortTypes[0]: выход
     reply.writeUInt8(0, 190); // SwOut[0] → вселенная 0
     mockNode.send(reply, rinfo.port, rinfo.address);
+    // Заодно — кадр ArtDMX «внешнего источника» (проверка захвата §17 п.1).
+    const dmx = Buffer.alloc(18 + 512);
+    dmx.write('Art-Net\0', 0, 'latin1');
+    dmx.writeUInt16LE(0x5000, 8); // OpDmx
+    dmx.writeUInt8(0, 10);
+    dmx.writeUInt8(14, 11);
+    dmx.writeUInt8(0, 14); // SubUni = 0
+    dmx.writeUInt8(0, 15); // Net = 0
+    dmx.writeUInt8(2, 16); // LengthHi
+    dmx.writeUInt8(0, 17); // LengthLo → 512
+    dmx.writeUInt8(111, 18); // адрес 1
+    dmx.writeUInt8(222, 19); // адрес 2
+    dmx.writeUInt8(33, 18 + 19); // адрес 20 (насос 2)
+    mockNode.send(dmx, rinfo.port, rinfo.address);
   } else if (op === 0x8000) {
     const uids = [
       [0x4d, 0x4f, 0x00, 0x00, 0x00, 0x01],
@@ -164,8 +180,10 @@ const net = new NetworkMonitor({
   nodeTimeoutMs: 700,
   rdmTimeoutMs: 5000,
 });
+const dmxCapture = new DmxCapture();
+net.onDmx = (universe, data, fromIp) => dmxCapture.handle(universe, data, fromIp);
 net.start();
-const wss = startServer(engine, store, new AudioStore(path.join(tmpDir, 'audio')), net);
+const wss = startServer(engine, store, new AudioStore(path.join(tmpDir, 'audio')), net, dmxCapture);
 
 // Демо-проект: насос (адрес 1), клапан (2), RGB (10–12).
 const demo: Project = {
@@ -310,6 +328,8 @@ let projectEcho: Project | null = null;
 let audioMsg: { name: string; dataBase64: string } | null = null;
 let networkState: NetworkState | null = null;
 let modbusState: ModbusState | null = null;
+let dmxCaptureMsg: Extract<ServerMessage, { type: 'dmxCapture' }> | null = null;
+let dmxCycleMsg: Extract<ServerMessage, { type: 'dmxCycle' }> | null = null;
 let sawStep1 = false;
 let sawFadeMidpoint = false;
 
@@ -343,6 +363,10 @@ ws.on('message', (raw) => {
     networkState = msg.state;
   } else if (msg.type === 'modbus') {
     modbusState = msg.state;
+  } else if (msg.type === 'dmxCapture') {
+    dmxCaptureMsg = msg;
+  } else if (msg.type === 'dmxCycle') {
+    dmxCycleMsg = msg;
   }
 });
 
@@ -726,6 +750,22 @@ async function main(): Promise<void> {
     'silenceRanges: хвостовая тишина (после последнего клика до конца) найдена',
   );
 
+  console.log('— Измерение периода цикла DMX (§17 п.1) —');
+  // Синтетика: канал 5 бежит по циклу длиной 2000 мс, кадры каждые 100 мс, 20 с записи.
+  const cycFrames = Array.from({ length: 200 }, (_, i) => {
+    const data = new Uint8Array(512);
+    data[5] = Math.round(((i % 20) / 19) * 255); // пила с периодом 20 кадров = 2000 мс
+    data[6] = 42; // мёртвый канал — не должен мешать
+    return { atMs: i * 100, data };
+  });
+  const cyc = measureCyclePeriodMs(cycFrames);
+  check(
+    cyc.periodMs !== null && Math.abs(cyc.periodMs - 2000) <= 100 && cyc.confidence > 0.5,
+    `measureCyclePeriodMs: период пилы 2000 мс найден (${cyc.periodMs} мс, уверенность ${(cyc.confidence * 100).toFixed(0)}%)`,
+  );
+  const cycNone = measureCyclePeriodMs(cycFrames.slice(0, 5));
+  check(cycNone.periodMs === null, 'measureCyclePeriodMs: на 0.5 с записи периода честно нет');
+
   console.log('— Мониторинг сети (мок-нода Art-Net/RDM) —');
   await waitFor(
     'обнаружение ноды',
@@ -756,6 +796,22 @@ async function main(): Promise<void> {
   check(
     networkState!.log.some((e) => e.text.includes('ПОТЕРЯНА')),
     'умолкшая нода помечена потерянной, событие в журнале',
+  );
+
+  console.log('— Захват входящего ArtDMX (§17 п.1) —');
+  // Мок-нода вместе с ArtPollReply слала кадры OpDmx (111/222 на адресах 1–2, 33 на 20).
+  send({ type: 'getDmxCapture', universe: 1 });
+  await waitFor('снимок захвата', () => dmxCaptureMsg !== null, 3000);
+  const capFrame = new Uint8Array(Buffer.from(dmxCaptureMsg!.data, 'base64'));
+  check(
+    capFrame[0] === 111 && capFrame[1] === 222 && capFrame[19] === 33 && dmxCaptureMsg!.frames > 0,
+    `getDmxCapture: кадр внешнего источника снят (адр.1=111, адр.2=222, адр.20=33; кадров ${dmxCaptureMsg!.frames})`,
+  );
+  send({ type: 'measureDmxCycle', universe: 1 });
+  await waitFor('ответ measureDmxCycle', () => dmxCycleMsg !== null, 3000);
+  check(
+    dmxCycleMsg!.periodMs === null,
+    'measureDmxCycle: на статичном коротком захвате периода честно нет (ответ пришёл)',
   );
 
   console.log('— Насос на Modbus TCP (мок-ПЧ, карта регистров Elhart EMD-PUMP) —');
