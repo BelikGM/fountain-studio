@@ -46,6 +46,47 @@ export interface ChannelTrim {
   max: number;
 }
 
+/**
+ * Физическое подключение Modbus к линии ПЧ (§12 п.9): либо TCP-шлюз RTU↔TCP на
+ * сети (как Art-Net-ноды), либо RS-485 напрямую через USB-адаптер на движке —
+ * так же, как в отдельном проекте-конфигураторе ПЧ (github.com/BelikGM/Modbus).
+ * Несколько насосов с одинаковым подключением делят один физический канал
+ * (мультидроп RS-485 или один шлюз) — см. PumpModbusManager.
+ */
+export type ModbusConnection =
+  | { kind: 'tcp'; host: string; port?: number }
+  | {
+      kind: 'rtu';
+      serialPort: string;
+      baudRate?: number;
+      dataBits?: 7 | 8;
+      stopBits?: 1 | 2;
+      parity?: 'none' | 'even' | 'odd';
+    };
+
+/**
+ * Прямое управление насосом через Modbus к частотному преобразователю (ПЧ),
+ * в обход DMX→аналог (§12 п.9: оба варианта на выбор per-device). Значение канала
+ * интенсивности (после HTP-слияния и калибровки) 0–255 линейно отображается
+ * в уставку частоты 0–freqScaleHz и пишется в holding-регистр freqRegister;
+ * при наличии cmdRegister — пишется код пуска/стопа (напр. у Elhart EMD-PUMP:
+ * 2 = пуск, 1 = стоп в регистр 0x2000) перед уставкой. faultRegister (если задан)
+ * периодически читается (holding-регистр кода аварии, 0 = нет аварии) для
+ * индикации в UI. Дефолты полей в форме патча ориентированы на карту регистров
+ * Elhart EMD-PUMP (см. github.com/BelikGM/Modbus/devices/templates) — реальный
+ * прибор проекта; для другой модели ПЧ значения нужно сверить с её картой регистров.
+ */
+export interface ModbusPumpConfig {
+  connection: ModbusConnection;
+  unitId?: number; // адрес прибора на линии/шлюзе, по умолчанию 1
+  freqRegister: number; // holding-регистр уставки частоты, 0-based
+  freqScaleHz: number; // частота при значении канала 255, Гц (напр. 50)
+  /** Единиц регистра на 1 Гц. У Elhart EMD-PUMP — 100 (уставка в сотых герца). */
+  freqRegScale?: number;
+  cmdRegister?: number; // holding-регистр команд пуск/стоп, 0-based
+  faultRegister?: number; // holding-регистр кода аварии (0 = нет аварии), 0-based
+}
+
 /** Устройство, поставленное в патч: профиль + вселенная + первый адрес. */
 export interface PatchedDevice {
   id: string;
@@ -57,12 +98,61 @@ export interface PatchedDevice {
   address: number;
   /** Калибровка по каналам профиля; отсутствует — без масштабирования (0–255 как есть). */
   trim?: ChannelTrim[];
+  /** Прямое управление через Modbus TCP (насосы с ПЧ); отсутствует — обычный DMX→аналог. */
+  modbus?: ModbusPumpConfig;
 }
 
 /** Итоговое значение канала с учётом калибровки. */
 export function applyTrim(value: number, trim: ChannelTrim | undefined): number {
   if (!trim || value <= 0) return value;
   return Math.round(trim.min + (value * (trim.max - trim.min)) / 255);
+}
+
+function sanitizeModbusConnection(raw: unknown): ModbusConnection | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+  if (r.kind === 'tcp') {
+    if (typeof r.host !== 'string' || r.host.trim() === '') return undefined;
+    const conn: ModbusConnection = { kind: 'tcp', host: r.host.trim() };
+    if (Number.isInteger(r.port) && (r.port as number) > 0 && (r.port as number) <= 65535) {
+      conn.port = r.port as number;
+    }
+    return conn;
+  }
+  if (r.kind === 'rtu') {
+    if (typeof r.serialPort !== 'string' || r.serialPort.trim() === '') return undefined;
+    const conn: ModbusConnection = { kind: 'rtu', serialPort: r.serialPort.trim() };
+    if (Number.isInteger(r.baudRate) && (r.baudRate as number) > 0) conn.baudRate = r.baudRate as number;
+    if (r.dataBits === 7 || r.dataBits === 8) conn.dataBits = r.dataBits;
+    if (r.stopBits === 1 || r.stopBits === 2) conn.stopBits = r.stopBits;
+    if (r.parity === 'none' || r.parity === 'even' || r.parity === 'odd') conn.parity = r.parity;
+    return conn;
+  }
+  return undefined;
+}
+
+/** Приводит произвольный объект к валидной Modbus-конфигурации насоса или undefined. */
+export function sanitizeModbusConfig(raw: unknown): ModbusPumpConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+  const connection = sanitizeModbusConnection(r.connection);
+  if (!connection) return undefined;
+  if (!Number.isInteger(r.freqRegister) || (r.freqRegister as number) < 0) return undefined;
+  if (typeof r.freqScaleHz !== 'number' || !Number.isFinite(r.freqScaleHz) || r.freqScaleHz <= 0) return undefined;
+  const config: ModbusPumpConfig = {
+    connection,
+    freqRegister: r.freqRegister as number,
+    freqScaleHz: r.freqScaleHz,
+  };
+  if (Number.isInteger(r.unitId) && (r.unitId as number) >= 0 && (r.unitId as number) <= 255) {
+    config.unitId = r.unitId as number;
+  }
+  if (Number.isInteger(r.freqRegScale) && (r.freqRegScale as number) > 0) config.freqRegScale = r.freqRegScale as number;
+  if (Number.isInteger(r.cmdRegister) && (r.cmdRegister as number) >= 0) config.cmdRegister = r.cmdRegister as number;
+  if (Number.isInteger(r.faultRegister) && (r.faultRegister as number) >= 0) {
+    config.faultRegister = r.faultRegister as number;
+  }
+  return config;
 }
 
 /** Обмен адресами (и вселенными) двух устройств — «физически перепутаны». */
@@ -333,6 +423,7 @@ export function sanitizeProject(raw: unknown): Project {
         // Полностью нейтральная калибровка не хранится.
         if (trim.every((t) => t.min === 0 && t.max === 255)) trim = undefined;
       }
+      const modbus = sanitizeModbusConfig(d.modbus);
       project.devices.push({
         id: d.id,
         name: typeof d.name === 'string' ? d.name : d.id,
@@ -340,6 +431,7 @@ export function sanitizeProject(raw: unknown): Project {
         universe: Number.isInteger(d.universe) ? d.universe : 1,
         address: Number.isInteger(d.address) ? Math.max(1, Math.min(DMX_UNIVERSE_SIZE, d.address)) : 1,
         ...(trim ? { trim } : {}),
+        ...(modbus ? { modbus } : {}),
       });
     }
   }

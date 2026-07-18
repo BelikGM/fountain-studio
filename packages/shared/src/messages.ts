@@ -96,6 +96,23 @@ export interface NetworkState {
   log: NetworkEvent[];
 }
 
+/** Состояние насоса, управляемого напрямую по Modbus (§12 п.9). */
+export interface PumpModbusStatus {
+  deviceId: string;
+  connected: boolean;
+  /** Последняя записанная уставка частоты, Гц. */
+  lastFreqHz: number;
+  /** Код аварии из faultRegister (0 = нет аварии); null — регистр не задан в конфиге. */
+  faultCode: number | null;
+  /** Мс с последней успешной записи/чтения; -1 — успешного обмена ещё не было. */
+  ageMs: number;
+  lastError: string | null;
+}
+
+export interface ModbusState {
+  pumps: PumpModbusStatus[];
+}
+
 /** UI → Движок */
 export type ClientMessage =
   | { type: 'setChannel'; universe: number; channel: number; value: number }
@@ -136,5 +153,6 @@ export type ServerMessage =
   | { type: 'project'; project: Project }
   | { type: 'playback'; state: PlaybackState }
   | { type: 'network'; state: NetworkState }
+  | { type: 'modbus'; state: ModbusState }
   /** Ответ на getAudio (только запросившему клиенту); dataBase64 = '' — файла нет. */
   | { type: 'audio'; name: string; dataBase64: string };
