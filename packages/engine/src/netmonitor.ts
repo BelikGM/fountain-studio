@@ -1,0 +1,254 @@
+/**
+ * Мониторинг сети Art-Net/RDM (§12 п.3: индикация «жив/потерян» + журнал).
+ *
+ * Контроллер периодически шлёт ArtPoll на адреса нод из конфига и собирает
+ * ArtPollReply (имя, выходные вселенные); каждым вторым циклом — ArtTodRequest,
+ * получая TOD (список RDM UID приборов на линии). Пропажа ответов дольше
+ * порога — событие «потерян» в журнал; возвращение — «снова на связи».
+ *
+ * Ответы нод принимаются двумя путями: unicast на наш сокет-отправитель
+ * (так отвечает большинство нод) и, если удастся занять порт 6454 (reuseAddr),
+ * широковещательные ответы по спецификации. Полный опрос сенсоров E1.20
+ * (ArtRdm GET SENSOR_VALUE и т.п.) — следующий шаг, когда появится железо.
+ */
+import dgram from 'node:dgram';
+import type { NetworkEvent, NetworkState } from '@fountain-studio/shared';
+import { ARTNET_PORT } from './drivers/artnet';
+
+const OP_POLL = 0x2000;
+const OP_POLL_REPLY = 0x2100;
+const OP_TOD_REQUEST = 0x8000;
+const OP_TOD_DATA = 0x8100;
+
+interface NodeRec {
+  ip: string;
+  shortName: string;
+  longName: string;
+  outputUniverses: number[];
+  lastSeen: number;
+  lost: boolean;
+}
+
+interface RdmRec {
+  uid: string;
+  nodeIp: string;
+  universe: number;
+  lastSeen: number;
+  lost: boolean;
+}
+
+export interface NetMonitorOptions {
+  /** Адреса, куда слать ArtPoll (ноды из конфига; '255.255.255.255' — broadcast). */
+  targets: string[];
+  /** Вселенные проекта (Port-Address, с 0) — для ArtTodRequest. */
+  universes: number[];
+  port?: number;
+  pollMs?: number;
+  nodeTimeoutMs?: number;
+  rdmTimeoutMs?: number;
+}
+
+export class NetworkMonitor {
+  /** Вызывается при каждом изменении состояния (новая нода, пропажа и т.п.). */
+  onChange: (() => void) | null = null;
+
+  private readonly opts: Required<NetMonitorOptions>;
+  private socket: dgram.Socket | null = null;
+  private listenSocket: dgram.Socket | null = null;
+  private timer: NodeJS.Timeout | null = null;
+  private pollCount = 0;
+  private nodes = new Map<string, NodeRec>();
+  private rdm = new Map<string, RdmRec>();
+  private log: NetworkEvent[] = [];
+
+  constructor(opts: NetMonitorOptions) {
+    this.opts = {
+      port: ARTNET_PORT,
+      pollMs: 3000,
+      nodeTimeoutMs: 10_000,
+      rdmTimeoutMs: 30_000,
+      ...opts,
+    };
+  }
+
+  start(): void {
+    this.socket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+    this.socket.on('error', (e) => console.error('[net] ошибка сокета:', e.message));
+    this.socket.on('message', (msg, rinfo) => this.parse(msg, rinfo.address));
+    this.socket.bind(0, () => {
+      this.socket?.setBroadcast(true);
+      this.poll();
+    });
+    // Порт 6454 — для нод, отвечающих broadcast'ом; занят (например, монитором) — не страшно.
+    this.listenSocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+    this.listenSocket.on('error', () => {
+      this.listenSocket?.close();
+      this.listenSocket = null;
+    });
+    this.listenSocket.on('message', (msg, rinfo) => this.parse(msg, rinfo.address));
+    this.listenSocket.bind(this.opts.port);
+    this.timer = setInterval(() => this.poll(), this.opts.pollMs);
+  }
+
+  stop(): void {
+    if (this.timer) clearInterval(this.timer);
+    this.socket?.close();
+    this.listenSocket?.close();
+    this.socket = null;
+    this.listenSocket = null;
+  }
+
+  /** Немедленный цикл опроса (кнопка «Обновить» в UI). */
+  poll(): void {
+    if (!this.socket) return;
+    const poll = Buffer.alloc(14);
+    poll.write('Art-Net\0', 0, 'latin1');
+    poll.writeUInt16LE(OP_POLL, 8);
+    poll.writeUInt8(0, 10);
+    poll.writeUInt8(14, 11); // ProtVerLo
+    poll.writeUInt8(0x02, 12); // TalkToMe: слать ArtPollReply при изменениях
+    for (const host of this.opts.targets) {
+      this.socket.send(poll, this.opts.port, host);
+    }
+    // TOD — каждым вторым циклом, чтобы не заваливать линию RDM-трафиком.
+    if (this.pollCount % 2 === 1) this.requestTod();
+    this.pollCount++;
+    this.checkTimeouts();
+  }
+
+  private requestTod(): void {
+    if (!this.socket) return;
+    // Группируем вселенные по Net (старшие 7 бит Port-Address).
+    const byNet = new Map<number, number[]>();
+    for (const u of this.opts.universes) {
+      const net = (u >> 8) & 0x7f;
+      const list = byNet.get(net) ?? [];
+      if (list.length < 32) list.push(u & 0xff);
+      byNet.set(net, list);
+    }
+    for (const [net, addrs] of byNet) {
+      const pkt = Buffer.alloc(24 + 32);
+      pkt.write('Art-Net\0', 0, 'latin1');
+      pkt.writeUInt16LE(OP_TOD_REQUEST, 8);
+      pkt.writeUInt8(0, 10);
+      pkt.writeUInt8(14, 11);
+      pkt.writeUInt8(net, 21);
+      pkt.writeUInt8(0, 22); // Command = TodFull
+      pkt.writeUInt8(addrs.length, 23);
+      addrs.forEach((a, i) => pkt.writeUInt8(a, 24 + i));
+      for (const host of this.opts.targets) {
+        this.socket.send(pkt, this.opts.port, host);
+      }
+    }
+  }
+
+  private parse(msg: Buffer, fromIp: string): void {
+    if (msg.length < 12 || msg.toString('latin1', 0, 8) !== 'Art-Net\0') return;
+    const op = msg.readUInt16LE(8);
+    if (op === OP_POLL_REPLY) this.parsePollReply(msg, fromIp);
+    else if (op === OP_TOD_DATA) this.parseTodData(msg, fromIp);
+  }
+
+  private parsePollReply(msg: Buffer, fromIp: string): void {
+    if (msg.length < 194) return;
+    const str = (start: number, len: number): string => {
+      const raw = msg.toString('latin1', start, start + len);
+      const nul = raw.indexOf('\0');
+      return (nul >= 0 ? raw.slice(0, nul) : raw).trim();
+    };
+    const net = msg.readUInt8(18) & 0x7f;
+    const sub = msg.readUInt8(19) & 0x0f;
+    const numPorts = Math.min(4, msg.readUInt8(173));
+    const outputUniverses: number[] = [];
+    for (let i = 0; i < numPorts; i++) {
+      const portType = msg.readUInt8(174 + i);
+      if ((portType & 0x80) !== 0) {
+        const swOut = msg.readUInt8(190 + i) & 0x0f;
+        outputUniverses.push((net << 8) | (sub << 4) | swOut);
+      }
+    }
+    const now = Date.now();
+    const prev = this.nodes.get(fromIp);
+    const rec: NodeRec = {
+      ip: fromIp,
+      shortName: str(26, 18) || fromIp,
+      longName: str(44, 64),
+      outputUniverses,
+      lastSeen: now,
+      lost: false,
+    };
+    this.nodes.set(fromIp, rec);
+    if (!prev) this.event(`Нода «${rec.shortName}» (${fromIp}) на связи, выходов: ${outputUniverses.length}`);
+    else if (prev.lost) this.event(`Нода «${rec.shortName}» (${fromIp}) снова на связи`);
+  }
+
+  private parseTodData(msg: Buffer, fromIp: string): void {
+    if (msg.length < 28) return;
+    const net = msg.readUInt8(21) & 0x7f;
+    const address = msg.readUInt8(23);
+    const universe = (net << 8) | address;
+    const uidCount = msg.readUInt8(27);
+    const now = Date.now();
+    for (let i = 0; i < uidCount; i++) {
+      const off = 28 + i * 6;
+      if (off + 6 > msg.length) break;
+      const man = msg.readUInt16BE(off).toString(16).padStart(4, '0');
+      const dev = msg.readUInt32BE(off + 2).toString(16).padStart(8, '0');
+      const uid = `${man}:${dev}`;
+      const prev = this.rdm.get(uid);
+      this.rdm.set(uid, { uid, nodeIp: fromIp, universe, lastSeen: now, lost: false });
+      if (!prev) this.event(`RDM-прибор ${uid} обнаружен (вселенная ${universe}, нода ${fromIp})`);
+      else if (prev.lost) this.event(`RDM-прибор ${uid} снова на связи`);
+    }
+  }
+
+  private checkTimeouts(): void {
+    const now = Date.now();
+    for (const n of this.nodes.values()) {
+      if (!n.lost && now - n.lastSeen > this.opts.nodeTimeoutMs) {
+        n.lost = true;
+        this.event(`Нода «${n.shortName}» (${n.ip}) ПОТЕРЯНА — нет ответа ${Math.round((now - n.lastSeen) / 1000)} с`);
+      }
+    }
+    for (const d of this.rdm.values()) {
+      if (!d.lost && now - d.lastSeen > this.opts.rdmTimeoutMs) {
+        d.lost = true;
+        this.event(`RDM-прибор ${d.uid} ПРОПАЛ С ЛИНИИ (вселенная ${d.universe})`);
+      }
+    }
+  }
+
+  private event(text: string): void {
+    this.log.push({ atMs: Date.now(), text });
+    if (this.log.length > 100) this.log.splice(0, this.log.length - 100);
+    console.log(`[net] ${text}`);
+    this.onChange?.();
+  }
+
+  state(): NetworkState {
+    const now = Date.now();
+    return {
+      enabled: true,
+      nodes: [...this.nodes.values()]
+        .sort((a, b) => a.ip.localeCompare(b.ip))
+        .map((n) => ({
+          ip: n.ip,
+          shortName: n.shortName,
+          longName: n.longName,
+          outputUniverses: n.outputUniverses,
+          ageMs: now - n.lastSeen,
+          lost: n.lost,
+        })),
+      rdmDevices: [...this.rdm.values()]
+        .sort((a, b) => a.uid.localeCompare(b.uid))
+        .map((d) => ({
+          uid: d.uid,
+          nodeIp: d.nodeIp,
+          universe: d.universe,
+          ageMs: now - d.lastSeen,
+          lost: d.lost,
+        })),
+      log: [...this.log].reverse(),
+    };
+  }
+}

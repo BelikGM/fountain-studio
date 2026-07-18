@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   ClientMessage,
   EngineStats,
+  NetworkState,
   PlaybackState,
   Project,
   ServerMessage,
@@ -19,6 +20,8 @@ export interface EngineConnection {
   /** Проект (источник истины — движок; правки шлём через updateProject). */
   project: Project | null;
   playback: PlaybackState;
+  /** Состояние сети Art-Net/RDM (null — мониторинг не активен). */
+  network: NetworkState | null;
   send: (msg: ClientMessage) => void;
   /** Применяет правку проекта локально и отправляет движку. */
   updateProject: (project: Project) => void;
@@ -38,6 +41,7 @@ export function useEngine(): EngineConnection {
   const [stats, setStats] = useState<EngineStats | null>(null);
   const [frames, setFrames] = useState<Record<number, Uint8Array>>({});
   const [project, setProject] = useState<Project | null>(null);
+  const [network, setNetwork] = useState<NetworkState | null>(null);
   const [playback, setPlayback] = useState<PlaybackState>({
     activeSceneId: null,
     running: [],
@@ -87,6 +91,9 @@ export function useEngine(): EngineConnection {
           case 'playback':
             setPlayback(msg.state);
             break;
+          case 'network':
+            setNetwork(msg.state);
+            break;
           case 'audio': {
             const waiters = audioWaitersRef.current.get(msg.name) ?? [];
             audioWaitersRef.current.delete(msg.name);
@@ -134,7 +141,7 @@ export function useEngine(): EngineConnection {
     [send],
   );
 
-  return { connected, version, tickMs, universes, stats, frames, project, playback, send, updateProject, requestAudio };
+  return { connected, version, tickMs, universes, stats, frames, project, playback, network, send, updateProject, requestAudio };
 }
 
 function base64ToBytes(b64: string): Uint8Array {

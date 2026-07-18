@@ -7,10 +7,21 @@ import { PatchView } from './views/PatchView';
 import { ScenesView } from './views/ScenesView';
 import { SequencesView } from './views/SequencesView';
 import { ShowView } from './views/ShowView';
+import { NetworkView } from './views/NetworkView';
 import { PlaylistsView } from './views/PlaylistsView';
 import { ScheduleView } from './views/ScheduleView';
 
-type Tab = 'console' | 'patch' | 'layout' | 'scenes' | 'sequences' | 'show' | 'playlists' | 'schedule' | 'keys';
+type Tab =
+  | 'console'
+  | 'patch'
+  | 'layout'
+  | 'scenes'
+  | 'sequences'
+  | 'show'
+  | 'playlists'
+  | 'schedule'
+  | 'network'
+  | 'keys';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'console', label: 'Консоль' },
@@ -21,6 +32,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'show', label: 'Шоу' },
   { id: 'playlists', label: 'Плейлисты' },
   { id: 'schedule', label: 'Расписание' },
+  { id: 'network', label: 'Сеть' },
   { id: 'keys', label: 'Клавиши' },
 ];
 
@@ -100,6 +112,7 @@ export function App() {
       {tab === 'show' && <ShowView engine={engine} />}
       {tab === 'playlists' && <PlaylistsView engine={engine} />}
       {tab === 'schedule' && <ScheduleView engine={engine} />}
+      {tab === 'network' && <NetworkView engine={engine} />}
       {tab === 'keys' && <KeysView engine={engine} />}
 
       <footer className="statusbar">

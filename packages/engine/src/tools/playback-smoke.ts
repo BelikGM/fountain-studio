@@ -24,20 +24,61 @@ import {
   shiftDeviceAddresses,
   sourceToEditedMs,
   swapDeviceAddresses,
+  type NetworkState,
   type PlaybackState,
   type Project,
   type ClientMessage,
   type ServerMessage,
 } from '@fountain-studio/shared';
 import { AudioStore } from '../audio';
+import dgram from 'node:dgram';
 import { Engine } from '../engine';
+import { NetworkMonitor } from '../netmonitor';
 import { ProjectStore } from '../project';
 import { Scheduler } from '../schedule';
 import { startServer } from '../server';
 
 const PORT = 9521;
+const MOCK_NODE_PORT = 16454; // мок-нода Art-Net (не 6454, чтобы не мешать реальным)
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fountain-smoke-'));
 const projectFile = path.join(tmpDir, 'fountain.project.json');
+
+// Мок-нода: отвечает на ArtPoll (ArtPollReply) и ArtTodRequest (ArtTodData с 2 UID),
+// пока mockNodeAlive = true. Умолкание имитирует пропажу ноды из сети.
+let mockNodeAlive = true;
+const mockNode = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+mockNode.on('message', (msg, rinfo) => {
+  if (!mockNodeAlive || msg.toString('latin1', 0, 8) !== 'Art-Net\0') return;
+  const op = msg.readUInt16LE(8);
+  if (op === 0x2000) {
+    const reply = Buffer.alloc(239);
+    reply.write('Art-Net\0', 0, 'latin1');
+    reply.writeUInt16LE(0x2100, 8); // OpPollReply
+    // Имена в Art-Net — ASCII (кириллица в latin1 не кодируется).
+    reply.write('MockNode', 26, 'latin1'); // ShortName
+    reply.write('Smoke test node', 44, 'latin1'); // LongName
+    reply.writeUInt8(1, 173); // NumPortsLo = 1
+    reply.writeUInt8(0x80, 174); // PortTypes[0]: выход
+    reply.writeUInt8(0, 190); // SwOut[0] → вселенная 0
+    mockNode.send(reply, rinfo.port, rinfo.address);
+  } else if (op === 0x8000) {
+    const uids = [
+      [0x4d, 0x4f, 0x00, 0x00, 0x00, 0x01],
+      [0x4d, 0x4f, 0x00, 0x00, 0x00, 0x02],
+    ];
+    const tod = Buffer.alloc(28 + uids.length * 6);
+    tod.write('Art-Net\0', 0, 'latin1');
+    tod.writeUInt16LE(0x8100, 8); // OpTodData
+    tod.writeUInt8(0, 21); // Net
+    tod.writeUInt8(0, 23); // Address
+    tod.writeUInt16BE(uids.length, 24);
+    tod.writeUInt8(1, 26); // BlockCount
+    tod.writeUInt8(uids.length, 27);
+    uids.forEach((u, i) => tod.set(u, 28 + i * 6));
+    mockNode.send(tod, rinfo.port, rinfo.address);
+  }
+});
+mockNode.bind(MOCK_NODE_PORT, '127.0.0.1');
 
 const engine = new Engine({
   server: { port: PORT },
@@ -48,7 +89,16 @@ const engine = new Engine({
 const store = new ProjectStore(projectFile);
 engine.setProject(store.project);
 engine.start();
-const wss = startServer(engine, store, new AudioStore(path.join(tmpDir, 'audio')));
+const net = new NetworkMonitor({
+  targets: ['127.0.0.1'],
+  universes: [0],
+  port: MOCK_NODE_PORT,
+  pollMs: 150,
+  nodeTimeoutMs: 700,
+  rdmTimeoutMs: 5000,
+});
+net.start();
+const wss = startServer(engine, store, new AudioStore(path.join(tmpDir, 'audio')), net);
 
 // Демо-проект: насос (адрес 1), клапан (2), RGB (10–12).
 const demo: Project = {
@@ -175,6 +225,7 @@ let frame = new Uint8Array(512);
 let playback: PlaybackState = { activeSceneId: null, running: [], show: null, playlist: null };
 let projectEcho: Project | null = null;
 let audioMsg: { name: string; dataBase64: string } | null = null;
+let networkState: NetworkState | null = null;
 let sawStep1 = false;
 let sawFadeMidpoint = false;
 
@@ -204,6 +255,8 @@ ws.on('message', (raw) => {
     projectEcho = msg.project;
   } else if (msg.type === 'audio') {
     audioMsg = { name: msg.name, dataBase64: msg.dataBase64 };
+  } else if (msg.type === 'network') {
+    networkState = msg.state;
   }
 });
 
@@ -488,6 +541,38 @@ async function main(): Promise<void> {
     'layoutFromDxf: мм → метры, слои разложены по ролям, чаши из круга и контура',
   );
 
+  console.log('— Мониторинг сети (мок-нода Art-Net/RDM) —');
+  await waitFor(
+    'обнаружение ноды',
+    () => networkState !== null && networkState.nodes.length === 1 && !networkState.nodes[0]!.lost,
+    5000,
+  );
+  check(
+    networkState!.nodes[0]!.shortName === 'MockNode' && networkState!.nodes[0]!.outputUniverses.join(',') === '0',
+    'ArtPoll: нода найдена, имя и выходная вселенная разобраны',
+  );
+  await waitFor('TOD от ноды', () => networkState !== null && networkState.rdmDevices.length === 2, 5000);
+  check(
+    networkState!.rdmDevices.map((d) => d.uid).join(' ') === '4d4f:00000001 4d4f:00000002' &&
+      networkState!.rdmDevices.every((d) => d.universe === 0 && !d.lost),
+    'ArtTodRequest: 2 RDM-прибора с UID на вселенной 0',
+  );
+  check(
+    networkState!.log.some((e) => e.text.includes('MockNode')) &&
+      networkState!.log.some((e) => e.text.includes('4d4f:00000001')),
+    'журнал: появление ноды и приборов записано',
+  );
+  mockNodeAlive = false; // нода «выдернута из сети»
+  await waitFor(
+    'потеря ноды по таймауту',
+    () => networkState !== null && networkState.nodes[0]!.lost,
+    5000,
+  );
+  check(
+    networkState!.log.some((e) => e.text.includes('ПОТЕРЯНА')),
+    'умолкшая нода помечена потерянной, событие в журнале',
+  );
+
   console.log('— Хранилище аудио —');
   const audioData = Buffer.from('НЕ-НАСТОЯЩИЙ-MP3: проверка хранилища').toString('base64');
   send({ type: 'uploadAudio', name: 'тест.mp3', dataBase64: audioData });
@@ -518,6 +603,8 @@ main()
   .finally(() => {
     ws.close();
     wss.close();
+    net.stop();
+    mockNode.close();
     engine.stop();
     fs.rmSync(tmpDir, { recursive: true, force: true });
     process.exit(failures.length === 0 ? 0 : 1);

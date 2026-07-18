@@ -59,6 +59,43 @@ export interface PlaybackState {
   playlist: PlaylistTransportState | null;
 }
 
+/** Art-Net нода, найденная опросом ArtPoll (§12 п.3: мониторинг из тех. помещения). */
+export interface ArtNetNodeInfo {
+  ip: string;
+  shortName: string;
+  longName: string;
+  /** Port-Address выходных портов ноды (нумерация Art-Net с 0). */
+  outputUniverses: number[];
+  /** Мс с последнего ответа (на момент отправки состояния). */
+  ageMs: number;
+  lost: boolean;
+}
+
+/** RDM-прибор из TOD (Table of Devices) ноды. */
+export interface RdmDeviceInfo {
+  /** ESTA UID вида "4d4f:12345678" (производитель:устройство). */
+  uid: string;
+  nodeIp: string;
+  /** Port-Address, где прибор обнаружен. */
+  universe: number;
+  ageMs: number;
+  lost: boolean;
+}
+
+export interface NetworkEvent {
+  /** Unix-время события, мс. */
+  atMs: number;
+  text: string;
+}
+
+/** Состояние сети: ноды, RDM-приборы, журнал появлений/пропаж. */
+export interface NetworkState {
+  enabled: boolean;
+  nodes: ArtNetNodeInfo[];
+  rdmDevices: RdmDeviceInfo[];
+  log: NetworkEvent[];
+}
+
 /** UI → Движок */
 export type ClientMessage =
   | { type: 'setChannel'; universe: number; channel: number; value: number }
@@ -87,7 +124,9 @@ export type ClientMessage =
   // Плейлисты: исполняет движок автономно (мастер-часы — тик движка).
   | { type: 'playPlaylist'; playlistId: string; itemIndex?: number }
   | { type: 'skipPlaylist'; dir: 1 | -1 }
-  | { type: 'stopPlaylist' };
+  | { type: 'stopPlaylist' }
+  // Немедленный опрос сети (ArtPoll + ArtTodRequest вне расписания).
+  | { type: 'refreshNetwork' };
 
 /** Движок → UI */
 export type ServerMessage =
@@ -96,5 +135,6 @@ export type ServerMessage =
   | { type: 'frame'; universe: number; data: string }
   | { type: 'project'; project: Project }
   | { type: 'playback'; state: PlaybackState }
+  | { type: 'network'; state: NetworkState }
   /** Ответ на getAudio (только запросившему клиенту); dataBase64 = '' — файла нет. */
   | { type: 'audio'; name: string; dataBase64: string };

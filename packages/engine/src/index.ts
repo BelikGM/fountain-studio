@@ -3,6 +3,7 @@ import { AudioStore } from './audio';
 import { AudioPlayer } from './audioplayer';
 import { loadConfig } from './config';
 import { Engine } from './engine';
+import { NetworkMonitor } from './netmonitor';
 import { ProjectStore } from './project';
 import { Scheduler } from './schedule';
 import { startServer } from './server';
@@ -22,7 +23,21 @@ engine.playback.onShowAudio = (show) => {
 
 engine.setProject(store.project);
 engine.start();
-startServer(engine, store, audio);
+
+// Мониторинг сети: опрашиваем адреса Art-Net-выходов из конфига (ArtPoll + TOD).
+const artnetOutputs = config.universes.flatMap((u) =>
+  u.outputs.filter((o) => o.type === 'artnet'),
+);
+const net =
+  artnetOutputs.length > 0
+    ? new NetworkMonitor({
+        targets: [...new Set(artnetOutputs.map((o) => (o.broadcast ? '255.255.255.255' : o.host ?? '127.0.0.1')))],
+        universes: [...new Set(artnetOutputs.map((o) => o.universe))],
+      })
+    : undefined;
+net?.start();
+
+startServer(engine, store, audio, net);
 
 // Расписание по системному времени ПК — работает, пока запущен движок.
 const scheduler = new Scheduler(engine, () => store.project.schedule);

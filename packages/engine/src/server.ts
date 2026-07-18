@@ -2,12 +2,18 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { sanitizeProject, type ClientMessage, type ServerMessage } from '@fountain-studio/shared';
 import type { AudioStore } from './audio';
 import type { Engine } from './engine';
+import type { NetworkMonitor } from './netmonitor';
 import type { ProjectStore } from './project';
 
-export const ENGINE_VERSION = '0.4.0';
+export const ENGINE_VERSION = '0.5.0';
 
 /** WebSocket API движка: команды от редактора, поток статистики, кадров и состояния. */
-export function startServer(engine: Engine, store: ProjectStore, audio: AudioStore): WebSocketServer {
+export function startServer(
+  engine: Engine,
+  store: ProjectStore,
+  audio: AudioStore,
+  net?: NetworkMonitor,
+): WebSocketServer {
   const port = engine.config.server.port;
   const wss = new WebSocketServer({ port });
 
@@ -19,6 +25,10 @@ export function startServer(engine: Engine, store: ProjectStore, audio: AudioSto
   };
 
   const broadcastPlayback = (): void => broadcast({ type: 'playback', state: engine.playbackState() });
+  const broadcastNetwork = (): void => {
+    if (net) broadcast({ type: 'network', state: net.state() });
+  };
+  if (net) net.onChange = broadcastNetwork;
 
   wss.on('connection', (ws) => {
     const hello: ServerMessage = {
@@ -30,6 +40,7 @@ export function startServer(engine: Engine, store: ProjectStore, audio: AudioSto
     ws.send(JSON.stringify(hello));
     ws.send(JSON.stringify({ type: 'project', project: store.project } satisfies ServerMessage));
     ws.send(JSON.stringify({ type: 'playback', state: engine.playbackState() } satisfies ServerMessage));
+    if (net) ws.send(JSON.stringify({ type: 'network', state: net.state() } satisfies ServerMessage));
 
     ws.on('message', (raw) => {
       let msg: ClientMessage;
@@ -117,6 +128,10 @@ export function startServer(engine: Engine, store: ProjectStore, audio: AudioSto
           engine.stopPlaylist();
           broadcastPlayback();
           break;
+        case 'refreshNetwork':
+          net?.poll();
+          broadcastNetwork();
+          break;
         case 'uploadAudio':
           audio.save(msg.name, msg.dataBase64);
           break;
@@ -131,6 +146,10 @@ export function startServer(engine: Engine, store: ProjectStore, audio: AudioSto
 
   // Статистика раз в секунду, кадры для визуализации — с настроенной частотой.
   setInterval(() => broadcast({ type: 'stats', stats: engine.stats() }), 1000);
+  // Сеть: раз в 3 с (обновление возрастов), плюс мгновенно из onChange.
+  setInterval(() => {
+    if (wss.clients.size > 0) broadcastNetwork();
+  }, 3000);
   setInterval(() => {
     if (wss.clients.size === 0) return;
     for (const u of engine.universes) {
