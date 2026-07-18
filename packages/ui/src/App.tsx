@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useEngine } from './useEngine';
 import { KeysView } from './views/KeysView';
 import { ConsoleView } from './views/ConsoleView';
+import { LayoutView } from './views/LayoutView';
 import { PatchView } from './views/PatchView';
 import { ScenesView } from './views/ScenesView';
 import { SequencesView } from './views/SequencesView';
@@ -9,11 +10,12 @@ import { ShowView } from './views/ShowView';
 import { PlaylistsView } from './views/PlaylistsView';
 import { ScheduleView } from './views/ScheduleView';
 
-type Tab = 'console' | 'patch' | 'scenes' | 'sequences' | 'show' | 'playlists' | 'schedule' | 'keys';
+type Tab = 'console' | 'patch' | 'layout' | 'scenes' | 'sequences' | 'show' | 'playlists' | 'schedule' | 'keys';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'console', label: 'Консоль' },
   { id: 'patch', label: 'Патч' },
+  { id: 'layout', label: '3D' },
   { id: 'scenes', label: 'Сцены' },
   { id: 'sequences', label: 'Секвенсоры' },
   { id: 'show', label: 'Шоу' },
@@ -92,6 +94,7 @@ export function App() {
 
       {tab === 'console' && <ConsoleView engine={engine} />}
       {tab === 'patch' && <PatchView engine={engine} />}
+      {tab === 'layout' && <LayoutView engine={engine} />}
       {tab === 'scenes' && <ScenesView engine={engine} />}
       {tab === 'sequences' && <SequencesView engine={engine} />}
       {tab === 'show' && <ShowView engine={engine} />}
