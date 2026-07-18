@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Fountain Studio — настольное приложение (Electron): редактор + движок",
+  "author": "BelikGM",
   "main": "main.cjs",
   "scripts": {
     "dev": "electron .",
@@ -19,6 +20,7 @@
   "build": {
     "appId": "ru.fountainstudio.app",
     "productName": "Fountain Studio",
+    "electronVersion": "33.4.11",
     "directories": {
       "output": "release"
     },
@@ -29,7 +31,8 @@
       "ui/**"
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "signAndEditExecutable": false
     },
     "nsis": {
       "oneClick": false,
