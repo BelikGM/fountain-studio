@@ -161,6 +161,7 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
             </div>
             {showGenerator && (
               <GeneratorPanel
+                engine={engine}
                 project={project}
                 selected={selected}
                 updateProject={updateProject}
@@ -210,11 +211,13 @@ const ROLE_LABEL: Record<ActorRole, string> = {
  * ничего нового в движке для этого не требуется.
  */
 function GeneratorPanel({
+  engine,
   project,
   selected,
   updateProject,
   setSelectedId,
 }: {
+  engine: EngineConnection;
   project: Project;
   selected: Scene | null;
   updateProject: (p: Project) => void;
@@ -227,6 +230,8 @@ function GeneratorPanel({
   const [steps, setSteps] = useState(12);
   const [holdMs, setHoldMs] = useState(150);
   const [fadeMs, setFadeMs] = useState(100);
+  const [captureUniverse, setCaptureUniverse] = useState(engine.universes[0]?.id ?? 1);
+  const [captureStatus, setCaptureStatus] = useState<string | null>(null);
 
   const actors = useMemo(() => layoutActors(project.layout, role), [project.layout, role]);
   const profiles = useMemo(() => profileMap(project), [project]);
@@ -258,6 +263,53 @@ function GeneratorPanel({
       scenes: [...project.scenes, ...scenes],
       sequences: [...project.sequences, sequence],
     });
+  };
+
+  // Импорт с линии (§17 п.1): кадр внешнего ArtDMX → значения устройств этой вселенной.
+  const doCaptureScene = async (): Promise<void> => {
+    setCaptureStatus(null);
+    const snap = await engine.requestDmxCapture(captureUniverse);
+    if (!snap) {
+      setCaptureStatus(
+        'Захвата нет: внешний источник должен слать Art-Net на этот ПК (порт 6454 занят движком — мониторинг сети активен?).',
+      );
+      return;
+    }
+    const values: Record<string, number[]> = {};
+    let devicesCovered = 0;
+    for (const d of project.devices) {
+      if (d.universe !== captureUniverse) continue;
+      const profile = profiles.get(d.profileId);
+      if (!profile) continue;
+      values[d.id] = profile.channels.map((_, k) => snap.data[d.address - 1 + k] ?? 0);
+      devicesCovered++;
+    }
+    if (devicesCovered === 0) {
+      setCaptureStatus('В патче нет устройств этой вселенной — значения снимать некуда.');
+      return;
+    }
+    const scene: Scene = { id: uid(), name: `С линии (всел. ${captureUniverse})`, values };
+    updateProject({ ...project, scenes: [...project.scenes, scene] });
+    setSelectedId(scene.id);
+    setCaptureStatus(
+      `Снята сцена с линии: ${devicesCovered} устройств, источник ${snap.fromIp}, кадру ${Math.round(snap.ageMs / 1000)} с (записано кадров: ${snap.frames}).`,
+    );
+  };
+
+  const doMeasureCycle = async (): Promise<void> => {
+    setCaptureStatus('Измерение цикла…');
+    const m = await engine.requestDmxCycle(captureUniverse);
+    if (m.periodMs === null) {
+      setCaptureStatus(
+        m.analyzedMs < 2000
+          ? `Мало данных для измерения (записано ${(m.analyzedMs / 1000).toFixed(1)} с) — дайте источнику повещать подольше.`
+          : `Период не найден (запись ${(m.analyzedMs / 1000).toFixed(1)} с): поток не повторяется или цикл длиннее половины записи.`,
+      );
+      return;
+    }
+    setCaptureStatus(
+      `Период цикла T ≈ ${(m.periodMs / 1000).toFixed(1)} с (уверенность ${(m.confidence * 100).toFixed(0)}%, запись ${(m.analyzedMs / 1000).toFixed(0)} с).`,
+    );
   };
 
   return (
@@ -370,6 +422,29 @@ function GeneratorPanel({
           Создать секвенсор «бегущая волна»
         </button>
       </div>
+
+      <div className="form-row">
+        <span className="dim">
+          Импорт с линии — внешний Art-Net источник (старый контроллер) шлёт на этот ПК:
+        </span>
+        <label className="field">
+          Вселенная:{' '}
+          <select value={captureUniverse} onChange={(e) => setCaptureUniverse(Number(e.target.value))}>
+            {engine.universes.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button className="btn" onClick={() => void doCaptureScene()}>
+          Снять сцену с линии
+        </button>
+        <button className="btn" onClick={() => void doMeasureCycle()} title="Период повторения T захваченного потока">
+          Измерить период цикла
+        </button>
+      </div>
+      {captureStatus && <div className="dim">{captureStatus}</div>}
     </div>
   );
 }

@@ -30,6 +30,14 @@ export interface EngineConnection {
   updateProject: (project: Project) => void;
   /** Запрашивает аудиофайл из хранилища движка (null — файла нет). */
   requestAudio: (name: string) => Promise<Uint8Array | null>;
+  /** Последний кадр внешнего ArtDMX по вселенной проекта (null — захвата нет). */
+  requestDmxCapture: (
+    universe: number,
+  ) => Promise<{ data: Uint8Array; ageMs: number; fromIp: string; frames: number } | null>;
+  /** Измерение периода цикла захваченного потока. */
+  requestDmxCycle: (
+    universe: number,
+  ) => Promise<{ periodMs: number | null; confidence: number; analyzedMs: number }>;
 }
 
 // В Electron страница открывается с file:// — hostname пустой, движок локальный.
@@ -57,6 +65,13 @@ export function useEngine(): EngineConnection {
   const pendingEditsRef = useRef(0);
   /** Ожидающие ответа getAudio: имя файла → колбэки. */
   const audioWaitersRef = useRef(new Map<string, ((data: Uint8Array | null) => void)[]>());
+  /** Ожидающие ответов захвата DMX по вселенной. */
+  const captureWaitersRef = useRef(
+    new Map<number, ((snap: { data: Uint8Array; ageMs: number; fromIp: string; frames: number } | null) => void)[]>(),
+  );
+  const cycleWaitersRef = useRef(
+    new Map<number, ((m: { periodMs: number | null; confidence: number; analyzedMs: number }) => void)[]>(),
+  );
 
   useEffect(() => {
     let disposed = false;
@@ -108,6 +123,24 @@ export function useEngine(): EngineConnection {
             for (const resolve of waiters) resolve(data);
             break;
           }
+          case 'dmxCapture': {
+            const waiters = captureWaitersRef.current.get(msg.universe) ?? [];
+            captureWaitersRef.current.delete(msg.universe);
+            const snap =
+              msg.data === ''
+                ? null
+                : { data: base64ToBytes(msg.data), ageMs: msg.ageMs, fromIp: msg.fromIp, frames: msg.frames };
+            for (const resolve of waiters) resolve(snap);
+            break;
+          }
+          case 'dmxCycle': {
+            const waiters = cycleWaitersRef.current.get(msg.universe) ?? [];
+            cycleWaitersRef.current.delete(msg.universe);
+            for (const resolve of waiters) {
+              resolve({ periodMs: msg.periodMs, confidence: msg.confidence, analyzedMs: msg.analyzedMs });
+            }
+            break;
+          }
         }
       };
     };
@@ -148,6 +181,34 @@ export function useEngine(): EngineConnection {
     [send],
   );
 
+  const requestDmxCapture = useCallback(
+    (universe: number) =>
+      new Promise<{ data: Uint8Array; ageMs: number; fromIp: string; frames: number } | null>((resolve) => {
+        const waiters = captureWaitersRef.current.get(universe);
+        if (waiters) {
+          waiters.push(resolve);
+        } else {
+          captureWaitersRef.current.set(universe, [resolve]);
+          send({ type: 'getDmxCapture', universe });
+        }
+      }),
+    [send],
+  );
+
+  const requestDmxCycle = useCallback(
+    (universe: number) =>
+      new Promise<{ periodMs: number | null; confidence: number; analyzedMs: number }>((resolve) => {
+        const waiters = cycleWaitersRef.current.get(universe);
+        if (waiters) {
+          waiters.push(resolve);
+        } else {
+          cycleWaitersRef.current.set(universe, [resolve]);
+          send({ type: 'measureDmxCycle', universe });
+        }
+      }),
+    [send],
+  );
+
   return {
     connected,
     version,
@@ -162,6 +223,8 @@ export function useEngine(): EngineConnection {
     send,
     updateProject,
     requestAudio,
+    requestDmxCapture,
+    requestDmxCycle,
   };
 }
 
