@@ -1,0 +1,40 @@
+{
+  "name": "@fountain-studio/app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fountain Studio — настольное приложение (Electron): редактор + движок",
+  "main": "main.cjs",
+  "scripts": {
+    "dev": "electron .",
+    "build:engine": "esbuild ../engine/src/index.ts --bundle --platform=node --format=cjs --outfile=engine.cjs --external:bufferutil --external:utf-8-validate",
+    "build:ui": "node -e \"const fs=require('fs');fs.rmSync('ui',{recursive:true,force:true});fs.cpSync('../ui/dist','ui',{recursive:true})\"",
+    "build": "npm run build:engine && npm run build:ui",
+    "dist": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.0",
+    "esbuild": "^0.24.0"
+  },
+  "build": {
+    "appId": "ru.fountainstudio.app",
+    "productName": "Fountain Studio",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.cjs",
+      "engine.cjs",
+      "default-config.json",
+      "ui/**"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "FountainStudio-Setup-${version}.exe"
+    }
+  }
+}

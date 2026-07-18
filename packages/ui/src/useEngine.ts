@@ -26,7 +26,8 @@ export interface EngineConnection {
   requestAudio: (name: string) => Promise<Uint8Array | null>;
 }
 
-const ENGINE_URL = `ws://${location.hostname}:9520`;
+// В Electron страница открывается с file:// — hostname пустой, движок локальный.
+const ENGINE_URL = `ws://${location.hostname || '127.0.0.1'}:9520`;
 
 /** Подключение к движку с автопереподключением. */
 export function useEngine(): EngineConnection {

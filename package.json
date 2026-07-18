@@ -14,6 +14,9 @@
     "engine:watchdog": "npm -w @fountain-studio/engine run watchdog",
     "monitor": "tsx packages/engine/src/tools/artnet-monitor.ts",
     "build": "npm -w @fountain-studio/ui run build",
+    "app:dev": "concurrently -n engine,ui,app -c blue,green,magenta \"npm:dev:engine\" \"npm:dev:ui\" \"npm -w @fountain-studio/app run dev\"",
+    "app:build": "npm -w @fountain-studio/ui run build && npm -w @fountain-studio/app run build",
+    "app:dist": "npm run app:build && npm -w @fountain-studio/app run dist",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "smoke": "npm -w @fountain-studio/engine run smoke"
   },
