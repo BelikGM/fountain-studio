@@ -96,6 +96,27 @@ export interface NetworkState {
   log: NetworkEvent[];
 }
 
+/**
+ * Универсальный слой RDM (§3 доработки, §22): GET/SET параметров, одинаковых
+ * по спецификации ANSI E1.20 для любого прибора — DEVICE_INFO, ярлыки
+ * (производитель/модель/версия ПО), IDENTIFY (мигнуть), DMX_START_ADDRESS
+ * (прочитать/переставить адрес удалённо). Опциональные PID конкретных
+ * производителей (сенсоры, статус-сообщения) сюда сознательно не входят —
+ * их поддержка и формат различаются прибор от прибора.
+ */
+export interface RdmDeviceInfoPayload {
+  protocolVersion: string;
+  deviceModelId: number;
+  productCategory: number;
+  softwareVersionId: number;
+  dmxFootprint: number;
+  dmxStartAddress: number;
+  subDeviceCount: number;
+  sensorCount: number;
+}
+
+export type RdmAction = 'deviceInfo' | 'labels' | 'getIdentify' | 'setIdentify' | 'getAddress' | 'setAddress';
+
 /** Состояние насоса, управляемого напрямую по Modbus (§12 п.9). */
 export interface PumpModbusStatus {
   deviceId: string;
@@ -146,7 +167,11 @@ export type ClientMessage =
   | { type: 'refreshNetwork' }
   // Захват входящего ArtDMX (§17 п.1): снимок кадра вселенной проекта и период цикла.
   | { type: 'getDmxCapture'; universe: number }
-  | { type: 'measureDmxCycle'; universe: number };
+  | { type: 'measureDmxCycle'; universe: number }
+  // RDM (§3 доработки): GET/SET по обнаруженному через TOD UID.
+  | { type: 'rdmRequest'; uid: string; action: 'deviceInfo' | 'labels' | 'getIdentify' | 'getAddress' }
+  | { type: 'rdmRequest'; uid: string; action: 'setIdentify'; on: boolean }
+  | { type: 'rdmRequest'; uid: string; action: 'setAddress'; address: number };
 
 /** Движок → UI */
 export type ServerMessage =
@@ -164,4 +189,10 @@ export type ServerMessage =
   /** Ответ на measureDmxCycle. */
   | { type: 'dmxCycle'; universe: number; periodMs: number | null; confidence: number; analyzedMs: number }
   /** Статус удалённого управления (§1 доработки): включено ли, есть ли связь. */
-  | { type: 'remoteStatus'; osc: { enabled: boolean }; mqtt: { enabled: boolean; connected: boolean } };
+  | { type: 'remoteStatus'; osc: { enabled: boolean }; mqtt: { enabled: boolean; connected: boolean } }
+  // Ответы на rdmRequest.
+  | { type: 'rdmResponse'; uid: string; ok: false; action: RdmAction; error: string }
+  | { type: 'rdmResponse'; uid: string; ok: true; action: 'deviceInfo'; deviceInfo: RdmDeviceInfoPayload }
+  | { type: 'rdmResponse'; uid: string; ok: true; action: 'labels'; manufacturer: string; model: string; softwareVersion: string }
+  | { type: 'rdmResponse'; uid: string; ok: true; action: 'getIdentify' | 'setIdentify'; identify: boolean }
+  | { type: 'rdmResponse'; uid: string; ok: true; action: 'getAddress' | 'setAddress'; address: number };

@@ -45,6 +45,10 @@ export interface EngineConnection {
   requestDmxCycle: (
     universe: number,
   ) => Promise<{ periodMs: number | null; confidence: number; analyzedMs: number }>;
+  /** RDM GET/SET (§3 доработки) — резолвится ответом rdmResponse на этот же uid+action. */
+  requestRdm: (
+    req: Extract<ClientMessage, { type: 'rdmRequest' }>,
+  ) => Promise<Extract<ServerMessage, { type: 'rdmResponse' }>>;
 }
 
 // В Electron страница открывается с file:// — hostname пустой, движок локальный.
@@ -79,6 +83,10 @@ export function useEngine(): EngineConnection {
   );
   const cycleWaitersRef = useRef(
     new Map<number, ((m: { periodMs: number | null; confidence: number; analyzedMs: number }) => void)[]>(),
+  );
+  /** Ожидающие rdmResponse, ключ "uid:action" — несколько действий на один прибор не путаются. */
+  const rdmWaitersRef = useRef(
+    new Map<string, ((msg: Extract<ServerMessage, { type: 'rdmResponse' }>) => void)[]>(),
   );
 
   useEffect(() => {
@@ -152,6 +160,13 @@ export function useEngine(): EngineConnection {
             }
             break;
           }
+          case 'rdmResponse': {
+            const key = `${msg.uid}:${msg.action}`;
+            const waiters = rdmWaitersRef.current.get(key) ?? [];
+            rdmWaitersRef.current.delete(key);
+            for (const resolve of waiters) resolve(msg);
+            break;
+          }
         }
       };
     };
@@ -220,6 +235,21 @@ export function useEngine(): EngineConnection {
     [send],
   );
 
+  const requestRdm = useCallback(
+    (req: Extract<ClientMessage, { type: 'rdmRequest' }>) =>
+      new Promise<Extract<ServerMessage, { type: 'rdmResponse' }>>((resolve) => {
+        const key = `${req.uid}:${req.action}`;
+        const waiters = rdmWaitersRef.current.get(key);
+        if (waiters) {
+          waiters.push(resolve);
+        } else {
+          rdmWaitersRef.current.set(key, [resolve]);
+          send(req);
+        }
+      }),
+    [send],
+  );
+
   return {
     connected,
     version,
@@ -237,6 +267,7 @@ export function useEngine(): EngineConnection {
     requestAudio,
     requestDmxCapture,
     requestDmxCycle,
+    requestRdm,
   };
 }
 

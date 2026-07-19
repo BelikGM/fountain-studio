@@ -1,5 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws';
-import { sanitizeProject, type ClientMessage, type ServerMessage } from '@fountain-studio/shared';
+import { sanitizeProject, type ClientMessage, type RdmAction, type ServerMessage } from '@fountain-studio/shared';
 import type { AudioStore } from './audio';
 import type { DmxCapture } from './dmxcapture';
 import type { Engine } from './engine';
@@ -7,6 +7,22 @@ import type { MqttController } from './mqttcontroller';
 import type { NetworkMonitor } from './netmonitor';
 import type { OscServer } from './oscserver';
 import type { ProjectStore } from './project';
+import {
+  CC_GET_COMMAND,
+  CC_SET_COMMAND,
+  PID_DEVICE_INFO,
+  PID_DEVICE_MODEL_DESCRIPTION,
+  PID_DMX_START_ADDRESS,
+  PID_IDENTIFY_DEVICE,
+  PID_MANUFACTURER_LABEL,
+  PID_SOFTWARE_VERSION_LABEL,
+  encodeIdentify,
+  encodeStartAddress,
+  parseDeviceInfoResponse,
+  parseIdentifyResponse,
+  parseLabelResponse,
+  parseStartAddressResponse,
+} from './rdm';
 
 export const ENGINE_VERSION = '0.6.0';
 
@@ -186,6 +202,9 @@ export function startServer(
           );
           break;
         }
+        case 'rdmRequest':
+          void handleRdmRequest(net, msg, ws);
+          break;
         case 'uploadAudio':
           audio.save(msg.name, msg.dataBase64);
           break;
@@ -231,4 +250,64 @@ export function startServer(
 
   wss.on('listening', () => console.log(`[server] WebSocket на ws://0.0.0.0:${port}`));
   return wss;
+}
+
+/**
+ * Исполняет rdmRequest (§3 доработки) и шлёт rdmResponse тому же клиенту.
+ * Ошибки (нет монитора сети, таймаут, прибор не в TOD) — не бросаем, а
+ * отвечаем ok:false с текстом причины, чтобы UI мог показать её пользователю.
+ */
+async function handleRdmRequest(
+  net: NetworkMonitor | undefined,
+  msg: Extract<ClientMessage, { type: 'rdmRequest' }>,
+  ws: WebSocket,
+): Promise<void> {
+  const fail = (action: RdmAction, error: string): void => {
+    ws.send(JSON.stringify({ type: 'rdmResponse', uid: msg.uid, ok: false, action, error } satisfies ServerMessage));
+  };
+  if (!net) {
+    fail(msg.action, 'мониторинг сети не активен (нет Art-Net-выходов в конфиге)');
+    return;
+  }
+  try {
+    if (msg.action === 'deviceInfo') {
+      const resp = await net.rdmRequest(msg.uid, CC_GET_COMMAND, PID_DEVICE_INFO);
+      const deviceInfo = parseDeviceInfoResponse(resp.paramData);
+      if (!deviceInfo) throw new Error('не удалось разобрать ответ DEVICE_INFO');
+      ws.send(JSON.stringify({ type: 'rdmResponse', uid: msg.uid, ok: true, action: 'deviceInfo', deviceInfo } satisfies ServerMessage));
+    } else if (msg.action === 'labels') {
+      const getLabel = (pid: number): Promise<string> =>
+        net.rdmRequest(msg.uid, CC_GET_COMMAND, pid).then((r) => parseLabelResponse(r.paramData)).catch(() => '?');
+      const [manufacturer, model, softwareVersion] = await Promise.all([
+        getLabel(PID_MANUFACTURER_LABEL),
+        getLabel(PID_DEVICE_MODEL_DESCRIPTION),
+        getLabel(PID_SOFTWARE_VERSION_LABEL),
+      ]);
+      ws.send(
+        JSON.stringify({ type: 'rdmResponse', uid: msg.uid, ok: true, action: 'labels', manufacturer, model, softwareVersion } satisfies ServerMessage),
+      );
+    } else if (msg.action === 'getIdentify' || msg.action === 'setIdentify') {
+      let identify: boolean;
+      if (msg.action === 'setIdentify') {
+        await net.rdmRequest(msg.uid, CC_SET_COMMAND, PID_IDENTIFY_DEVICE, encodeIdentify(msg.on));
+        identify = msg.on;
+      } else {
+        const resp = await net.rdmRequest(msg.uid, CC_GET_COMMAND, PID_IDENTIFY_DEVICE);
+        identify = parseIdentifyResponse(resp.paramData);
+      }
+      ws.send(JSON.stringify({ type: 'rdmResponse', uid: msg.uid, ok: true, action: msg.action, identify } satisfies ServerMessage));
+    } else if (msg.action === 'getAddress' || msg.action === 'setAddress') {
+      let address: number;
+      if (msg.action === 'setAddress') {
+        await net.rdmRequest(msg.uid, CC_SET_COMMAND, PID_DMX_START_ADDRESS, encodeStartAddress(msg.address));
+        address = msg.address;
+      } else {
+        const resp = await net.rdmRequest(msg.uid, CC_GET_COMMAND, PID_DMX_START_ADDRESS);
+        address = parseStartAddressResponse(resp.paramData) ?? 0;
+      }
+      ws.send(JSON.stringify({ type: 'rdmResponse', uid: msg.uid, ok: true, action: msg.action, address } satisfies ServerMessage));
+    }
+  } catch (err) {
+    fail(msg.action, err instanceof Error ? err.message : String(err));
+  }
 }

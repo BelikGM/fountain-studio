@@ -1,4 +1,5 @@
-import type { NetworkState } from '@fountain-studio/shared';
+import { useState } from 'react';
+import type { ClientMessage, NetworkState, RdmAction } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
 
 /**
@@ -7,6 +8,7 @@ import type { EngineConnection } from '../useEngine';
  */
 export function NetworkView({ engine }: { engine: EngineConnection }) {
   const { network, send } = engine;
+  const [selectedUid, setSelectedUid] = useState<string | null>(null);
 
   if (!network) {
     return (
@@ -79,6 +81,7 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
                 <th>Вселенная</th>
                 <th>Нода</th>
                 <th>Последний ответ</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -89,11 +92,20 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
                   <td>{d.universe}</td>
                   <td>{d.nodeIp}</td>
                   <td>{formatAge(d.ageMs)}</td>
+                  <td>
+                    <button
+                      className={selectedUid === d.uid ? 'btn btn-small active' : 'btn btn-small'}
+                      onClick={() => setSelectedUid(selectedUid === d.uid ? null : d.uid)}
+                    >
+                      Опросить
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
+        {selectedUid && <RdmDetailPanel engine={engine} uid={selectedUid} key={selectedUid} />}
       </section>
 
       <section className="panel">
@@ -118,6 +130,121 @@ function formatAge(ageMs: number): string {
   if (ageMs < 2000) return 'только что';
   if (ageMs < 60_000) return `${Math.round(ageMs / 1000)} с назад`;
   return `${Math.round(ageMs / 60_000)} мин назад`;
+}
+
+/**
+ * Универсальные RDM-параметры (§3 доработки): одинаковы по спецификации
+ * E1.20 для любой марки прибора, в отличие от сенсоров/статус-сообщений
+ * (те — опциональные, формат зависит от производителя, сюда сознательно
+ * не включены — см. docs/ARCHITECTURE.md §22, §25).
+ */
+function RdmDetailPanel({ engine, uid }: { engine: EngineConnection; uid: string }) {
+  const [deviceInfo, setDeviceInfo] = useState<{
+    protocolVersion: string;
+    deviceModelId: number;
+    productCategory: number;
+    softwareVersionId: number;
+    dmxFootprint: number;
+    dmxStartAddress: number;
+    subDeviceCount: number;
+    sensorCount: number;
+  } | null>(null);
+  const [labels, setLabels] = useState<{ manufacturer: string; model: string; softwareVersion: string } | null>(null);
+  const [identify, setIdentify] = useState<boolean | null>(null);
+  const [address, setAddress] = useState<number | null>(null);
+  const [addressInput, setAddressInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = async (
+    action: RdmAction,
+    extra?: { on?: boolean; address?: number },
+  ): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      const req = { type: 'rdmRequest', uid, action, ...extra } as Extract<ClientMessage, { type: 'rdmRequest' }>;
+      const resp = await engine.requestRdm(req);
+      if (!resp.ok) {
+        setError(resp.error);
+        return;
+      }
+      if (resp.action === 'deviceInfo') setDeviceInfo(resp.deviceInfo);
+      else if (resp.action === 'labels') {
+        setLabels({ manufacturer: resp.manufacturer, model: resp.model, softwareVersion: resp.softwareVersion });
+      } else if (resp.action === 'getIdentify' || resp.action === 'setIdentify') setIdentify(resp.identify);
+      else if (resp.action === 'getAddress' || resp.action === 'setAddress') {
+        setAddress(resp.address);
+        setAddressInput(String(resp.address));
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="trim-editor">
+      <div className="form-row">
+        <span className="dim">Прибор {uid} — параметры, одинаковые по спеке E1.20 для любой марки:</span>
+        <button className="btn btn-small" disabled={busy} onClick={() => void run('deviceInfo')}>
+          DEVICE_INFO
+        </button>
+        <button className="btn btn-small" disabled={busy} onClick={() => void run('labels')}>
+          Ярлыки
+        </button>
+        <button className="btn btn-small" disabled={busy} onClick={() => void run('getIdentify')}>
+          Опросить IDENTIFY
+        </button>
+        <button className="btn btn-small" disabled={busy} onClick={() => void run('getAddress')}>
+          Опросить адрес
+        </button>
+      </div>
+      {error && <div className="error-text">Ошибка: {error}</div>}
+      {labels && (
+        <div className="dim">
+          Производитель: {labels.manufacturer || '—'} · Модель: {labels.model || '—'} · ПО:{' '}
+          {labels.softwareVersion || '—'}
+        </div>
+      )}
+      {deviceInfo && (
+        <div className="dim">
+          Протокол RDM {deviceInfo.protocolVersion} · DMX-футпринт {deviceInfo.dmxFootprint} кан. · адрес по
+          прибору {deviceInfo.dmxStartAddress} · саб-устройств {deviceInfo.subDeviceCount} · сенсоров{' '}
+          {deviceInfo.sensorCount}
+        </div>
+      )}
+      <div className="form-row">
+        <button
+          className={identify ? 'btn active' : 'btn'}
+          disabled={busy}
+          onClick={() => void run('setIdentify', { on: !identify })}
+        >
+          {identify ? '✦ IDENTIFY включён — выключить' : 'Мигнуть (IDENTIFY)'}
+        </button>
+        <label className="field">
+          DMX-адрес:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={1}
+            max={512}
+            value={addressInput}
+            onChange={(e) => setAddressInput(e.target.value)}
+          />
+        </label>
+        <button
+          className="btn"
+          disabled={busy || addressInput === ''}
+          onClick={() => void run('setAddress', { address: Number(addressInput) })}
+        >
+          Переставить адрес на приборе
+        </button>
+        {address !== null && <span className="dim">сейчас: {address}</span>}
+      </div>
+    </div>
+  );
 }
 
 export type { NetworkState };

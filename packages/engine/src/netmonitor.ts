@@ -14,6 +14,7 @@
 import dgram from 'node:dgram';
 import type { NetworkEvent, NetworkState } from '@fountain-studio/shared';
 import { ARTNET_PORT } from './drivers/artnet';
+import { buildRdmPacket, OP_RDM, parseRdmPacket, unwrapArtRdm, wrapArtRdm, type RdmResponse } from './rdm';
 
 const OP_POLL = 0x2000;
 const OP_POLL_REPLY = 0x2100;
@@ -63,6 +64,8 @@ export class NetworkMonitor {
   private nodes = new Map<string, NodeRec>();
   private rdm = new Map<string, RdmRec>();
   private log: NetworkEvent[] = [];
+  private rdmTransactionCounter = 0;
+  private pendingRdm = new Map<number, { resolve: (r: RdmResponse) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
 
   constructor(opts: NetMonitorOptions) {
     this.opts = {
@@ -99,6 +102,11 @@ export class NetworkMonitor {
     this.listenSocket?.close();
     this.socket = null;
     this.listenSocket = null;
+    for (const p of this.pendingRdm.values()) {
+      clearTimeout(p.timer);
+      p.reject(new Error('монитор сети остановлен'));
+    }
+    this.pendingRdm.clear();
   }
 
   /** Немедленный цикл опроса (кнопка «Обновить» в UI). */
@@ -151,6 +159,48 @@ export class NetworkMonitor {
     if (op === OP_POLL_REPLY) this.parsePollReply(msg, fromIp);
     else if (op === OP_TOD_DATA) this.parseTodData(msg, fromIp);
     else if (op === OP_DMX) this.parseDmx(msg, fromIp);
+    else if (op === OP_RDM) this.parseRdmReply(msg);
+  }
+
+  private parseRdmReply(msg: Buffer): void {
+    const rdmPkt = unwrapArtRdm(msg);
+    if (!rdmPkt) return;
+    const resp = parseRdmPacket(rdmPkt);
+    if (!resp) return;
+    const pending = this.pendingRdm.get(resp.transactionNum);
+    if (!pending) return; // ответ на неизвестную/устаревшую транзакцию — молча отбрасываем
+    this.pendingRdm.delete(resp.transactionNum);
+    clearTimeout(pending.timer);
+    pending.resolve(resp);
+  }
+
+  /**
+   * GET/SET конкретного параметра (PID) у прибора, уже обнаруженного через TOD
+   * (§16, §22: identify/чтение и перестановка DMX-адреса удалённо). Rejects по
+   * таймауту или если прибор/его нода сейчас не значатся в TOD/ArtPoll.
+   */
+  rdmRequest(targetUid: string, cc: number, pid: number, paramData: Buffer = Buffer.alloc(0), timeoutMs = 1000): Promise<RdmResponse> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('монитор сети не запущен'));
+        return;
+      }
+      const device = this.rdm.get(targetUid);
+      if (!device) {
+        reject(new Error(`RDM-прибор ${targetUid} сейчас не значится в TOD`));
+        return;
+      }
+      const txNum = (this.rdmTransactionCounter = (this.rdmTransactionCounter + 1) & 0xff);
+      const rdmPkt = buildRdmPacket(targetUid, cc, pid, txNum, paramData);
+      const net = (device.universe >> 8) & 0x7f;
+      const artRdmPkt = wrapArtRdm(rdmPkt, net);
+      const timer = setTimeout(() => {
+        this.pendingRdm.delete(txNum);
+        reject(new Error('таймаут ответа RDM'));
+      }, timeoutMs);
+      this.pendingRdm.set(txNum, { resolve, reject, timer });
+      this.socket!.send(artRdmPkt, this.opts.port, device.nodeIp);
+    });
   }
 
   private parseDmx(msg: Buffer, fromIp: string): void {

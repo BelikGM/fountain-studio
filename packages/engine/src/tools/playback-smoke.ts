@@ -56,6 +56,20 @@ import { Engine } from '../engine';
 import { MqttController } from '../mqttcontroller';
 import { NetworkMonitor } from '../netmonitor';
 import { OscServer } from '../oscserver';
+import {
+  CC_GET_COMMAND,
+  CC_SET_COMMAND,
+  PID_DEVICE_INFO,
+  PID_DMX_START_ADDRESS,
+  PID_IDENTIFY_DEVICE,
+  PID_MANUFACTURER_LABEL,
+  encodeIdentify,
+  encodeStartAddress,
+  parseDeviceInfoResponse,
+  parseIdentifyResponse,
+  parseLabelResponse,
+  parseStartAddressResponse,
+} from '../rdm';
 import { ProjectStore } from '../project';
 import { Scheduler } from '../schedule';
 import { startServer } from '../server';
@@ -65,9 +79,12 @@ const MOCK_NODE_PORT = 16454; // мок-нода Art-Net (не 6454, чтобы 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fountain-smoke-'));
 const projectFile = path.join(tmpDir, 'fountain.project.json');
 
-// Мок-нода: отвечает на ArtPoll (ArtPollReply) и ArtTodRequest (ArtTodData с 2 UID),
-// пока mockNodeAlive = true. Умолкание имитирует пропажу ноды из сети.
+// Мок-нода: отвечает на ArtPoll (ArtPollReply), ArtTodRequest (ArtTodData с 2 UID)
+// и ArtRdm (§3 доработки — универсальные PID E1.20), пока mockNodeAlive = true.
+// Умолкание имитирует пропажу ноды из сети.
 let mockNodeAlive = true;
+let mockRdmAddress = 5; // текущий DMX-адрес мок-прибора (GET/SET DMX_START_ADDRESS)
+let mockRdmIdentify = false; // текущее состояние IDENTIFY_DEVICE мок-прибора
 const mockNode = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 mockNode.on('message', (msg, rinfo) => {
   if (!mockNodeAlive || msg.toString('latin1', 0, 8) !== 'Art-Net\0') return;
@@ -112,6 +129,84 @@ mockNode.on('message', (msg, rinfo) => {
     tod.writeUInt8(uids.length, 27);
     uids.forEach((u, i) => tod.set(u, 28 + i * 6));
     mockNode.send(tod, rinfo.port, rinfo.address);
+  } else if (op === 0x8300) {
+    // ArtRdm: RDM-пакет начинается со смещения 24. Отвечаем на универсальные
+    // PID E1.20 независимо реализованным кодом (не переиспользуем rdm.ts) —
+    // так проверка не «замыкается сама на себя», а честно гоняет протокол.
+    const rdm = msg.subarray(24);
+    if (rdm.length < 24 || rdm[0] !== 0xcc || rdm[1] !== 0x01) return;
+    const cc = rdm.readUInt8(20);
+    const pid = rdm.readUInt16BE(21);
+    const transactionNum = rdm.readUInt8(15);
+    const requesterUid = rdm.subarray(3, 9); // станет Destination UID в ответе
+    const targetUid = rdm.subarray(9, 15); // станет Source UID в ответе (мок-прибор)
+
+    let paramData: Buffer;
+    if (cc === 0x20 && pid === 0x0060) {
+      paramData = Buffer.alloc(19);
+      paramData.writeUInt8(1, 0);
+      paramData.writeUInt8(0, 1); // протокол 1.0
+      paramData.writeUInt16BE(0x1234, 2); // deviceModelId
+      paramData.writeUInt16BE(0x0100, 4); // productCategory
+      paramData.writeUInt32BE(0x01000000, 6); // softwareVersionId
+      paramData.writeUInt16BE(3, 10); // dmxFootprint
+      paramData.writeUInt8(1, 12);
+      paramData.writeUInt8(1, 13); // personality current/total
+      paramData.writeUInt16BE(mockRdmAddress, 14);
+      paramData.writeUInt16BE(0, 16); // subDeviceCount
+      paramData.writeUInt8(0, 18); // sensorCount
+    } else if (cc === 0x20 && pid === 0x0081) {
+      paramData = Buffer.from('Mock Manufacturer', 'ascii');
+    } else if (cc === 0x20 && pid === 0x0080) {
+      paramData = Buffer.from('Mock Fixture', 'ascii');
+    } else if (cc === 0x20 && pid === 0x00c0) {
+      paramData = Buffer.from('1.0.0', 'ascii');
+    } else if (cc === 0x20 && pid === 0x1000) {
+      paramData = Buffer.from([mockRdmIdentify ? 1 : 0]);
+    } else if (cc === 0x30 && pid === 0x1000) {
+      mockRdmIdentify = rdm.readUInt8(24) !== 0;
+      paramData = Buffer.alloc(0);
+    } else if (cc === 0x20 && pid === 0x00f0) {
+      paramData = Buffer.alloc(2);
+      paramData.writeUInt16BE(mockRdmAddress, 0);
+    } else if (cc === 0x30 && pid === 0x00f0) {
+      mockRdmAddress = rdm.readUInt16BE(24);
+      paramData = Buffer.alloc(0);
+    } else {
+      return; // неизвестный PID — мок молчит, как реальный прибор без этого параметра
+    }
+
+    const respCc = cc === 0x20 ? 0x21 : 0x31; // GET/SET _COMMAND_RESPONSE
+    const msgLength = 24 + paramData.length;
+    const resp = Buffer.alloc(msgLength + 2);
+    resp.writeUInt8(0xcc, 0);
+    resp.writeUInt8(0x01, 1);
+    resp.writeUInt8(msgLength, 2);
+    requesterUid.copy(resp, 3); // Destination = кто спрашивал
+    targetUid.copy(resp, 9); // Source = мок-прибор
+    resp.writeUInt8(transactionNum, 15);
+    resp.writeUInt8(0, 16);
+    resp.writeUInt8(0, 17);
+    resp.writeUInt16BE(0, 18);
+    resp.writeUInt8(respCc, 20);
+    resp.writeUInt16BE(pid, 21);
+    resp.writeUInt8(paramData.length, 23);
+    paramData.copy(resp, 24);
+    let checksum = 0;
+    for (let i = 0; i < msgLength; i++) checksum += resp[i]!;
+    resp.writeUInt16BE(checksum & 0xffff, msgLength);
+
+    const artResp = Buffer.alloc(24 + resp.length);
+    artResp.write('Art-Net\0', 0, 'latin1');
+    artResp.writeUInt16LE(0x8300, 8);
+    artResp.writeUInt8(0, 10);
+    artResp.writeUInt8(14, 11);
+    artResp.writeUInt8(1, 12);
+    artResp.writeUInt8(0, 21);
+    artResp.writeUInt8(0, 22);
+    artResp.writeUInt8(0, 23);
+    resp.copy(artResp, 24);
+    mockNode.send(artResp, rinfo.port, rinfo.address);
   }
 });
 mockNode.bind(MOCK_NODE_PORT, '127.0.0.1');
@@ -919,6 +1014,34 @@ async function main(): Promise<void> {
       networkState!.log.some((e) => e.text.includes('4d4f:00000001')),
     'журнал: появление ноды и приборов записано',
   );
+
+  console.log('— RDM: универсальные PID через ArtRdm (§3 доработки) —');
+  const rdmUid = '4d4f:00000001';
+  const devInfo = parseDeviceInfoResponse((await net.rdmRequest(rdmUid, CC_GET_COMMAND, PID_DEVICE_INFO)).paramData);
+  check(
+    devInfo !== null && devInfo.dmxFootprint === 3 && devInfo.dmxStartAddress === 5,
+    `RDM DEVICE_INFO разобран: footprint=${devInfo?.dmxFootprint}, адрес=${devInfo?.dmxStartAddress}`,
+  );
+  const manufacturer = parseLabelResponse((await net.rdmRequest(rdmUid, CC_GET_COMMAND, PID_MANUFACTURER_LABEL)).paramData);
+  check(manufacturer === 'Mock Manufacturer', `RDM MANUFACTURER_LABEL разобран: «${manufacturer}»`);
+
+  const idBefore = parseIdentifyResponse((await net.rdmRequest(rdmUid, CC_GET_COMMAND, PID_IDENTIFY_DEVICE)).paramData);
+  check(idBefore === false, 'RDM IDENTIFY_DEVICE: изначально выключен');
+  await net.rdmRequest(rdmUid, CC_SET_COMMAND, PID_IDENTIFY_DEVICE, encodeIdentify(true));
+  const idAfter = parseIdentifyResponse((await net.rdmRequest(rdmUid, CC_GET_COMMAND, PID_IDENTIFY_DEVICE)).paramData);
+  check(idAfter === true, 'RDM SET IDENTIFY_DEVICE: включили мигание, GET подтвердил');
+
+  const addrBefore = parseStartAddressResponse((await net.rdmRequest(rdmUid, CC_GET_COMMAND, PID_DMX_START_ADDRESS)).paramData);
+  check(addrBefore === 5, 'RDM DMX_START_ADDRESS: изначально 5');
+  await net.rdmRequest(rdmUid, CC_SET_COMMAND, PID_DMX_START_ADDRESS, encodeStartAddress(42));
+  const addrAfter = parseStartAddressResponse((await net.rdmRequest(rdmUid, CC_GET_COMMAND, PID_DMX_START_ADDRESS)).paramData);
+  check(addrAfter === 42, 'RDM SET DMX_START_ADDRESS: переставили на 42, GET подтвердил (удалённая переадресация)');
+
+  await net.rdmRequest('4d4f:ffffffff', CC_GET_COMMAND, PID_DEVICE_INFO, undefined, 300).then(
+    () => check(false, 'RDM: запрос к UID вне TOD должен был упасть, а не ответить'),
+    (err) => check(err instanceof Error, 'RDM: запрос к UID вне TOD аккуратно завершается ошибкой, не виснет'),
+  );
+
   mockNodeAlive = false; // нода «выдернута из сети»
   await waitFor(
     'потеря ноды по таймауту',
