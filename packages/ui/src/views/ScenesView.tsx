@@ -14,6 +14,7 @@ import {
   type Project,
   type Scene,
   type Sequence,
+  type WaveSceneOptions,
 } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
 
@@ -224,6 +225,7 @@ function GeneratorPanel({
   setSelectedId: (id: string) => void;
 }) {
   const [role, setRole] = useState<ActorRole>('pump');
+  const [waveMode, setWaveMode] = useState<NonNullable<WaveSceneOptions['mode']>>('angle');
   const [cycles, setCycles] = useState(1);
   const [min, setMin] = useState(0);
   const [max, setMax] = useState(255);
@@ -248,13 +250,13 @@ function GeneratorPanel({
     if (selected) addScenes([mirrorScene(selected, actors, axis)]);
   };
   const doWave = (): void => {
-    addScenes([radialWaveScene(actors, project.devices, profiles, { cycles, min, max })]);
+    addScenes([radialWaveScene(actors, project.devices, profiles, { cycles, min, max, mode: waveMode })]);
   };
   const doWaveSequence = (): void => {
-    const scenes = radialWaveSequenceScenes(actors, project.devices, profiles, steps, { cycles, min, max });
+    const scenes = radialWaveSequenceScenes(actors, project.devices, profiles, steps, { cycles, min, max, mode: waveMode });
     const sequence: Sequence = {
       id: uid(),
-      name: `Волна по кольцу (${steps} шаг.)`,
+      name: `Волна (${steps} шаг.)`,
       mode: 'loop',
       steps: scenes.map((s) => ({ sceneId: s.id, holdMs, fadeMs })),
     };
@@ -346,9 +348,17 @@ function GeneratorPanel({
       </div>
 
       <div className="form-row">
-        <span className="dim">Волна по кольцу (только насосы/клапаны/диммеры — одноканальные):</span>
+        <span className="dim">Волна по фигуре (только насосы/клапаны/диммеры — одноканальные):</span>
         <label className="field">
-          Волн по кругу:{' '}
+          Раскладка:{' '}
+          <select value={waveMode} onChange={(e) => setWaveMode(e.target.value as typeof waveMode)}>
+            <option value="angle">По углу (круг/кольцо)</option>
+            <option value="path">По контуру (звезда/ромб/прямоугольник — равномерно по периметру)</option>
+            <option value="line">Вдоль линии (линейный фонтан)</option>
+          </select>
+        </label>
+        <label className="field">
+          Волн:{' '}
           <input
             className="input input-num"
             type="number"

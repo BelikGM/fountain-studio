@@ -87,19 +87,92 @@ export function mirrorScene(scene: Scene, actors: GeoActor[], axis: 'x' | 'y'): 
 export interface WaveSceneOptions {
   centerX?: number;
   centerY?: number;
-  /** Сколько волн укладывается по кругу (1 — одна волна, 2 — «бабочка» и т.п.). */
+  /** Сколько волн укладывается по фигуре (1 — одна волна, 2 — «бабочка» и т.п.). */
   cycles?: number;
   min?: number;
   max?: number;
   /** Фазовый сдвиг, градусы — набор сцен с разным сдвигом даёт бегущую волну в секвенсоре. */
   phaseDeg?: number;
+  /**
+   * Как считать фазу устройства по геометрии (§17 п.3: раскладка по реальной
+   * фигуре фонтана — круг, квадрат, ромб, звезда, линия):
+   * - 'angle' — угол вокруг центра (классика для круга);
+   * - 'path'  — доля длины обхода контура (звезда/ромб/прямоугольник:
+   *             волна бежит равномерно вдоль фигуры, а не по углу);
+   * - 'line'  — проекция на главную ось разброса (линейный фонтан).
+   */
+  mode?: 'angle' | 'path' | 'line';
+}
+
+/** Фаза 0..1 каждого актёра по выбранной параметризации фигуры. */
+export function actorPhases(actors: GeoActor[], mode: 'angle' | 'path' | 'line', centerX?: number, centerY?: number): Map<string, number> {
+  const phases = new Map<string, number>();
+  if (actors.length === 0) return phases;
+  const cx = centerX ?? actors.reduce((s, a) => s + a.x, 0) / actors.length;
+  const cy = centerY ?? actors.reduce((s, a) => s + a.y, 0) / actors.length;
+
+  if (mode === 'angle') {
+    for (const a of actors) {
+      const angle = Math.atan2(a.y - cy, a.x - cx); // −π..π
+      // p = angle/2π (mod 1): sin(2πp) ≡ sin(angle) — максимум волны на 90°.
+      phases.set(a.deviceId, (angle < 0 ? angle + 2 * Math.PI : angle) / (2 * Math.PI));
+    }
+    return phases;
+  }
+
+  if (mode === 'line') {
+    // Главная ось разброса (ковариация 2×2): волна бежит вдоль линии фонтана.
+    let sxx = 0;
+    let syy = 0;
+    let sxy = 0;
+    for (const a of actors) {
+      const dx = a.x - cx;
+      const dy = a.y - cy;
+      sxx += dx * dx;
+      syy += dy * dy;
+      sxy += dx * dy;
+    }
+    const theta = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+    const ux = Math.cos(theta);
+    const uy = Math.sin(theta);
+    let minT = Infinity;
+    let maxT = -Infinity;
+    const ts = actors.map((a) => {
+      const t = (a.x - cx) * ux + (a.y - cy) * uy;
+      if (t < minT) minT = t;
+      if (t > maxT) maxT = t;
+      return t;
+    });
+    const span = maxT - minT || 1;
+    actors.forEach((a, i) => phases.set(a.deviceId, (ts[i]! - minT) / span));
+    return phases;
+  }
+
+  // 'path': обход по углу вокруг центра, фаза — накопленная длина хорд между
+  // соседями по обходу, нормированная на периметр. Для круга совпадает с углом,
+  // для вытянутых фигур (ромб/звезда/прямоугольник) волна бежит равномерно
+  // по контуру, не сжимаясь на «дальних» участках.
+  const ordered = [...actors].sort(
+    (a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx),
+  );
+  const dist = (p: GeoActor, q: GeoActor): number => Math.hypot(q.x - p.x, q.y - p.y);
+  let perimeter = 0;
+  const cumulative: number[] = [0];
+  for (let i = 1; i < ordered.length; i++) {
+    perimeter += dist(ordered[i - 1]!, ordered[i]!);
+    cumulative.push(perimeter);
+  }
+  perimeter += dist(ordered[ordered.length - 1]!, ordered[0]!); // замыкание
+  if (perimeter <= 0) perimeter = 1;
+  ordered.forEach((a, i) => phases.set(a.deviceId, cumulative[i]! / perimeter));
+  return phases;
 }
 
 /**
- * Волна по кругу от геометрии: значение устройства зависит от угла его форсунки/
- * прожектора относительно центра. Работает только с устройствами в один канал
- * (насос/клапан/диммер) — многоканальные (RGB и т.п.) генератор не трогает,
- * чтобы не гадать, как раскладывать волну по цвету.
+ * Волна по фигуре фонтана: значение устройства — от его фазы в выбранной
+ * параметризации (угол/контур/линия). Работает только с устройствами в один
+ * канал (насос/клапан/диммер) — многоканальные (RGB и т.п.) генератор не
+ * трогает, чтобы не гадать, как раскладывать волну по цвету.
  */
 export function radialWaveScene(
   actors: GeoActor[],
@@ -107,24 +180,25 @@ export function radialWaveScene(
   profiles: Map<string, DeviceProfile>,
   opts: WaveSceneOptions = {},
 ): Scene {
-  const centerX = opts.centerX ?? actors.reduce((s, a) => s + a.x, 0) / (actors.length || 1);
-  const centerY = opts.centerY ?? actors.reduce((s, a) => s + a.y, 0) / (actors.length || 1);
   const cycles = opts.cycles ?? 1;
   const min = Math.max(0, Math.min(255, opts.min ?? 0));
   const max = Math.max(min, Math.min(255, opts.max ?? 255));
-  const phase = ((opts.phaseDeg ?? 0) * Math.PI) / 180;
+  const phaseShift = ((opts.phaseDeg ?? 0) * Math.PI) / 180;
+  const mode = opts.mode ?? 'angle';
+  const phases = actorPhases(actors, mode, opts.centerX, opts.centerY);
   const byId = new Map(devices.map((d) => [d.id, d]));
   const values: Record<string, number[]> = {};
   for (const a of actors) {
     const device = byId.get(a.deviceId);
     const profile = device ? profiles.get(device.profileId) : undefined;
     if (!profile || profile.channels.length !== 1) continue;
-    const angle = Math.atan2(a.y - centerY, a.x - centerX);
-    const wave = (Math.sin(angle * cycles + phase) + 1) / 2; // 0..1
+    const p = phases.get(a.deviceId) ?? 0;
+    const wave = (Math.sin(2 * Math.PI * p * cycles + phaseShift) + 1) / 2; // 0..1
     const raw = Math.round(min + wave * (max - min));
     values[a.deviceId] = [profile.twoState ? (raw >= 128 ? 255 : 0) : raw];
   }
-  return { id: uid(), name: 'Волна по кольцу', values };
+  const modeName = mode === 'line' ? 'вдоль линии' : mode === 'path' ? 'по контуру' : 'по кольцу';
+  return { id: uid(), name: `Волна ${modeName}`, values };
 }
 
 /** Набор сцен с равномерным сдвигом фазы — добавить как шаги в секвенсор («по кругу») даёт бегущую волну/погоню. */
