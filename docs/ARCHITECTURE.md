@@ -464,7 +464,7 @@ POINT, CIRCLE, ARC, INSERT (вставки блоков), LINE, LWPOLYLINE и л
   в корень, поэтому `electronVersion` задан явно; `signAndEditExecutable: false` —
   обход ошибки симлинков winCodeSign на Windows без прав разработчика (иконки и
   подписи пока нет). В dev (`npm run app:dev`) движок и vite запускает concurrently,
-  окно грузит localhost:5173 с повторами.
+  окно грузит localhost:5180 с повторами.
 
 Проверено: бандл движка отвечает hello по WS автономно; распакованная сборка
 (win-unpacked, app.isPackaged) поднимает движок из asar, редактор подключается,

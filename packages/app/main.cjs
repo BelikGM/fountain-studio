@@ -16,7 +16,7 @@ const net = require('node:net');
 const path = require('node:path');
 
 const ENGINE_PORT = 9520;
-const DEV_URL = 'http://localhost:5173';
+const DEV_URL = 'http://localhost:5180';
 // В разработке (npm run app:dev) UI отдаёт vite, движок запускает concurrently.
 const isDev = !app.isPackaged && !process.env.FOUNTAIN_LOCAL_UI;
 
