@@ -14,6 +14,8 @@ import path from 'node:path';
 import WebSocket from 'ws';
 import {
   actorPhases,
+  bandEnergyEnvelope,
+  bandEnvelopePoints,
   editedToSourceMs,
   emptyProject,
   encodeOscMessage,
@@ -29,6 +31,7 @@ import {
   mergeCuts,
   mirrorScene,
   parseDxf,
+  peakEvents,
   profileMap,
   radialWaveScene,
   radialWaveSequenceScenes,
@@ -37,6 +40,7 @@ import {
   shiftDeviceAddresses,
   silenceRanges,
   sourceToEditedMs,
+  spectralCentroidEnvelope,
   swapDeviceAddresses,
   tempoCategory,
   type ModbusState,
@@ -975,6 +979,64 @@ async function main(): Promise<void> {
   check(
     silence.some((r) => r.startMs <= 4500 && r.endMs >= 4900),
     'silenceRanges: хвостовая тишина (после последнего клика до конца) найдена',
+  );
+
+  console.log('— Аудиоанализ v2: спектр, полосы, пики (§5 доработки) —');
+  const peaks = peakEvents(env, { thresholdRatio: 1.3, minGapMs: 300 });
+  check(
+    peaks.length >= 5 && peaks.length <= 12,
+    `peakEvents: ${peaks.length} всплесков громкости в клик-треке (ожидались клики ~120 BPM)`,
+  );
+
+  // Смена тона 100 Гц → 3000 Гц на середине сигнала: полосы должны честно
+  // развести бас и верха по времени (каждая нормирована к своему пику).
+  const srBand = 8000;
+  const mixedSig = new Float32Array(srBand * 2);
+  for (let i = 0; i < mixedSig.length; i++) {
+    const t = i / srBand;
+    const freq = t < 1 ? 100 : 3000;
+    mixedSig[i] = Math.sin(2 * Math.PI * freq * t) * 0.8;
+  }
+  const bandsEnv = bandEnergyEnvelope(
+    mixedSig,
+    srBand,
+    [
+      { loHz: 20, hiHz: 250 },
+      { loHz: 2000, hiHz: 4000 },
+    ],
+    100,
+    512,
+  );
+  const bass = bandsEnv.bands[0]!;
+  const treble = bandsEnv.bands[1]!;
+  const lastIdx = bass.energy.length - 1;
+  check(
+    bass.energy[2]! > bass.energy[lastIdx]! && treble.energy[2]! < treble.energy[lastIdx]!,
+    'bandEnergyEnvelope: бас громче в начале (тон 100 Гц), верха громче в конце (тон 3000 Гц) — полосы разделены честно',
+  );
+  const bandPoints = bandEnvelopePoints(bass, bandsEnv.hopMs, { min: 0, max: 255 });
+  check(
+    bandPoints.length === bass.energy.length && bandPoints.every((p) => p.value >= 0 && p.value <= 255),
+    'bandEnvelopePoints: точки 0–255 по всей длине полосы',
+  );
+
+  // Спектральный центроид: чистый низкий тон даёт центроид у самого тона; высокий тон — заметно выше.
+  const lowTone = new Float32Array(srBand);
+  const highTone = new Float32Array(srBand);
+  for (let i = 0; i < srBand; i++) {
+    lowTone[i] = Math.sin((2 * Math.PI * 200 * i) / srBand);
+    highTone[i] = Math.sin((2 * Math.PI * 3000 * i) / srBand);
+  }
+  const avg = (arr: number[]): number => arr.reduce((a, b) => a + b, 0) / Math.max(1, arr.length);
+  const lowCentroid = avg(spectralCentroidEnvelope(lowTone, srBand, 100, 512).centroidHz);
+  const highCentroid = avg(spectralCentroidEnvelope(highTone, srBand, 100, 512).centroidHz);
+  check(
+    Math.abs(lowCentroid - 200) < 60,
+    `spectralCentroidEnvelope: центроид чистого тона 200 Гц близок к самому тону (${lowCentroid.toFixed(0)} Гц)`,
+  );
+  check(
+    highCentroid > lowCentroid * 5,
+    `spectralCentroidEnvelope: центроид тона 3000 Гц (${highCentroid.toFixed(0)} Гц) заметно выше 200 Гц (${lowCentroid.toFixed(0)} Гц)`,
   );
 
   console.log('— Измерение периода цикла DMX (§17 п.1) —');

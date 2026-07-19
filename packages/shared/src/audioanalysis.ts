@@ -147,3 +147,211 @@ export function tempoCategory(bpm: number): 'slow' | 'medium' | 'fast' {
   if (bpm <= 130) return 'medium';
   return 'fast';
 }
+
+// ── Спектральный анализ (§5 доработки: «максимально всё, что можешь») ──────
+//
+// FFT (радикс-2, in-place) — стандартный, хорошо изученный алгоритм; вход
+// дополняется нулями до ближайшей степени двойки. Даёт полосы частот
+// (бас/средние/высокие → раздельные огибающие для воды/света), спектральный
+// центроид («яркость» звука) и точки-«форте» (залпы). Не ИИ и не обучение —
+// прозрачная, детерминированная арифметика по спектру.
+
+function nextPowerOfTwo(n: number): number {
+  let p = 1;
+  while (p < n) p *= 2;
+  return p;
+}
+
+/** Быстрое преобразование Фурье, in-place, длина real/imag — степень двойки. */
+function fft(real: Float64Array, imag: Float64Array): void {
+  const n = real.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; (j & bit) !== 0; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      const tr = real[i]!;
+      real[i] = real[j]!;
+      real[j] = tr;
+      const ti = imag[i]!;
+      imag[i] = imag[j]!;
+      imag[j] = ti;
+    }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const half = len >> 1;
+    const ang = (-2 * Math.PI) / len;
+    const wr0 = Math.cos(ang);
+    const wi0 = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let wr = 1;
+      let wi = 0;
+      for (let k = 0; k < half; k++) {
+        const ur = real[i + k]!;
+        const ui = imag[i + k]!;
+        const vr = real[i + k + half]! * wr - imag[i + k + half]! * wi;
+        const vi = real[i + k + half]! * wi + imag[i + k + half]! * wr;
+        real[i + k] = ur + vr;
+        imag[i + k] = ui + vi;
+        real[i + k + half] = ur - vr;
+        imag[i + k + half] = ui - vi;
+        const nwr = wr * wr0 - wi * wi0;
+        wi = wr * wi0 + wi * wr0;
+        wr = nwr;
+      }
+    }
+  }
+}
+
+/** Амплитудный спектр одного окна (окно Ханна против утечки спектра). Длина — fftSize/2 бинов. */
+function windowSpectrum(samples: Float32Array, start: number, fftSize: number): Float64Array {
+  const real = new Float64Array(fftSize);
+  const imag = new Float64Array(fftSize);
+  for (let i = 0; i < fftSize; i++) {
+    const s = start + i < samples.length ? samples[start + i]! : 0;
+    const w = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (fftSize - 1));
+    real[i] = s * w;
+  }
+  fft(real, imag);
+  const mags = new Float64Array(fftSize / 2);
+  for (let k = 0; k < fftSize / 2; k++) mags[k] = Math.hypot(real[k]!, imag[k]!);
+  return mags;
+}
+
+export interface FrequencyBand {
+  loHz: number;
+  hiHz: number;
+  /** Энергия полосы по окнам, нормирована к своему пику (0..1). */
+  energy: number[];
+}
+
+export interface BandEnergyEnvelope {
+  hopMs: number;
+  bands: FrequencyBand[];
+}
+
+const DEFAULT_BANDS: { loHz: number; hiHz: number }[] = [
+  { loHz: 20, hiHz: 250 }, // бас — §17 п.5: громкость/бас → высота воды
+  { loHz: 250, hiHz: 2000 }, // средние
+  { loHz: 2000, hiHz: 8000 }, // высокие — блеск, «искры» света
+];
+
+/**
+ * Энергия по полосам частот (по умолчанию бас/средние/высокие) через FFT с
+ * окном Ханна. Каждая полоса нормируется к своему пику независимо — можно
+ * раздать бас насосам, верха — вспышкам света, не оглядываясь на то, что
+ * куда громче в оригинале.
+ */
+export function bandEnergyEnvelope(
+  samples: Float32Array,
+  sampleRate: number,
+  bands: { loHz: number; hiHz: number }[] = DEFAULT_BANDS,
+  hopMs = 50,
+  fftSize = 1024,
+): BandEnergyEnvelope {
+  const size = nextPowerOfTwo(fftSize);
+  const hop = Math.max(1, Math.round((sampleRate * hopMs) / 1000));
+  const binHz = sampleRate / size;
+  const raw: number[][] = bands.map(() => []);
+  for (let start = 0; start + size <= samples.length; start += hop) {
+    const mags = windowSpectrum(samples, start, size);
+    bands.forEach((b, bi) => {
+      const loBin = Math.max(1, Math.floor(b.loHz / binHz));
+      const hiBin = Math.min(size / 2 - 1, Math.ceil(b.hiHz / binHz));
+      let sum = 0;
+      let n = 0;
+      for (let k = loBin; k <= hiBin; k++) {
+        sum += mags[k]!;
+        n++;
+      }
+      raw[bi]!.push(n > 0 ? sum / n : 0);
+    });
+  }
+  const result: FrequencyBand[] = bands.map((b, bi) => {
+    const e = raw[bi]!;
+    const peak = e.reduce((m, v) => (v > m ? v : m), 0);
+    return { loHz: b.loHz, hiHz: b.hiHz, energy: peak > 0 ? e.map((v) => v / peak) : e };
+  });
+  return { hopMs, bands: result };
+}
+
+/** Огибающая полосы как точки 0–255 для дорожки шоу — тот же приём, что loudnessEnvelopePoints. */
+export function bandEnvelopePoints(
+  band: FrequencyBand,
+  hopMs: number,
+  opts: { min?: number; max?: number; gamma?: number } = {},
+): { tMs: number; value: number }[] {
+  const min = opts.min ?? 0;
+  const max = opts.max ?? 255;
+  const gamma = opts.gamma ?? 1;
+  return band.energy.map((v, i) => ({
+    tMs: i * hopMs,
+    value: Math.round(min + Math.pow(Math.max(0, Math.min(1, v)), gamma) * (max - min)),
+  }));
+}
+
+export interface SpectralCentroidEnvelope {
+  hopMs: number;
+  /** «Яркость» звука — средневзвешенная по амплитуде частота спектра, Гц. */
+  centroidHz: number[];
+}
+
+/** Спектральный центроид: выше у резких/ярких звуков (тарелки, синтезаторные лиды), ниже у баса/баритона. */
+export function spectralCentroidEnvelope(
+  samples: Float32Array,
+  sampleRate: number,
+  hopMs = 50,
+  fftSize = 1024,
+): SpectralCentroidEnvelope {
+  const size = nextPowerOfTwo(fftSize);
+  const hop = Math.max(1, Math.round((sampleRate * hopMs) / 1000));
+  const binHz = sampleRate / size;
+  const centroidHz: number[] = [];
+  for (let start = 0; start + size <= samples.length; start += hop) {
+    const mags = windowSpectrum(samples, start, size);
+    let weighted = 0;
+    let total = 0;
+    for (let k = 1; k < mags.length; k++) {
+      weighted += mags[k]! * k * binHz;
+      total += mags[k]!;
+    }
+    centroidHz.push(total > 0 ? weighted / total : 0);
+  }
+  return { hopMs, centroidHz };
+}
+
+export interface PeakEvent {
+  tMs: number;
+  /** 0..1 — насколько всплеск выделяется относительно локального среднего. */
+  strength: number;
+}
+
+/**
+ * Заметные всплески громкости — «форте» (§17 п.5: форте → залпы). RMS выше
+ * скользящего среднего (~1 с) в thresholdRatio раз и не ближе minGapMs к
+ * предыдущему всплеску (не дробим один залп на десяток событий).
+ */
+export function peakEvents(
+  env: EnergyEnvelope,
+  opts: { thresholdRatio?: number; minGapMs?: number } = {},
+): PeakEvent[] {
+  const thresholdRatio = opts.thresholdRatio ?? 1.5;
+  const minGapSteps = Math.max(1, Math.round((opts.minGapMs ?? 200) / env.hopMs));
+  const windowSteps = Math.max(1, Math.round(1000 / env.hopMs));
+  const events: PeakEvent[] = [];
+  let lastPeakStep = -Infinity;
+  for (let i = 0; i < env.rms.length; i++) {
+    const from = Math.max(0, i - windowSteps);
+    let sum = 0;
+    for (let j = from; j < i; j++) sum += env.rms[j]!;
+    const n = i - from;
+    const localAvg = n > 0 ? sum / n : 0;
+    if (localAvg <= 0) continue;
+    const ratio = env.rms[i]! / localAvg;
+    if (ratio >= thresholdRatio && i - lastPeakStep >= minGapSteps) {
+      events.push({ tMs: i * env.hopMs, strength: Math.max(0, Math.min(1, (ratio - thresholdRatio) / thresholdRatio + 0.5)) });
+      lastPeakStep = i;
+    }
+  }
+  return events;
+}

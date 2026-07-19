@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  bandEnergyEnvelope,
+  bandEnvelopePoints,
   cutsTotalMs,
   editedToSourceMs,
   energyEnvelope,
@@ -7,6 +9,7 @@ import {
   keptSegments,
   loudnessEnvelopePoints,
   mergeCuts,
+  peakEvents,
   profileMap,
   sourceToEditedMs,
   uid,
@@ -581,26 +584,29 @@ function ShowEditor({
 
     const tempo = estimateTempo(mono, sr, {});
     const env = energyEnvelope(mono, sr, 80);
-    const srcPoints = loudnessEnvelopePoints(env, { min: 0, max: 255, gamma: 1.4 });
+    const cuts = show.cuts;
+    const inCut = (srcMs: number): boolean => cuts.some((c) => srcMs >= c.startMs && srcMs < c.endMs);
 
     // Источник → монтаж: точки внутри вырезок отбрасываем, остальные переводим
     // в смонтированное время; затем прореживаем (шаг > 250 мс или скачок > 6).
-    const cuts = show.cuts;
-    const inCut = (srcMs: number): boolean => cuts.some((c) => srcMs >= c.startMs && srcMs < c.endMs);
-    const edited: { tMs: number; value: number }[] = [];
-    let lastT = -Infinity;
-    let lastV = -Infinity;
-    for (const p of srcPoints) {
-      if (inCut(p.tMs)) continue;
-      const t = Math.round(sourceToEditedMs(cuts, p.tMs));
-      if (t > show.durationMs) break;
-      if (t - lastT < 250 && Math.abs(p.value - lastV) < 6) continue;
-      edited.push({ tMs: t, value: p.value });
-      lastT = t;
-      lastV = p.value;
-    }
+    // Общий хелпер — используется и громкостью, и полосами частот.
+    const toEdited = (srcPoints: { tMs: number; value: number }[]): { tMs: number; value: number }[] => {
+      const out: { tMs: number; value: number }[] = [];
+      let lastT = -Infinity;
+      let lastV = -Infinity;
+      for (const p of srcPoints) {
+        if (inCut(p.tMs)) continue;
+        const t = Math.round(sourceToEditedMs(cuts, p.tMs));
+        if (t > show.durationMs) break;
+        if (t - lastT < 250 && Math.abs(p.value - lastV) < 6) continue;
+        out.push({ tMs: t, value: p.value });
+        lastT = t;
+        lastV = p.value;
+      }
+      return out;
+    };
 
-    // Целевые устройства: все с каналом intensity (насосы/диммеры). Нет таких — огибающая не создаётся.
+    // Целевые устройства: все с каналом intensity (насосы/диммеры). Нет таких — черновика не будет.
     const intensityDevices = project.devices.filter((d) =>
       profiles.get(d.profileId)?.channels.some((c) => c.role === 'intensity'),
     );
@@ -608,23 +614,74 @@ function ShowEditor({
       setAutoStatus('Нет устройств с каналом «яркость/мощность» — добавьте насос или диммер в патч.');
       return;
     }
-    // Одна огибающая громкости на первое такое устройство; остальные пользователь
-    // размножит копированием дорожки. Опережение воды по инерции — offsetMs правит вручную.
-    const target = intensityDevices[0]!;
-    const channel = profiles.get(target.profileId)!.channels.findIndex((c) => c.role === 'intensity');
-    const track: EnvelopeTrack = {
+
+    const newTracks: ShowTrack[] = [];
+    const summary: string[] = [];
+
+    // Общая громкость → первое устройство (обычно насос: §17 п.5 «громкость/бас → высота воды»).
+    const target1 = intensityDevices[0]!;
+    const ch1 = Math.max(0, profiles.get(target1.profileId)!.channels.findIndex((c) => c.role === 'intensity'));
+    const loudnessPoints = toEdited(loudnessEnvelopePoints(env, { min: 0, max: 255, gamma: 1.4 }));
+    const envTrack1: EnvelopeTrack = {
       id: uid(),
-      name: `Громкость → ${target.name}`,
+      name: `Громкость → ${target1.name}`,
       kind: 'envelope',
       offsetMs: 0,
       muted: false,
-      deviceId: target.id,
-      channel: Math.max(0, channel),
-      points: edited,
+      deviceId: target1.id,
+      channel: ch1,
+      points: loudnessPoints,
     };
-    onChange({ ...show, tracks: [...show.tracks, track] });
+    newTracks.push(envTrack1);
+    summary.push(`громкость → «${target1.name}» (${loudnessPoints.length} точек)`);
+
+    // Второе устройство (если есть) — высокие частоты, отдельной полосой (блеск/вспышки света).
+    if (intensityDevices.length > 1) {
+      const target2 = intensityDevices[1]!;
+      const ch2 = Math.max(0, profiles.get(target2.profileId)!.channels.findIndex((c) => c.role === 'intensity'));
+      const trebleBand = bandEnergyEnvelope(mono, sr, [{ loHz: 2000, hiHz: 8000 }], 80, 1024).bands[0]!;
+      const treblePoints = toEdited(bandEnvelopePoints(trebleBand, 80, { min: 0, max: 255, gamma: 1.2 }));
+      const envTrack2: EnvelopeTrack = {
+        id: uid(),
+        name: `Высокие → ${target2.name}`,
+        kind: 'envelope',
+        offsetMs: 0,
+        muted: false,
+        deviceId: target2.id,
+        channel: ch2,
+        points: treblePoints,
+      };
+      newTracks.push(envTrack2);
+      summary.push(`высокие частоты → «${target2.name}» (${treblePoints.length} точек)`);
+    }
+
+    // Форте → залпы (§17 п.5): заметные всплески громкости становятся короткими блоками первой сцены.
+    if (project.scenes.length > 0) {
+      const scene = project.scenes[0]!;
+      const blocks: ShowBlock[] = [];
+      for (const p of peakEvents(env, { thresholdRatio: 1.4, minGapMs: 400 })) {
+        if (inCut(p.tMs)) continue;
+        const t = Math.round(sourceToEditedMs(cuts, p.tMs));
+        if (t > show.durationMs) continue;
+        blocks.push({ id: uid(), type: 'scene', refId: scene.id, startMs: t, durationMs: 300, fadeInMs: 0, fadeOutMs: 100 });
+      }
+      if (blocks.length > 0) {
+        const burstTrack: BlocksTrack = {
+          id: uid(),
+          name: `Форте → «${scene.name}»`,
+          kind: 'blocks',
+          offsetMs: 0,
+          muted: false,
+          blocks,
+        };
+        newTracks.push(burstTrack);
+        summary.push(`${blocks.length} залпов «${scene.name}» на всплесках`);
+      }
+    }
+
+    onChange({ ...show, tracks: [...show.tracks, ...newTracks] });
     const bpmText = tempo.bpm > 0 ? `темп ≈ ${tempo.bpm} BPM` : 'темп не определён';
-    setAutoStatus(`Черновик: огибающая громкости на «${target.name}» (${edited.length} точек), ${bpmText}. Правьте на таймлайне.`);
+    setAutoStatus(`Черновик: ${summary.join(', ')}, ${bpmText}. Правьте на таймлайне.`);
   };
 
   const updateTrack = (next: ShowTrack): void => {
