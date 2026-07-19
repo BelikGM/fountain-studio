@@ -437,9 +437,23 @@ POINT, CIRCLE, ARC, INSERT (вставки блоков), LINE, LWPOLYLINE и л
   Занят — движок уже работает (служба-watchdog из §18 или ручной запуск), просто
   подключаемся; закрытие редактора его не трогает. Свободен — поднимает движок сам
   через `utilityProcess.fork(engine.cjs)` и гасит при закрытии окна.
-- **Движок в один файл**: esbuild-бандл `engine.cjs` (~185 КБ, CJS, external только
-  опциональные нативные зависимости ws). Чистый Node — тот же файл можно запускать
-  и без Electron: `node engine.cjs --config <файл>`.
+- **Движок в один файл**: esbuild-бандл `engine.cjs` (~218 КБ, CJS). External —
+  опциональные нативные зависимости ws (bufferutil/utf-8-validate, отсутствие не
+  страшно) **и обязательно** `serialport`/`@serialport/*` (Modbus RTU, §25): это
+  не опциональная надстройка, а нативный биндинг с прекомпилированным `.node`-
+  файлом — esbuild включил бы в бандл только JS-обвязку, а сам биндинг остался
+  бы недостижим (проверено: без `--external` бандл раздувается до ~378 КБ и
+  содержит нерабочие ссылки на node-gyp-build/prebuilds). `files` в конфиге
+  electron-builder явно копирует `node_modules/serialport`, `@serialport/*`,
+  `debug`, `node-gyp-build` из корня монорепо (hoisted) рядом с engine.cjs;
+  `asarUnpack` — для `.node`-файла в bindings-cpp (asar не отдаёт нативные
+  бинарники напрямую в файловую систему). Проверено: engine.cjs собирается и
+  `require('serialport')` в бандле остаётся внешним вызовом, резолвится из
+  корневого node_modules. **Не проверено до конца**: реальная сборка `app:dist`
+  (NSIS) и работа RS-485 в установленном .exe — нужен прогон на машине с
+  Windows-инсталлятором и, в идеале, реальным USB-адаптером. Modbus TCP этой
+  проблемы не имеет (чистый JS, ничего внешнего). Чистый Node — тот же файл
+  можно запускать и без Electron: `node engine.cjs --config <файл>`.
 - **Данные** — в `Документы\Fountain Studio`: fountain.config.json (создаётся из
   шаблона default-config.json при первом запуске), fountain.project.json, audio/.
   Обновление приложения данные не трогает; cwd движка — эта папка.
