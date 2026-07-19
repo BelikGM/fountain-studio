@@ -22,10 +22,30 @@ const PATTERN_HINT: Record<TestPatternMode, string> = {
 
 /** Консоль прямого управления: фейдеры адресов, тест-генераторы, blackout. */
 export function ConsoleView({ engine }: { engine: EngineConnection }) {
-  const { project, universes, stats, frames, send } = engine;
+  const { project, universes, stats, frames, playback, send } = engine;
   const [universeId, setUniverseId] = useState<number | null>(null);
   const [pageSize, setPageSize] = useState(32);
   const [page, setPage] = useState(0);
+
+  // Пульт — экран наладки: если идёт воспроизведение (шоу по расписанию,
+  // плейлист на публике), случайное нажатие BLACKOUT не должно гасить фонтан
+  // молча — сначала подтверждение с перечислением того, что остановится.
+  const doBlackout = (): void => {
+    const running: string[] = [];
+    if (playback.show !== null) running.push('шоу');
+    if (playback.playlist !== null) running.push('плейлист');
+    if (playback.activeSceneId !== null) running.push('сцена');
+    if (playback.running.length > 0) running.push(`секвенсоры (${playback.running.length})`);
+    if (running.length > 0) {
+      const ok = window.confirm(
+        `Сейчас идёт воспроизведение: ${running.join(', ')}.\n\n` +
+          'BLACKOUT принудительно остановит ВСЁ и погасит все каналы всех вселенных.\n' +
+          'Продолжить?',
+      );
+      if (!ok) return;
+    }
+    send({ type: 'blackout' });
+  };
 
   // При первом hello выбираем первую вселенную.
   useEffect(() => {
@@ -50,6 +70,12 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
     }
     return map;
   }, [project, universeId]);
+
+  // «Только занятые» — не показывать пустые адреса (обычно используется малая
+  // часть из 512). Включено по умолчанию; если приборов нет — показываем все.
+  const [onlyUsed, setOnlyUsed] = useState(true);
+  const usedChannels = useMemo(() => [...owners.keys()].sort((a, b) => a - b), [owners]);
+  const filterActive = onlyUsed && usedChannels.length > 0;
 
   const frame = universeId !== null ? frames[universeId] : undefined;
   const pattern = stats?.pattern ?? 'off';
@@ -79,27 +105,40 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
         </div>
 
         <div className="group">
-          <label>
-            По:{' '}
-            <select value={pageSize} onChange={(e) => changePageSize(Number(e.target.value))}>
-              {PAGE_SIZES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
+          <label className="field" title="Показывать только адреса, занятые приборами из патча — без пустых">
+            <input
+              type="checkbox"
+              checked={onlyUsed}
+              disabled={usedChannels.length === 0}
+              onChange={(e) => setOnlyUsed(e.target.checked)}
+            />{' '}
+            только занятые{usedChannels.length === 0 ? ' (нет приборов)' : ` (${usedChannels.length})`}
           </label>
-          {pageCount > 1 && (
-            <label>
-              Адреса:{' '}
-              <select value={page} onChange={(e) => setPage(Number(e.target.value))}>
-                {Array.from({ length: pageCount }, (_, p) => (
-                  <option key={p} value={p}>
-                    {p * pageSize + 1}–{Math.min(DMX_UNIVERSE_SIZE, (p + 1) * pageSize)}
-                  </option>
-                ))}
-              </select>
-            </label>
+          {!filterActive && (
+            <>
+              <label>
+                По:{' '}
+                <select value={pageSize} onChange={(e) => changePageSize(Number(e.target.value))}>
+                  {PAGE_SIZES.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {pageCount > 1 && (
+                <label>
+                  Адреса:{' '}
+                  <select value={page} onChange={(e) => setPage(Number(e.target.value))}>
+                    {Array.from({ length: pageCount }, (_, p) => (
+                      <option key={p} value={p}>
+                        {p * pageSize + 1}–{Math.min(DMX_UNIVERSE_SIZE, (p + 1) * pageSize)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </>
           )}
         </div>
 
@@ -122,8 +161,8 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
         <div className="group">
           <button
             className="btn btn-danger"
-            title="Аварийный стоп: мгновенно гасит ВСЕ каналы всех вселенных и останавливает всё воспроизведение (сцены, секвенсоры, шоу, плейлисты)"
-            onClick={() => send({ type: 'blackout' })}
+            title="Аварийный стоп: гасит ВСЕ каналы всех вселенных и останавливает всё воспроизведение. Если сейчас что-то играет — сначала спросит подтверждение"
+            onClick={doBlackout}
           >
             BLACKOUT
           </button>
@@ -131,20 +170,23 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
       </div>
 
       <main className="faders">
-        {Array.from({ length: Math.min(pageSize, DMX_UNIVERSE_SIZE - page * pageSize) }, (_, i) => {
-          const channel = page * pageSize + i + 1; // DMX-адрес 1..512
-          return (
-            <Fader
-              key={`${universeId}-${channel}`}
-              channel={channel}
-              value={frame?.[channel - 1] ?? 0}
-              owner={owners.get(channel - 1)}
-              onChange={(value) =>
-                universeId !== null && send({ type: 'setChannel', universe: universeId, channel, value })
-              }
-            />
-          );
-        })}
+        {(filterActive
+          ? usedChannels.map((idx) => idx + 1)
+          : Array.from(
+              { length: Math.min(pageSize, DMX_UNIVERSE_SIZE - page * pageSize) },
+              (_, i) => page * pageSize + i + 1,
+            )
+        ).map((channel) => (
+          <Fader
+            key={`${universeId}-${channel}`}
+            channel={channel}
+            value={frame?.[channel - 1] ?? 0}
+            owner={owners.get(channel - 1)}
+            onChange={(value) =>
+              universeId !== null && send({ type: 'setChannel', universe: universeId, channel, value })
+            }
+          />
+        ))}
       </main>
     </>
   );
