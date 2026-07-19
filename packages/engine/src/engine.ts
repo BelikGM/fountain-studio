@@ -39,7 +39,7 @@ export class Engine {
   readonly playback: Playback;
   /** Насосы с прямым управлением по Modbus (§12 п.9) — читают то же u.out, что уходит в DMX. */
   readonly pumps = new PumpModbusManager();
-  private readonly ticker: Ticker;
+  private ticker: Ticker;
   private pattern: TestPatternMode = 'off';
   private framesSent = 0;
   /** Часы движка: время последнего тика (n * tickMs), мс. */
@@ -77,6 +77,39 @@ export class Engine {
     this.ticker.stop();
     for (const u of this.universes) for (const o of u.outputs) o.close();
     this.pumps.stop();
+  }
+
+  /**
+   * Применение новой конфигурации вселенных/тика на лету (вкладка «Настройки»):
+   * воспроизведение останавливается, выходы пересоздаются, тикер перезапускается
+   * с новым шагом. После вызова нужно повторить setProject (калибровка и Modbus-
+   * насосы индексируются по вселенным) — это делает server.ts.
+   * Мониторинг сети (ArtPoll/захват) подхватит новые адреса после перезапуска движка.
+   */
+  applyConfig(universes: EngineConfig['universes'], tickMs: number): void {
+    this.playback.stopAll();
+    this.ticker.stop();
+    for (const u of this.universes) for (const o of u.outputs) o.close();
+    this.universes.length = 0;
+    for (const u of universes) {
+      this.universes.push({
+        id: u.id,
+        label: u.label ?? `Вселенная ${u.id}`,
+        manual: new Uint8Array(DMX_UNIVERSE_SIZE),
+        out: new Uint8Array(DMX_UNIVERSE_SIZE),
+        outputs: u.outputs.map(createOutput),
+      });
+    }
+    this.config.universes = universes;
+    this.config.timing.tickMs = tickMs;
+    this.playback.setUniverses(this.universes.map((u) => u.id));
+    this.pattern = 'off';
+    this.nowMs = 0;
+    this.ticker = new Ticker(tickMs, this.config.timing.spinMs, (n) => this.tick(n));
+    this.ticker.start();
+    console.log(
+      `[engine] конфигурация применена: тик ${tickMs} мс, вселенных: ${this.universes.length}`,
+    );
   }
 
   private tick(n: number): void {

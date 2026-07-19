@@ -1,5 +1,12 @@
+import fs from 'node:fs';
 import { WebSocketServer, WebSocket } from 'ws';
-import { sanitizeProject, type ClientMessage, type RdmAction, type ServerMessage } from '@fountain-studio/shared';
+import {
+  sanitizeProject,
+  type ClientMessage,
+  type ConfigUniverse,
+  type RdmAction,
+  type ServerMessage,
+} from '@fountain-studio/shared';
 import type { AudioStore } from './audio';
 import type { DmxCapture } from './dmxcapture';
 import type { Engine } from './engine';
@@ -47,6 +54,11 @@ export function startServer(
   };
 
   const broadcastPlayback = (): void => broadcast({ type: 'playback', state: engine.playbackState() });
+  const configMessage = (): Extract<ServerMessage, { type: 'config' }> => ({
+    type: 'config',
+    tickMs: engine.config.timing.tickMs,
+    universes: engine.config.universes as ConfigUniverse[],
+  });
   const broadcastNetwork = (): void => {
     if (net) broadcast({ type: 'network', state: net.state() });
   };
@@ -69,6 +81,7 @@ export function startServer(
       universes: engine.universeInfos(),
     };
     ws.send(JSON.stringify(hello));
+    ws.send(JSON.stringify(configMessage()));
     ws.send(JSON.stringify({ type: 'project', project: store.project } satisfies ServerMessage));
     ws.send(JSON.stringify({ type: 'playback', state: engine.playbackState() } satisfies ServerMessage));
     if (net) ws.send(JSON.stringify({ type: 'network', state: net.state() } satisfies ServerMessage));
@@ -205,6 +218,36 @@ export function startServer(
         case 'rdmRequest':
           void handleRdmRequest(net, msg, ws);
           break;
+        case 'updateConfig': {
+          // Валидация: непустой список, уникальные id, разумный тик.
+          const tickMs = Math.round(msg.tickMs);
+          const ids = msg.universes.map((u) => u.id);
+          if (
+            msg.universes.length === 0 ||
+            new Set(ids).size !== ids.length ||
+            ids.some((id) => !Number.isInteger(id) || id < 1) ||
+            !Number.isFinite(tickMs) ||
+            tickMs < 10 ||
+            tickMs > 1000
+          ) {
+            console.error('[server] updateConfig отклонён: некорректные вселенные или тик');
+            break;
+          }
+          engine.applyConfig(msg.universes, tickMs);
+          // Калибровка и Modbus-насосы индексируются по вселенным — переиндексировать.
+          engine.setProject(store.project);
+          persistConfig(engine, tickMs, msg.universes);
+          // hello повторно: UI обновит список вселенных и tickMs без переподключения.
+          broadcast({
+            type: 'hello',
+            version: ENGINE_VERSION,
+            tickMs,
+            universes: engine.universeInfos(),
+          });
+          broadcast(configMessage());
+          broadcastPlayback();
+          break;
+        }
         case 'uploadAudio':
           audio.save(msg.name, msg.dataBase64);
           break;
@@ -250,6 +293,27 @@ export function startServer(
 
   wss.on('listening', () => console.log(`[server] WebSocket на ws://0.0.0.0:${port}`));
   return wss;
+}
+
+/**
+ * Сохраняет новые вселенные/тик в fountain.config.json, не трогая остальные
+ * поля файла (server, audio, osc, mqtt, spinMs, uiFrameMs).
+ */
+function persistConfig(engine: Engine, tickMs: number, universes: ConfigUniverse[]): void {
+  const file = (engine.config as { configFile?: string }).configFile;
+  if (!file) {
+    console.error('[server] путь к fountain.config.json неизвестен — настройки применены, но не сохранены');
+    return;
+  }
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+    raw.timing = { ...(raw.timing as object | undefined), tickMs };
+    raw.universes = universes;
+    fs.writeFileSync(file, JSON.stringify(raw, null, 2) + '\n');
+    console.log(`[server] настройки сохранены в ${file}`);
+  } catch (err) {
+    console.error('[server] не удалось сохранить fountain.config.json:', err);
+  }
 }
 
 /**

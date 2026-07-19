@@ -11,6 +11,7 @@ import { NetworkView } from './views/NetworkView';
 import { PlaylistsView } from './views/PlaylistsView';
 import { RemoteView } from './views/RemoteView';
 import { ScheduleView } from './views/ScheduleView';
+import { SettingsView } from './views/SettingsView';
 
 type Tab =
   | 'console'
@@ -23,7 +24,8 @@ type Tab =
   | 'schedule'
   | 'network'
   | 'remote'
-  | 'keys';
+  | 'keys'
+  | 'settings';
 
 const TABS: { id: Tab; label: string; full: string }[] = [
   { id: 'console', label: 'Пульт', full: 'Пульт — ручное управление: фейдеры адресов и тест-сигналы DMX' },
@@ -37,6 +39,7 @@ const TABS: { id: Tab; label: string; full: string }[] = [
   { id: 'network', label: 'Диагностика', full: 'Диагностика — исправность оборудования: живы ли ноды и приборы на линии' },
   { id: 'remote', label: 'Внешние пульты', full: 'Внешние пульты — планшет (OSC/TouchOSC) и умный дом (MQTT)' },
   { id: 'keys', label: 'Клавиатура', full: 'Клавиатура — запуск сцен/шоу нажатием клавиш компьютера' },
+  { id: 'settings', label: 'Настройки', full: 'Настройки — DMX-линии (вселенные) и частота обновления' },
 ];
 
 export function App() {
@@ -156,6 +159,7 @@ export function App() {
       {tab === 'network' && <NetworkView engine={engine} />}
       {tab === 'remote' && <RemoteView engine={engine} />}
       {tab === 'keys' && <KeysView engine={engine} />}
+      {tab === 'settings' && <SettingsView engine={engine} />}
 
       <footer className="statusbar">
         {stats ? (

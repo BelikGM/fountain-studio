@@ -74,8 +74,15 @@ export class Playback {
    */
   onShowAudio: ((show: Show | null) => void) | null = null;
 
-  constructor(private readonly universeIds: number[]) {
+  constructor(private universeIds: number[]) {
     for (const id of universeIds) this.merged.set(id, new Uint8Array(DMX_UNIVERSE_SIZE));
+  }
+
+  /** Смена набора вселенных на лету (вкладка «Настройки»). Буферы пересоздаются. */
+  setUniverses(ids: number[]): void {
+    this.universeIds = [...ids];
+    this.merged.clear();
+    for (const id of ids) this.merged.set(id, new Uint8Array(DMX_UNIVERSE_SIZE));
   }
 
   setProject(project: Project): void {

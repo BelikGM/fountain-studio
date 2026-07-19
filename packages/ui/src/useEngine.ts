@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   ClientMessage,
+  ConfigUniverse,
   EngineStats,
   ModbusState,
   NetworkState,
@@ -9,6 +10,11 @@ import type {
   ServerMessage,
   UniverseInfo,
 } from '@fountain-studio/shared';
+
+export interface EngineConfigState {
+  tickMs: number;
+  universes: ConfigUniverse[];
+}
 
 export interface RemoteStatus {
   osc: { enabled: boolean };
@@ -32,6 +38,8 @@ export interface EngineConnection {
   modbus: ModbusState | null;
   /** Статус OSC/MQTT (null — движок ещё не прислал). Включение — в fountain.config.json. */
   remote: RemoteStatus | null;
+  /** Редактируемая конфигурация движка: вселенные и тик (вкладка «Настройки»). */
+  engineConfig: EngineConfigState | null;
   send: (msg: ClientMessage) => void;
   /** Применяет правку проекта локально и отправляет движку. */
   updateProject: (project: Project) => void;
@@ -66,6 +74,7 @@ export function useEngine(): EngineConnection {
   const [network, setNetwork] = useState<NetworkState | null>(null);
   const [modbus, setModbus] = useState<ModbusState | null>(null);
   const [remote, setRemote] = useState<RemoteStatus | null>(null);
+  const [engineConfig, setEngineConfig] = useState<EngineConfigState | null>(null);
   const [playback, setPlayback] = useState<PlaybackState>({
     activeSceneId: null,
     running: [],
@@ -109,6 +118,9 @@ export function useEngine(): EngineConnection {
             setVersion(msg.version);
             setTickMs(msg.tickMs);
             setUniverses(msg.universes);
+            break;
+          case 'config':
+            setEngineConfig({ tickMs: msg.tickMs, universes: msg.universes });
             break;
           case 'stats':
             setStats(msg.stats);
@@ -262,6 +274,7 @@ export function useEngine(): EngineConnection {
     network,
     modbus,
     remote,
+    engineConfig,
     send,
     updateProject,
     requestAudio,

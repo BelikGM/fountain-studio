@@ -134,6 +134,30 @@ export interface ModbusState {
   pumps: PumpModbusStatus[];
 }
 
+/**
+ * Конфигурация DMX-выхода вселенной — редактируемая часть fountain.config.json
+ * (вкладка «Настройки»). Зеркало OutputConfig движка.
+ */
+export interface ConfigOutput {
+  type: 'artnet' | 'sacn' | 'usb-dmx';
+  /** IP ноды (artnet) — обязателен, если не broadcast. */
+  host?: string;
+  port?: number;
+  /** Номер вселенной протокола: Art-Net с 0, sACN с 1. */
+  universe: number;
+  broadcast?: boolean;
+  priority?: number;
+  /** COM-порт (usb-dmx). */
+  path?: string;
+  baudRate?: number;
+}
+
+export interface ConfigUniverse {
+  id: number;
+  label?: string;
+  outputs: ConfigOutput[];
+}
+
 /** UI → Движок */
 export type ClientMessage =
   | { type: 'setChannel'; universe: number; channel: number; value: number }
@@ -171,11 +195,17 @@ export type ClientMessage =
   // RDM (§3 доработки): GET/SET по обнаруженному через TOD UID.
   | { type: 'rdmRequest'; uid: string; action: 'deviceInfo' | 'labels' | 'getIdentify' | 'getAddress' }
   | { type: 'rdmRequest'; uid: string; action: 'setIdentify'; on: boolean }
-  | { type: 'rdmRequest'; uid: string; action: 'setAddress'; address: number };
+  | { type: 'rdmRequest'; uid: string; action: 'setAddress'; address: number }
+  // Настройки движка (вкладка «Настройки»): вселенные и шаг тика. Движок
+  // применяет на лету (воспроизведение останавливается) и сохраняет в
+  // fountain.config.json.
+  | { type: 'updateConfig'; tickMs: number; universes: ConfigUniverse[] };
 
 /** Движок → UI */
 export type ServerMessage =
   | { type: 'hello'; version: string; tickMs: number; universes: UniverseInfo[] }
+  /** Редактируемая конфигурация движка (шлётся при подключении и после updateConfig). */
+  | { type: 'config'; tickMs: number; universes: ConfigUniverse[] }
   | { type: 'stats'; stats: EngineStats }
   | { type: 'frame'; universe: number; data: string }
   | { type: 'project'; project: Project }
