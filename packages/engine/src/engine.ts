@@ -14,6 +14,7 @@ import { Ticker } from './clock';
 import type { EngineConfig, OutputConfig } from './config';
 import { ArtNetOutput } from './drivers/artnet';
 import { SacnOutput } from './drivers/sacn';
+import { UsbDmxOutput } from './drivers/usb-dmx';
 import type { UniverseOutput } from './drivers/output';
 import { Playback } from './playback';
 import { PumpModbusManager } from './pumpmodbus';
@@ -271,6 +272,10 @@ function createOutput(cfg: OutputConfig): UniverseOutput {
         host: cfg.host,
         port: cfg.port,
       });
+    case 'usb-dmx': {
+      if (!cfg.path) throw new Error('usb-dmx: не указан path (COM-порт адаптера)');
+      return new UsbDmxOutput({ path: cfg.path, baudRate: cfg.baudRate });
+    }
     default:
       throw new Error(`Неизвестный тип выхода: ${(cfg as { type: string }).type}`);
   }

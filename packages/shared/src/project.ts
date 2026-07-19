@@ -2,6 +2,7 @@ import { DMX_UNIVERSE_SIZE } from './dmx';
 import { sanitizeKeys, type KeyBinding } from './keys';
 import { emptyLayout, sanitizeLayout, type FountainLayout } from './layout';
 import { sanitizePlaylists, sanitizeSchedule, type Playlist, type ScheduleEntry } from './playlist';
+import { sanitizeMqttBindings, sanitizeOscBindings, type MqttBinding, type OscBinding } from './remote';
 import { sanitizeShows, type Show } from './show';
 
 /**
@@ -215,6 +216,9 @@ export interface Project {
   playlists: Playlist[];
   schedule: ScheduleEntry[];
   keys: KeyBinding[];
+  /** Привязки OSC-адресов и MQTT-топиков к действиям (§1 доработки: удалённое управление). */
+  oscBindings: OscBinding[];
+  mqttBindings: MqttBinding[];
   /** 3D-схема фонтана (вкладка «3D»). */
   layout: FountainLayout;
 }
@@ -280,6 +284,8 @@ export function emptyProject(name = 'Новый проект'): Project {
     playlists: [],
     schedule: [],
     keys: [],
+    oscBindings: [],
+    mqttBindings: [],
     layout: emptyLayout(),
   };
 }
@@ -391,6 +397,8 @@ export function sanitizeProject(raw: unknown): Project {
     playlists: [],
     schedule: [],
     keys: [],
+    oscBindings: [],
+    mqttBindings: [],
     layout: emptyLayout(),
   };
   if (Array.isArray(r.profiles)) {
@@ -481,12 +489,15 @@ export function sanitizeProject(raw: unknown): Project {
     sequences: new Set(project.sequences.map((q) => q.id)),
     scenes: sceneIds,
   });
-  project.keys = sanitizeKeys(r.keys, {
+  const remoteIds = {
     scenes: sceneIds,
     sequences: new Set(project.sequences.map((q) => q.id)),
     shows: new Set(project.shows.map((s) => s.id)),
     playlists: new Set(project.playlists.map((p) => p.id)),
-  });
+  };
+  project.keys = sanitizeKeys(r.keys, remoteIds);
+  project.oscBindings = sanitizeOscBindings(r.oscBindings, remoteIds);
+  project.mqttBindings = sanitizeMqttBindings(r.mqttBindings, remoteIds);
   project.layout = sanitizeLayout(r.layout, deviceIds);
   return project;
 }

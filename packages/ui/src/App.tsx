@@ -9,6 +9,7 @@ import { SequencesView } from './views/SequencesView';
 import { ShowView } from './views/ShowView';
 import { NetworkView } from './views/NetworkView';
 import { PlaylistsView } from './views/PlaylistsView';
+import { RemoteView } from './views/RemoteView';
 import { ScheduleView } from './views/ScheduleView';
 
 type Tab =
@@ -21,6 +22,7 @@ type Tab =
   | 'playlists'
   | 'schedule'
   | 'network'
+  | 'remote'
   | 'keys';
 
 const TABS: { id: Tab; label: string }[] = [
@@ -33,6 +35,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'playlists', label: 'Плейлисты' },
   { id: 'schedule', label: 'Расписание' },
   { id: 'network', label: 'Сеть' },
+  { id: 'remote', label: 'Удалённо' },
   { id: 'keys', label: 'Клавиши' },
 ];
 
@@ -113,6 +116,7 @@ export function App() {
       {tab === 'playlists' && <PlaylistsView engine={engine} />}
       {tab === 'schedule' && <ScheduleView engine={engine} />}
       {tab === 'network' && <NetworkView engine={engine} />}
+      {tab === 'remote' && <RemoteView engine={engine} />}
       {tab === 'keys' && <KeysView engine={engine} />}
 
       <footer className="statusbar">

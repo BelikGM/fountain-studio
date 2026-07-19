@@ -10,6 +10,11 @@ import type {
   UniverseInfo,
 } from '@fountain-studio/shared';
 
+export interface RemoteStatus {
+  osc: { enabled: boolean };
+  mqtt: { enabled: boolean; connected: boolean };
+}
+
 export interface EngineConnection {
   connected: boolean;
   version: string | null;
@@ -25,6 +30,8 @@ export interface EngineConnection {
   network: NetworkState | null;
   /** Состояние насосов на Modbus (null — движок ещё не прислал; пуст — насосов на Modbus нет). */
   modbus: ModbusState | null;
+  /** Статус OSC/MQTT (null — движок ещё не прислал). Включение — в fountain.config.json. */
+  remote: RemoteStatus | null;
   send: (msg: ClientMessage) => void;
   /** Применяет правку проекта локально и отправляет движку. */
   updateProject: (project: Project) => void;
@@ -54,6 +61,7 @@ export function useEngine(): EngineConnection {
   const [project, setProject] = useState<Project | null>(null);
   const [network, setNetwork] = useState<NetworkState | null>(null);
   const [modbus, setModbus] = useState<ModbusState | null>(null);
+  const [remote, setRemote] = useState<RemoteStatus | null>(null);
   const [playback, setPlayback] = useState<PlaybackState>({
     activeSceneId: null,
     running: [],
@@ -115,6 +123,9 @@ export function useEngine(): EngineConnection {
             break;
           case 'modbus':
             setModbus(msg.state);
+            break;
+          case 'remoteStatus':
+            setRemote({ osc: msg.osc, mqtt: msg.mqtt });
             break;
           case 'audio': {
             const waiters = audioWaitersRef.current.get(msg.name) ?? [];
@@ -220,6 +231,7 @@ export function useEngine(): EngineConnection {
     playback,
     network,
     modbus,
+    remote,
     send,
     updateProject,
     requestAudio,

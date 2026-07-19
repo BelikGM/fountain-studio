@@ -162,4 +162,6 @@ export type ServerMessage =
   /** Ответ на getDmxCapture: последний кадр внешнего ArtDMX; data = '' — захвата нет. */
   | { type: 'dmxCapture'; universe: number; data: string; ageMs: number; fromIp: string; frames: number }
   /** Ответ на measureDmxCycle. */
-  | { type: 'dmxCycle'; universe: number; periodMs: number | null; confidence: number; analyzedMs: number };
+  | { type: 'dmxCycle'; universe: number; periodMs: number | null; confidence: number; analyzedMs: number }
+  /** Статус удалённого управления (§1 доработки): включено ли, есть ли связь. */
+  | { type: 'remoteStatus'; osc: { enabled: boolean }; mqtt: { enabled: boolean; connected: boolean } };

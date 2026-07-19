@@ -2,16 +2,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export interface OutputConfig {
-  type: 'artnet' | 'sacn';
+  type: 'artnet' | 'sacn' | 'usb-dmx';
   /** Адрес назначения. Для artnet обязателен (IP ноды или broadcast). Для sacn по умолчанию multicast. */
   host?: string;
   port?: number;
-  /** Номер вселенной протокола: Art-Net — с 0, sACN — с 1. */
+  /** Номер вселенной протокола: Art-Net — с 0, sACN — с 1. Для usb-dmx не используется. */
   universe: number;
   /** Слать broadcast (artnet). */
   broadcast?: boolean;
   /** Приоритет источника (sacn, по умолчанию 100). */
   priority?: number;
+  /** COM-порт USB-DMX адаптера (usb-dmx), напр. "COM5". */
+  path?: string;
+  /** Скорость порта usb-dmx (по умолчанию 57600 — распространённое умолчание для клонов ENTTEC PRO API; не проверено на реальном адаптере). */
+  baudRate?: number;
 }
 
 export interface UniverseConfig {
@@ -37,6 +41,19 @@ export interface EngineConfig {
     ffplayPath: string;
   };
   universes: UniverseConfig[];
+  /** OSC-пульт (TouchOSC и т.п.): слушаем адрес/действие из project.oscBindings. Выключено по умолчанию. */
+  osc?: { enabled: boolean; port: number };
+  /** MQTT: телеметрия/удалённые команды через брокер. Выключено по умолчанию. */
+  mqtt?: {
+    enabled: boolean;
+    host: string;
+    port?: number;
+    clientId?: string;
+    username?: string;
+    password?: string;
+    /** Префикс топиков: команды — `${topicPrefix}/cmd/<binding.topic>`, статус — `${topicPrefix}/status`. */
+    topicPrefix?: string;
+  };
 }
 
 const DEFAULTS: EngineConfig = {
@@ -63,6 +80,8 @@ export function loadConfig(argv: string[]): EngineConfig & { configFile: string 
     audio: { ...DEFAULTS.audio, ...raw.audio },
     universes: raw.universes ?? [],
     configFile: file,
+    ...(raw.osc ? { osc: raw.osc } : {}),
+    ...(raw.mqtt ? { mqtt: raw.mqtt } : {}),
   };
   if (config.universes.length === 0) {
     throw new Error(`В ${file} не задано ни одной вселенной (universes)`);

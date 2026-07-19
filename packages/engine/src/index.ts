@@ -4,7 +4,9 @@ import { AudioPlayer } from './audioplayer';
 import { loadConfig } from './config';
 import { DmxCapture } from './dmxcapture';
 import { Engine } from './engine';
+import { MqttController } from './mqttcontroller';
 import { NetworkMonitor } from './netmonitor';
+import { OscServer } from './oscserver';
 import { ProjectStore } from './project';
 import { Scheduler } from './schedule';
 import { startServer } from './server';
@@ -41,7 +43,18 @@ const capture = new DmxCapture();
 if (net) net.onDmx = (universe, data, fromIp) => capture.handle(universe, data, fromIp);
 net?.start();
 
-startServer(engine, store, audio, net, capture);
+// Удалённое управление (§1 доработки): OSC-пульт и/или MQTT — оба отключены
+// по умолчанию, включаются per-installation в fountain.config.json.
+const osc = config.osc?.enabled
+  ? new OscServer(engine, config.osc.port, () => store.project.oscBindings)
+  : undefined;
+osc?.start();
+const mqtt = config.mqtt?.enabled
+  ? new MqttController(engine, config.mqtt, () => store.project.mqttBindings)
+  : undefined;
+mqtt?.startTelemetry();
+
+startServer(engine, store, audio, net, capture, osc, mqtt);
 
 // Расписание по системному времени ПК — работает, пока запущен движок.
 const scheduler = new Scheduler(engine, () => store.project.schedule);
@@ -59,6 +72,8 @@ process.on('SIGINT', () => {
   console.log('\n[engine] остановка…');
   scheduler.stop();
   player.stop();
+  osc?.stop();
+  mqtt?.stop();
   store.flush();
   engine.stop();
   process.exit(0);

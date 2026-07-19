@@ -3,7 +3,9 @@ import { sanitizeProject, type ClientMessage, type ServerMessage } from '@founta
 import type { AudioStore } from './audio';
 import type { DmxCapture } from './dmxcapture';
 import type { Engine } from './engine';
+import type { MqttController } from './mqttcontroller';
 import type { NetworkMonitor } from './netmonitor';
+import type { OscServer } from './oscserver';
 import type { ProjectStore } from './project';
 
 export const ENGINE_VERSION = '0.6.0';
@@ -15,6 +17,8 @@ export function startServer(
   audio: AudioStore,
   net?: NetworkMonitor,
   capture?: DmxCapture,
+  osc?: OscServer,
+  mqtt?: MqttController,
 ): WebSocketServer {
   const port = engine.config.server.port;
   const wss = new WebSocketServer({ port });
@@ -33,6 +37,13 @@ export function startServer(
   if (net) net.onChange = broadcastNetwork;
   const broadcastModbus = (): void => broadcast({ type: 'modbus', state: engine.modbusState() });
   engine.pumps.onChange = broadcastModbus;
+  const remoteStatus = (): Extract<ServerMessage, { type: 'remoteStatus' }> => ({
+    type: 'remoteStatus',
+    osc: { enabled: osc !== undefined },
+    mqtt: { enabled: mqtt !== undefined, connected: mqtt?.isConnected ?? false },
+  });
+  const broadcastRemoteStatus = (): void => broadcast(remoteStatus());
+  if (mqtt) mqtt.onChange = broadcastRemoteStatus;
 
   wss.on('connection', (ws) => {
     const hello: ServerMessage = {
@@ -46,6 +57,7 @@ export function startServer(
     ws.send(JSON.stringify({ type: 'playback', state: engine.playbackState() } satisfies ServerMessage));
     if (net) ws.send(JSON.stringify({ type: 'network', state: net.state() } satisfies ServerMessage));
     ws.send(JSON.stringify({ type: 'modbus', state: engine.modbusState() } satisfies ServerMessage));
+    ws.send(JSON.stringify(remoteStatus()));
 
     ws.on('message', (raw) => {
       let msg: ClientMessage;
@@ -196,6 +208,10 @@ export function startServer(
   setInterval(() => {
     if (wss.clients.size > 0) broadcastModbus();
   }, 3000);
+  // Удалённое управление: раз в 5 с (статус MQTT-связи), плюс мгновенно из onChange.
+  setInterval(() => {
+    if (wss.clients.size > 0) broadcastRemoteStatus();
+  }, 5000);
   setInterval(() => {
     if (wss.clients.size === 0) return;
     for (const u of engine.universes) {

@@ -16,6 +16,7 @@ import {
   actorPhases,
   editedToSourceMs,
   emptyProject,
+  encodeOscMessage,
   energyEnvelope,
   estimateTempo,
   insunitsToMeters,
@@ -48,11 +49,13 @@ import {
 } from '@fountain-studio/shared';
 import { AudioStore } from '../audio';
 import dgram from 'node:dgram';
-import { createServer as createTcpServer } from 'node:net';
+import { createServer as createTcpServer, createConnection as createTcpConnection } from 'node:net';
 import { emaStep } from '../clock';
 import { DmxCapture } from '../dmxcapture';
 import { Engine } from '../engine';
+import { MqttController } from '../mqttcontroller';
 import { NetworkMonitor } from '../netmonitor';
+import { OscServer } from '../oscserver';
 import { ProjectStore } from '../project';
 import { Scheduler } from '../schedule';
 import { startServer } from '../server';
@@ -165,6 +168,63 @@ const vfdServer = createTcpServer((socket) => {
 });
 vfdServer.listen(MOCK_VFD_PORT, '127.0.0.1');
 
+// Мок-брокер MQTT: наивный релей PUBLISH между подключёнными сокетами (для
+// теста этого достаточно — участвует движок-клиент и один тестовый «внешний
+// издатель»). CONNECT/SUBSCRIBE/PINGREQ отвечают без проверки содержимого.
+const MOCK_MQTT_PORT = 15022;
+const mqttSockets = new Set<import('node:net').Socket>();
+const mqttServer = createTcpServer((socket) => {
+  mqttSockets.add(socket);
+  let buf = Buffer.alloc(0);
+  socket.on('data', (chunk: Buffer) => {
+    buf = Buffer.concat([buf, chunk]);
+    for (;;) {
+      if (buf.length < 2) return;
+      const type = buf[0]! >> 4;
+      let multiplier = 1;
+      let remLen = 0;
+      let idx = 1;
+      let byte: number;
+      do {
+        if (idx >= buf.length) return;
+        byte = buf[idx]!;
+        remLen += (byte & 0x7f) * multiplier;
+        multiplier *= 128;
+        idx++;
+      } while ((byte & 0x80) !== 0);
+      const total = idx + remLen;
+      if (buf.length < total) return;
+      const full = buf.subarray(0, total);
+      const body = buf.subarray(idx, total);
+      buf = buf.subarray(total);
+      if (type === 1) socket.write(Buffer.from([0x20, 0x02, 0x00, 0x00])); // CONNECT → CONNACK
+      else if (type === 8) socket.write(Buffer.concat([Buffer.from([0x90, 0x03]), body.subarray(0, 2), Buffer.from([0x00])])); // SUBSCRIBE → SUBACK
+      else if (type === 12) socket.write(Buffer.from([0xd0, 0x00])); // PINGREQ → PINGRESP
+      else if (type === 3) for (const c of mqttSockets) if (c !== socket) c.write(full); // PUBLISH → релей остальным
+    }
+  });
+  socket.on('close', () => mqttSockets.delete(socket));
+});
+mqttServer.listen(MOCK_MQTT_PORT, '127.0.0.1');
+
+/** Собирает сырой MQTT PUBLISH (QoS0) — имитация внешнего издателя без полного клиента. */
+function encodeMqttPublish(topic: string, payload: string): Buffer {
+  const topicBuf = Buffer.from(topic, 'utf8');
+  const topicLenBuf = Buffer.alloc(2);
+  topicLenBuf.writeUInt16BE(topicBuf.length, 0);
+  const payloadBuf = Buffer.from(payload, 'utf8');
+  const variableAndPayload = Buffer.concat([topicLenBuf, topicBuf, payloadBuf]);
+  const remLen: number[] = [];
+  let len = variableAndPayload.length;
+  do {
+    let b = len % 128;
+    len = Math.floor(len / 128);
+    if (len > 0) b |= 0x80;
+    remLen.push(b);
+  } while (len > 0);
+  return Buffer.concat([Buffer.from([0x30, ...remLen]), variableAndPayload]);
+}
+
 const engine = new Engine({
   server: { port: PORT },
   timing: { tickMs: 50, spinMs: 10, uiFrameMs: 40 },
@@ -185,7 +245,17 @@ const net = new NetworkMonitor({
 const dmxCapture = new DmxCapture();
 net.onDmx = (universe, data, fromIp) => dmxCapture.handle(universe, data, fromIp);
 net.start();
-const wss = startServer(engine, store, new AudioStore(path.join(tmpDir, 'audio')), net, dmxCapture);
+
+const OSC_PORT = 15021;
+const osc = new OscServer(engine, OSC_PORT, () => store.project.oscBindings);
+osc.start();
+const mqtt = new MqttController(
+  engine,
+  { host: '127.0.0.1', port: MOCK_MQTT_PORT, topicPrefix: 'test' },
+  () => store.project.mqttBindings,
+);
+
+const wss = startServer(engine, store, new AudioStore(path.join(tmpDir, 'audio')), net, dmxCapture, osc, mqtt);
 
 // Демо-проект: насос (адрес 1), клапан (2), RGB (10–12).
 const demo: Project = {
@@ -322,6 +392,8 @@ const demo: Project = {
       ],
     },
   ],
+  oscBindings: [{ id: 'osc1', address: '/scene/a', action: { type: 'scene', refId: 'sceneA' } }],
+  mqttBindings: [{ id: 'mq1', topic: 'stop-all', action: { type: 'stopAll' } }],
 };
 
 let frame = new Uint8Array(512);
@@ -332,6 +404,7 @@ let networkState: NetworkState | null = null;
 let modbusState: ModbusState | null = null;
 let dmxCaptureMsg: Extract<ServerMessage, { type: 'dmxCapture' }> | null = null;
 let dmxCycleMsg: Extract<ServerMessage, { type: 'dmxCycle' }> | null = null;
+let remoteStatusMsg: Extract<ServerMessage, { type: 'remoteStatus' }> | null = null;
 let sawStep1 = false;
 let sawFadeMidpoint = false;
 
@@ -369,6 +442,8 @@ ws.on('message', (raw) => {
     dmxCaptureMsg = msg;
   } else if (msg.type === 'dmxCycle') {
     dmxCycleMsg = msg;
+  } else if (msg.type === 'remoteStatus') {
+    remoteStatusMsg = msg;
   }
 });
 
@@ -905,6 +980,24 @@ async function main(): Promise<void> {
   await waitFor('авария обнаружена', () => pumpStatus()?.faultCode === 7, 4000);
   check(true, 'опрос аварии: код 7 из регистра F0.10 дошёл до UI-состояния насоса');
 
+  console.log('— Удалённое управление: OSC и MQTT (§1 доработки) —');
+  mockNode.send(encodeOscMessage('/scene/a'), OSC_PORT, '127.0.0.1');
+  await waitFor('OSC включил сцену A', () => playback.activeSceneId === 'sceneA', 3000);
+  check(true, 'OSC: /scene/a → setScene(sceneA), действие пришло без участия редактора');
+
+  await waitFor('MQTT подключён к мок-брокеру', () => remoteStatusMsg?.mqtt.connected === true, 3000);
+  check(true, 'MqttController: CONNECT/CONNACK и подписка на брокере прошли');
+  const mqttPub = createTcpConnection({ host: '127.0.0.1', port: MOCK_MQTT_PORT }, () => {
+    mqttPub.write(encodeMqttPublish('test/cmd/stop-all', '1'));
+  });
+  await waitFor(
+    'MQTT остановил всё',
+    () => playback.activeSceneId === null && playback.running.length === 0,
+    3000,
+  );
+  check(true, 'MQTT: публикация test/cmd/stop-all → stopAllPlayback(), команда с «внешнего» издателя дошла');
+  mqttPub.end();
+
   console.log('— Хранилище аудио —');
   const audioData = Buffer.from('НЕ-НАСТОЯЩИЙ-MP3: проверка хранилища').toString('base64');
   send({ type: 'uploadAudio', name: 'тест.mp3', dataBase64: audioData });
@@ -936,8 +1029,11 @@ main()
     ws.close();
     wss.close();
     net.stop();
+    osc.stop();
+    mqtt.stop();
     mockNode.close();
     vfdServer.close();
+    mqttServer.close();
     engine.stop();
     fs.rmSync(tmpDir, { recursive: true, force: true });
     process.exit(failures.length === 0 ? 0 : 1);
