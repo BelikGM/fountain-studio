@@ -43,6 +43,11 @@ import {
   spectralCentroidEnvelope,
   swapDeviceAddresses,
   tempoCategory,
+  brightnessEnvelopePoints,
+  colorChangeEvents,
+  colorChannelEnvelopePoints,
+  sampleFrameStats,
+  type VideoFrameSample,
   type ModbusState,
   type NetworkState,
   type PlaybackState,
@@ -1037,6 +1042,60 @@ async function main(): Promise<void> {
   check(
     highCentroid > lowCentroid * 5,
     `spectralCentroidEnvelope: центроид тона 3000 Гц (${highCentroid.toFixed(0)} Гц) заметно выше 200 Гц (${lowCentroid.toFixed(0)} Гц)`,
+  );
+
+  console.log('— Анализ видео: яркость/цвет по кадрам (§4 доработки — не ИИ, прозрачная эвристика) —');
+  // RGBA-пиксели синтетических «кадров»: белый, чёрный, чистый красный.
+  const whiteFrame = new Uint8ClampedArray(16).fill(255);
+  const blackFrame = new Uint8ClampedArray(16).fill(0);
+  const redFrame = new Uint8ClampedArray(16);
+  for (let i = 0; i < redFrame.length; i += 4) {
+    redFrame[i] = 255;
+    redFrame[i + 1] = 0;
+    redFrame[i + 2] = 0;
+    redFrame[i + 3] = 255;
+  }
+  const whiteStats = sampleFrameStats(whiteFrame);
+  const blackStats = sampleFrameStats(blackFrame);
+  const redStats = sampleFrameStats(redFrame);
+  check(
+    Math.abs(whiteStats.brightness - 1) < 1e-6 && whiteStats.color.r === 255 && whiteStats.color.g === 255,
+    'sampleFrameStats: белый кадр → яркость 1, цвет (255,255,255)',
+  );
+  check(blackStats.brightness === 0, 'sampleFrameStats: чёрный кадр → яркость 0');
+  check(
+    redStats.color.r === 255 && redStats.color.g === 0 && redStats.color.b === 0 && Math.abs(redStats.brightness - 0.2126) < 0.001,
+    `sampleFrameStats: чистый красный → цвет (255,0,0), перцептивная яркость ${redStats.brightness.toFixed(4)} ≈ 0.2126 (Rec.709)`,
+  );
+
+  const videoSamples: VideoFrameSample[] = [
+    { atMs: 0, brightness: blackStats.brightness, color: blackStats.color },
+    { atMs: 250, brightness: 0.5, color: { r: 128, g: 128, b: 128 } },
+    { atMs: 500, brightness: whiteStats.brightness, color: whiteStats.color },
+    { atMs: 750, brightness: redStats.brightness, color: redStats.color }, // резкий скачок цвета — монтажная склейка
+  ];
+  const brightPoints = brightnessEnvelopePoints(videoSamples, { min: 0, max: 255 });
+  check(
+    brightPoints.length === 4 && brightPoints[0]!.value === 0 && brightPoints[2]!.value === 255,
+    'brightnessEnvelopePoints: 0..255 по кадрам, чёрный→0, белый→255',
+  );
+  const rPoints = colorChannelEnvelopePoints(videoSamples, 'r');
+  const bPoints = colorChannelEnvelopePoints(videoSamples, 'b');
+  check(
+    rPoints[3]!.value === 255 && bPoints[3]!.value === 0,
+    'colorChannelEnvelopePoints: канал R/B по кадрам разобран верно (красный кадр → R=255, B=0)',
+  );
+  // Три плавных кадра, затем резкий скачок на красный — ровно одна склейка.
+  const cutSamples: VideoFrameSample[] = [
+    { atMs: 0, brightness: 0.5, color: { r: 100, g: 100, b: 100 } },
+    { atMs: 250, brightness: 0.52, color: { r: 105, g: 102, b: 98 } },
+    { atMs: 500, brightness: 0.48, color: { r: 98, g: 99, b: 103 } },
+    { atMs: 750, brightness: redStats.brightness, color: redStats.color },
+  ];
+  const changes = colorChangeEvents(cutSamples, { thresholdDelta: 100 });
+  check(
+    changes.length === 1 && changes[0]!.tMs === 750,
+    `colorChangeEvents: плавные кадры игнорируются, резкая склейка на 750 мс найдена (${changes.length} событие)`,
   );
 
   console.log('— Измерение периода цикла DMX (§17 п.1) —');

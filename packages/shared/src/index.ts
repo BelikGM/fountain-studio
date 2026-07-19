@@ -11,3 +11,4 @@ export * from './project';
 export * from './remote';
 export * from './scenegen';
 export * from './show';
+export * from './videoanalysis';

@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   bandEnergyEnvelope,
   bandEnvelopePoints,
+  brightnessEnvelopePoints,
+  colorChangeEvents,
+  colorChannelEnvelopePoints,
   cutsTotalMs,
   editedToSourceMs,
   energyEnvelope,
@@ -22,6 +25,7 @@ import {
   type ShowTrack,
 } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
+import { extractVideoFrameSamples } from '../videoFrames';
 
 const HEAD_W = 216;
 const RULER_H = 28;
@@ -569,6 +573,8 @@ function ShowEditor({
 
   // ── Автопостановка от аудиоанализа (§17 п.5) ───────────────────────────────
   const [autoStatus, setAutoStatus] = useState<string | null>(null);
+  const [videoStatus, setVideoStatus] = useState<string | null>(null);
+  const [videoBusy, setVideoBusy] = useState(false);
 
   const autoStage = (): void => {
     if (!buffer || !project) return;
@@ -682,6 +688,101 @@ function ShowEditor({
     onChange({ ...show, tracks: [...show.tracks, ...newTracks] });
     const bpmText = tempo.bpm > 0 ? `темп ≈ ${tempo.bpm} BPM` : 'темп не определён';
     setAutoStatus(`Черновик: ${summary.join(', ')}, ${bpmText}. Правьте на таймлайне.`);
+  };
+
+  // ── Анализ видео (§4 доработки) ─────────────────────────────────────────────
+  // Не «обучение» в смысле ИИ (это исследовательская CV/ML-задача — см. комментарий
+  // в shared/videoanalysis.ts), а рабочий прототип: яркость и цвет по кадрам ролика
+  // → черновые дорожки, тем же приёмом, что аудио-автопостановка.
+  const videoStage = async (file: File): Promise<void> => {
+    if (!project) return;
+    setVideoBusy(true);
+    setVideoStatus('Читаю кадры видео…');
+    try {
+      const samples = await extractVideoFrameSamples(file, {
+        onProgress: (frac) => setVideoStatus(`Читаю кадры видео… ${Math.round(frac * 100)}%`),
+      });
+      if (samples.length === 0) throw new Error('не удалось извлечь ни одного кадра');
+
+      const cuts = show.cuts;
+      const inCut = (srcMs: number): boolean => cuts.some((c) => srcMs >= c.startMs && srcMs < c.endMs);
+      const toEdited = (srcPoints: { tMs: number; value: number }[]): { tMs: number; value: number }[] => {
+        const out: { tMs: number; value: number }[] = [];
+        let lastT = -Infinity;
+        let lastV = -Infinity;
+        for (const p of srcPoints) {
+          if (inCut(p.tMs)) continue;
+          const t = Math.round(sourceToEditedMs(cuts, p.tMs));
+          if (t > show.durationMs) break;
+          if (t - lastT < 250 && Math.abs(p.value - lastV) < 6) continue;
+          out.push({ tMs: t, value: p.value });
+          lastT = t;
+          lastV = p.value;
+        }
+        return out;
+      };
+
+      const newTracks: ShowTrack[] = [];
+      const summary: string[] = [];
+
+      const intensityDevice = project.devices.find((d) => profiles.get(d.profileId)?.channels.some((c) => c.role === 'intensity'));
+      if (intensityDevice) {
+        const ch = Math.max(0, profiles.get(intensityDevice.profileId)!.channels.findIndex((c) => c.role === 'intensity'));
+        const points = toEdited(brightnessEnvelopePoints(samples, { min: 0, max: 255, gamma: 1.2 }));
+        newTracks.push({
+          id: uid(), name: `Яркость видео → ${intensityDevice.name}`, kind: 'envelope', offsetMs: 0, muted: false,
+          deviceId: intensityDevice.id, channel: ch, points,
+        });
+        summary.push(`яркость → «${intensityDevice.name}» (${points.length} точек)`);
+      }
+
+      const rgbDevice = project.devices.find((d) => {
+        const roles = profiles.get(d.profileId)?.channels.map((c) => c.role) ?? [];
+        return roles.includes('red') && roles.includes('green') && roles.includes('blue');
+      });
+      if (rgbDevice) {
+        const channels = profiles.get(rgbDevice.profileId)!.channels;
+        (['red', 'green', 'blue'] as const).forEach((role, ri) => {
+          const ch = channels.findIndex((c) => c.role === role);
+          if (ch < 0) return;
+          const colorChannel = (['r', 'g', 'b'] as const)[ri]!;
+          const points = toEdited(colorChannelEnvelopePoints(samples, colorChannel));
+          newTracks.push({
+            id: uid(), name: `Цвет видео (${role[0]!.toUpperCase()}) → ${rgbDevice.name}`, kind: 'envelope', offsetMs: 0,
+            muted: false, deviceId: rgbDevice.id, channel: ch, points,
+          });
+        });
+        summary.push(`цвет → «${rgbDevice.name}» (RGB, 3 дорожки)`);
+      }
+
+      if (project.scenes.length > 0) {
+        const scene = project.scenes[0]!;
+        const blocks: ShowBlock[] = [];
+        for (const ev of colorChangeEvents(samples, { thresholdDelta: 80 })) {
+          if (inCut(ev.tMs)) continue;
+          const t = Math.round(sourceToEditedMs(cuts, ev.tMs));
+          if (t > show.durationMs) continue;
+          blocks.push({ id: uid(), type: 'scene', refId: scene.id, startMs: t, durationMs: 300, fadeInMs: 0, fadeOutMs: 100 });
+        }
+        if (blocks.length > 0) {
+          newTracks.push({
+            id: uid(), name: `Склейки видео → «${scene.name}»`, kind: 'blocks', offsetMs: 0, muted: false, blocks,
+          });
+          summary.push(`${blocks.length} вспышек «${scene.name}» на монтажных склейках`);
+        }
+      }
+
+      if (newTracks.length === 0) {
+        setVideoStatus('Нет подходящих устройств (нужен насос/диммер и/или RGB-светильник в патче) — черновик не создан.');
+        return;
+      }
+      onChange({ ...show, tracks: [...show.tracks, ...newTracks] });
+      setVideoStatus(`Черновик из видео: ${summary.join(', ')} (${samples.length} кадров прочитано). Правьте на таймлайне.`);
+    } catch (err) {
+      setVideoStatus(`Ошибка чтения видео: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setVideoBusy(false);
+    }
   };
 
   const updateTrack = (next: ShowTrack): void => {
@@ -861,6 +962,20 @@ function ShowEditor({
         >
           ⚡ Автопостановка
         </button>
+        <label className={videoBusy ? 'btn' : 'btn'} title="Извлечь яркость/цвет из видеоролика → черновые дорожки (§4). Не ИИ — эвристика по кадрам.">
+          {videoBusy ? '🎬 Читаю…' : '🎬 Из видео'}
+          <input
+            type="file"
+            accept="video/*"
+            style={{ display: 'none' }}
+            disabled={videoBusy}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void videoStage(f);
+              e.target.value = '';
+            }}
+          />
+        </label>
         <span className="spacer" />
         {blocksTracks.length > 0 && (
           <select
@@ -887,6 +1002,7 @@ function ShowEditor({
         </button>
       </div>
       {autoStatus && <div className="dim" style={{ padding: '4px 12px' }}>{autoStatus}</div>}
+      {videoStatus && <div className="dim" style={{ padding: '4px 12px' }}>{videoStatus}</div>}
       {recording && (
         <div className="dim" style={{ padding: '4px 12px' }}>
           Идёт запись в «{blocksTracks.find((t) => t.id === recordTrackId)?.name ?? '?'}»: жмите клавиши сцен/
