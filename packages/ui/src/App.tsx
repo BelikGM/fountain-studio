@@ -121,7 +121,9 @@ export function App() {
                   <img src="/moon.jpg" alt="" className="knob-moon-img" />
                 </span>
               ) : (
-                '☀'
+                <span className="knob-sun">
+                  <img src="/sun.webp" alt="" className="knob-sun-img" />
+                </span>
               )}
             </span>
           </button>

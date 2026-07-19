@@ -149,6 +149,26 @@ body {
   top: -12px;
   display: block;
 }
+
+/*
+ * Солнце в тумблере — фотография sun.webp (альбом 16:9, диск чуть левее центра).
+ * Смещения подобраны так, чтобы диск солнца заполнил круг.
+ */
+.knob-sun {
+  position: relative;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #000;
+}
+.knob-sun-img {
+  position: absolute;
+  width: 27px;
+  left: -7.5px;
+  top: -1.5px;
+  display: block;
+}
 @media (prefers-reduced-motion: reduce) {
   .theme-knob { transition: none; }
 }
