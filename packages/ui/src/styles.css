@@ -1,14 +1,43 @@
 :root {
   color-scheme: dark;
+  --topbar-h: 44px;
   --bg: #14161a;
   --bg-panel: #1c1f26;
   --bg-track: #262a33;
+  --bg-wave: #171a20;
   --fg: #d7dbe2;
   --fg-dim: #8a909c;
   --accent: #2e9df7;
   --accent-fill: linear-gradient(180deg, #37b6ff, #1668c9);
   --danger: #d64545;
+  --danger-bg: #3a1e1e;
+  --danger-text: #ff9c9c;
+  --ok: #5fd068;
+  --ok-bg: #1e3a24;
+  --ok-border: #2c5232;
+  --warn: #e6b34a;
   --border: #30343e;
+}
+
+/* Светлая тема (тумблер в шапке; выбор хранится в localStorage). */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f2f4f7;
+  --bg-panel: #ffffff;
+  --bg-track: #e5e9ef;
+  --bg-wave: #dde3ea;
+  --fg: #23262c;
+  --fg-dim: #667080;
+  --accent: #1877cf;
+  --accent-fill: linear-gradient(180deg, #37b6ff, #1668c9);
+  --danger: #c53030;
+  --danger-bg: #fbe3e3;
+  --danger-text: #b32020;
+  --ok: #1e8f3a;
+  --ok-bg: #d9f2de;
+  --ok-border: #9ed8ab;
+  --warn: #9a6d00;
+  --border: #cfd6e0;
 }
 
 * {
@@ -34,14 +63,26 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 14px;
+  height: var(--topbar-h);
+  padding: 0 14px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
 }
 
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--topbar-h);
   font-weight: 600;
   letter-spacing: 0.4px;
+}
+
+.brand-logo {
+  /* Высота левой панели × 95% (запрошенный масштаб). */
+  height: calc(var(--topbar-h) * 0.95);
+  width: auto;
+  display: block;
 }
 
 .brand-version {
@@ -52,10 +93,65 @@ body {
 }
 
 .conn {
-  font-size: 12px;
+  font-size: 10px;
 }
-.conn-on { color: #5fd068; }
+.conn-on { color: var(--ok); }
 .conn-off { color: var(--danger); }
+
+/* ── Тумблер темы: кружок справа = тёмная (луна), слева = светлая (солнце) ── */
+.theme-toggle {
+  position: relative;
+  width: 38px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--bg-track);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+/* Ночью — светлое свечение по краям, днём — затемнение вокруг. */
+.theme-toggle.theme-dark:hover { box-shadow: 0 0 7px rgba(230, 238, 255, 0.45); }
+.theme-toggle.theme-light:hover { box-shadow: 0 0 7px rgba(20, 24, 32, 0.4); }
+.theme-knob {
+  position: absolute;
+  top: 1px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  line-height: 1;
+  transition: left 0.15s ease;
+}
+.theme-toggle.theme-dark .theme-knob { left: 19px; }
+.theme-toggle.theme-light .theme-knob { left: 1px; color: #f5b301; }
+/*
+ * Луна в тумблере — фотография moon.jpg (портрет 1:2, луна в центре кадра).
+ * Кружок обрезает кадр; смещения подобраны так, чтобы диск луны заполнил круг.
+ */
+.knob-moon {
+  position: relative;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #000;
+}
+.knob-moon-img {
+  position: absolute;
+  width: 18px;
+  left: -2.5px;
+  top: -12px;
+  display: block;
+}
+@media (prefers-reduced-motion: reduce) {
+  .theme-knob { transition: none; }
+}
 
 .toolbar {
   display: flex;
@@ -95,12 +191,19 @@ body {
   color: #fff;
 }
 .btn-danger {
-  background: #3a1e1e;
+  background: var(--danger-bg);
   border-color: var(--danger);
-  color: #ff9c9c;
+  color: var(--danger-text);
   font-weight: 600;
 }
 .btn-danger:hover { background: var(--danger); color: #fff; }
+
+/* Активное «Выкл» тест-генератора — красным, в тон BLACKOUT (не синим). */
+.btn-off-active {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
 
 select {
   background: var(--bg-track);
@@ -159,6 +262,11 @@ select {
   font-size: 11px;
   color: var(--fg);
   font-variant-numeric: tabular-nums;
+}
+
+/* Адрес занят прибором из патча — номер подсвечен (имя прибора в тултипе). */
+.fader-owned .fader-channel {
+  color: var(--accent);
 }
 
 .statusbar {
@@ -263,7 +371,7 @@ select {
   background: var(--bg-track);
   border-color: var(--accent);
 }
-.list-item.playing { color: #5fd068; }
+.list-item.playing { color: var(--ok); }
 
 /* ── Панели и формы ──────────────────────────────────────── */
 .panel {
@@ -314,7 +422,7 @@ select {
 .input-title { font-size: 15px; font-weight: 600; flex: 0 1 300px; }
 
 .dim { color: var(--fg-dim); }
-.error-text { color: #ff9c9c; font-size: 12px; margin-left: 8px; }
+.error-text { color: var(--danger-text); font-size: 12px; margin-left: 8px; }
 
 .badge {
   font-size: 10px;
@@ -327,8 +435,8 @@ select {
 }
 
 .badge-live {
-  color: #5fd068;
-  border-color: #2c5232;
+  color: var(--ok);
+  border-color: var(--ok-border);
 }
 
 .btn-small { padding: 2px 8px; font-size: 12px; }
@@ -356,8 +464,8 @@ select {
   border-bottom: 1px solid var(--border);
 }
 
-.row-error td { background: #3a1e1e; }
-.row-playing td { background: #1e3a24; }
+.row-error td { background: var(--danger-bg); }
+.row-playing td { background: var(--ok-bg); }
 
 /* ── Карточки устройств в редакторе сцен ─────────────────── */
 .device-grid {
@@ -413,9 +521,9 @@ select {
 }
 
 .toggle-open {
-  background: #1e3a24;
-  border-color: #2c8f3f;
-  color: #5fd068;
+  background: var(--ok-bg);
+  border-color: var(--ok-border);
+  color: var(--ok);
   font-weight: 600;
 }
 
@@ -453,7 +561,7 @@ select {
 /* ── Вкладка «Шоу»: таймлайн ─────────────────────────────── */
 .content-show { overflow-y: auto; }
 .spacer { flex: 1; }
-.warn { color: #e6b34a; font-size: 12px; }
+.warn { color: var(--warn); font-size: 12px; }
 .time-display {
   font-variant-numeric: tabular-nums;
   font-size: 15px;
@@ -549,7 +657,7 @@ select {
 }
 
 /* аудио */
-.wave { background: #171a20; cursor: text; }
+.wave { background: var(--bg-wave); cursor: text; }
 .wave canvas { display: block; }
 .wave-sel {
   position: absolute;
@@ -598,12 +706,12 @@ select {
 .env-svg { display: block; }
 .env-line {
   fill: none;
-  stroke: #5fd068;
+  stroke: var(--ok);
   stroke-width: 1.5;
 }
 .env-point {
-  fill: #5fd068;
-  stroke: #14161a;
+  fill: var(--ok);
+  stroke: var(--bg);
   stroke-width: 1;
   cursor: grab;
 }

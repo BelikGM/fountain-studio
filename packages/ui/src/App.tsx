@@ -25,24 +25,32 @@ type Tab =
   | 'remote'
   | 'keys';
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: 'console', label: 'Консоль' },
-  { id: 'patch', label: 'Патч' },
-  { id: 'layout', label: '3D' },
-  { id: 'scenes', label: 'Сцены' },
-  { id: 'sequences', label: 'Секвенсоры' },
-  { id: 'show', label: 'Шоу' },
-  { id: 'playlists', label: 'Плейлисты' },
-  { id: 'schedule', label: 'Расписание' },
-  { id: 'network', label: 'Сеть' },
-  { id: 'remote', label: 'Удалённо' },
-  { id: 'keys', label: 'Клавиши' },
+const TABS: { id: Tab; label: string; full: string }[] = [
+  { id: 'console', label: 'Пульт', full: 'Пульт — ручное управление: фейдеры адресов и тест-сигналы DMX' },
+  { id: 'patch', label: 'Приборы', full: 'Приборы — список оборудования объекта и его DMX-адреса' },
+  { id: 'layout', label: '3D', full: '3D — схема фонтана и живая визуализация струй/света' },
+  { id: 'scenes', label: 'Сцены', full: 'Сцены — статичные картины по приборам (заготовки для остального)' },
+  { id: 'sequences', label: 'Секвенсоры', full: 'Секвенсоры — сцены друг за другом по кругу или один раз' },
+  { id: 'show', label: 'Шоу', full: 'Шоу — таймлайн под музыку: одна музыкальная программа' },
+  { id: 'playlists', label: 'Плейлисты', full: 'Плейлисты — несколько шоу подряд: программа целого вечера' },
+  { id: 'schedule', label: 'Расписание', full: 'Расписание — автозапуск по времени и дням недели' },
+  { id: 'network', label: 'Диагностика', full: 'Диагностика — исправность оборудования: живы ли ноды и приборы на линии' },
+  { id: 'remote', label: 'Внешние пульты', full: 'Внешние пульты — планшет (OSC/TouchOSC) и умный дом (MQTT)' },
+  { id: 'keys', label: 'Клавиатура', full: 'Клавиатура — запуск сцен/шоу нажатием клавиш компьютера' },
 ];
 
 export function App() {
   const engine = useEngine();
   const { connected, version, stats, project, playback, send } = engine;
   const [tab, setTab] = useState<Tab>('console');
+  const [theme, setTheme] = useState<'dark' | 'light'>(() =>
+    localStorage.getItem('fs-theme') === 'light' ? 'light' : 'dark',
+  );
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem('fs-theme', theme);
+  }, [theme]);
 
   // Глобальные клавиатурные привязки (вкладка «Клавиши»): работают из любой
   // вкладки, когда фокус не в поле ввода и клавишу не перехватил экран
@@ -92,12 +100,40 @@ export function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          Fountain Studio <span className="brand-version">{version ? `движок ${version}` : ''}</span>
-          {project ? <span className="brand-version">· {project.name}</span> : null}
+          <img
+            key={theme}
+            src={theme === 'dark' ? '/FBEST_final.png' : '/FBEST_final2.png'}
+            alt=""
+            className="brand-logo"
+            onError={(e) => {
+              e.currentTarget.style.display = 'none';
+            }}
+          />
+          Fountain Studio <span className="brand-version">{version ? `версия ${version}` : ''}</span>
+          <button
+            className={theme === 'dark' ? 'theme-toggle theme-dark' : 'theme-toggle theme-light'}
+            title={theme === 'dark' ? 'Тёмная тема — нажмите для светлой' : 'Светлая тема — нажмите для тёмной'}
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          >
+            <span className="theme-knob">
+              {theme === 'dark' ? (
+                <span className="knob-moon">
+                  <img src="/moon.jpg" alt="" className="knob-moon-img" />
+                </span>
+              ) : (
+                '☀'
+              )}
+            </span>
+          </button>
         </div>
         <nav className="tabs">
           {TABS.map((t) => (
-            <button key={t.id} className={tab === t.id ? 'tab active' : 'tab'} onClick={() => setTab(t.id)}>
+            <button
+              key={t.id}
+              className={tab === t.id ? 'tab active' : 'tab'}
+              title={t.full}
+              onClick={() => setTab(t.id)}
+            >
               {t.label}
             </button>
           ))}
@@ -122,11 +158,19 @@ export function App() {
       <footer className="statusbar">
         {stats ? (
           <>
-            <span>тик {stats.intervalMs} мс</span>
-            <span>джиттер avg {stats.avgJitterMs} мс</span>
-            <span>max {stats.maxJitterMs} мс</span>
-            <span>кадров {stats.framesSent.toLocaleString('ru-RU')}</span>
-            <span>
+            <span title="Шаг обновления: движок шлёт новый DMX-кадр каждые 50 мс — 20 раз в секунду">
+              тик {stats.intervalMs} мс
+            </span>
+            <span title="Средняя погрешность такта: насколько движок отклоняется от ровных 50 мс. Единицы мс — норма">
+              джиттер avg {stats.avgJitterMs} мс
+            </span>
+            <span title="Максимальное разовое отклонение такта с момента запуска движка">
+              max {stats.maxJitterMs} мс
+            </span>
+            <span title="Сколько DMX-кадров движок отправил на оборудование с момента запуска (все вселенные вместе)">
+              кадров {stats.framesSent.toLocaleString('ru-RU')}
+            </span>
+            <span title="Что сейчас исполняет движок: сцена, секвенсоры, шоу или плейлист. «Остановлено» — движок ничего не играет, каналы держат ручные значения пульта">
               {playback.activeSceneId !== null ||
               playback.running.length > 0 ||
               playback.show !== null ||

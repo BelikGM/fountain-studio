@@ -360,7 +360,7 @@ function BindTools({ project, setLayout }: { project: Project; setLayout: (l: Fo
 
   return (
     <section className="panel">
-      <h2>Привязка к патчу</h2>
+      <h2>Привязка к приборам</h2>
       <p className="dim">Свободные форсунки получают свободные устройства в порядке адресов.</p>
       <div className="sidebar-actions">
         <button className="btn btn-small" onClick={() => bind('pumpDeviceId', 'pump')}>Насосы подряд</button>

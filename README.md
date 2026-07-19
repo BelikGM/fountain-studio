@@ -3,7 +3,7 @@
 Приложение для управления светомузыкальными фонтанами: DMX512 / Art-Net / sACN / RDM,
 таймлайн с музыкой, секвенсоры, расписание, 3D-визуализация. Современная замена FontanPlay.
 
-Документация: [архитектура](docs/ARCHITECTURE.md) · [конспект FontanPlay](docs/FONTANPLAY-REFERENCE.md)
+Документация: [руководство пользователя](docs/MANUAL.md) · [архитектура](docs/ARCHITECTURE.md) · [конспект FontanPlay](docs/FONTANPLAY-REFERENCE.md)
 
 ## Состояние: фаза 5 «Железо-плюс» + фаза 6 «Генерация», доработки §1–6
 

@@ -137,7 +137,7 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
                 {previewActive ? '■ Снять с выхода' : '▶ Просмотр на выходе'}
               </button>
               <button className="btn" onClick={captureFromConsole} title="Записать в сцену текущие значения консоли">
-                Снять значения с консоли
+                Снять значения с пульта
               </button>
               <button
                 className={showGenerator ? 'btn btn-small active' : 'btn btn-small'}
@@ -170,7 +170,7 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
               />
             )}
             {project.devices.length === 0 ? (
-              <div className="dim">В патче нет устройств — добавьте их на вкладке «Патч».</div>
+              <div className="dim">В патче нет устройств — добавьте их на вкладке «Приборы».</div>
             ) : mode === 'addresses' ? (
               <AddressPages engine={engine} project={project} scene={selected} onChange={updateScene} />
             ) : (
