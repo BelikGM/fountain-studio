@@ -205,6 +205,98 @@ function ShowEditor({
     return a ? Math.min(showRef.current.durationMs, a.pos + (nowMs() - a.at)) : posRef.current;
   }, []);
 
+  // ── Живая запись (§2 доработки): клавиши → блоки, фейдеры → точки огибающей ─
+  // Раньше не было реализовано — просто не входило в объём того, что строилось
+  // в предыдущих заходах (в исходном плане §8 упоминалось как «задел», но ни
+  // одна фаза его явно не планировала). Клавиши уже переиспользуют
+  // project.keys — то же самое действие одновременно и уходит в движок как
+  // обычно (живой эффект виден сразу), и пишется в дорожку блоков.
+  const [recording, setRecording] = useState(false);
+  const [recordTrackId, setRecordTrackId] = useState<string | null>(null);
+  const [envRecordArmed, setEnvRecordArmed] = useState<Set<string>>(new Set());
+  const pendingKeyRecRef = useRef<Map<string, { startMs: number; type: 'scene' | 'sequence'; refId: string }>>(
+    new Map(),
+  );
+  const lastEnvPointAtRef = useRef<Map<string, number>>(new Map());
+
+  const blocksTracks = show.tracks.filter((t): t is BlocksTrack => t.kind === 'blocks');
+
+  useEffect(() => {
+    if (!recording || !project) return;
+    const onKeyDown = (e: KeyboardEvent): void => {
+      // Не проверяем e.defaultPrevented: глобальный обработчик клавиш в App.tsx
+      // сам вызывает preventDefault() на каждое обычное срабатывание привязки
+      // (это нормально, не признак конфликта) — если полагаться на этот флаг,
+      // запись не сработает вообще никогда, хотя живой эффект (сцена/секвенсор
+      // на выходе) отработает штатно.
+      if (e.repeat) return;
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+      if (pendingKeyRecRef.current.has(e.code)) return;
+      const binding = project.keys.find((k) => k.code === e.code);
+      if (!binding || (binding.action.type !== 'scene' && binding.action.type !== 'sequence')) return;
+      pendingKeyRecRef.current.set(e.code, {
+        startMs: currentPos(),
+        type: binding.action.type,
+        refId: binding.action.refId!,
+      });
+    };
+    const onKeyUp = (e: KeyboardEvent): void => {
+      const pending = pendingKeyRecRef.current.get(e.code);
+      if (!pending) return;
+      pendingKeyRecRef.current.delete(e.code);
+      if (!recordTrackId) return;
+      const endMs = currentPos();
+      const block: ShowBlock = {
+        id: uid(),
+        type: pending.type,
+        refId: pending.refId,
+        startMs: Math.round(pending.startMs),
+        durationMs: Math.max(100, Math.round(endMs - pending.startMs)),
+        fadeInMs: 0,
+        fadeOutMs: 0,
+      };
+      onChange({
+        ...showRef.current,
+        tracks: showRef.current.tracks.map((t) =>
+          t.id === recordTrackId && t.kind === 'blocks'
+            ? { ...t, blocks: [...t.blocks, block].sort((a, b) => a.startMs - b.startMs) }
+            : t,
+        ),
+      });
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
+  }, [recording, recordTrackId, project, currentPos, onChange]);
+
+  const toggleRecording = (): void => {
+    if (recording) {
+      setRecording(false);
+      pendingKeyRecRef.current.clear();
+      return;
+    }
+    if (blocksTracks.length === 0) return; // нечего писать — сначала «+ Дорожка блоков»
+    if (!recordTrackId || !blocksTracks.some((t) => t.id === recordTrackId)) setRecordTrackId(blocksTracks[0]!.id);
+    if (!playing) play();
+    setRecording(true);
+  };
+
+  const recordEnvelopeValue = (track: EnvelopeTrack, value: number): void => {
+    if (!recording || !envRecordArmed.has(track.id)) return;
+    const now = currentPos();
+    const last = lastEnvPointAtRef.current.get(track.id) ?? -Infinity;
+    if (now - last < 30) return; // не чаще ~33 точки/с — плавно, но не заваливаем массив
+    lastEnvPointAtRef.current.set(track.id, now);
+    const points = [...track.points, { tMs: Math.round(now), value: Math.max(0, Math.min(255, Math.round(value))) }].sort(
+      (a, b) => a.tMs - b.tMs,
+    );
+    updateTrack({ ...track, points });
+  };
+
   // ── Загрузка и декодирование аудио ─────────────────────────────────────────
   useEffect(() => {
     const name = show.audioFile;
@@ -712,8 +804,39 @@ function ShowEditor({
         >
           ⚡ Автопостановка
         </button>
+        <span className="spacer" />
+        {blocksTracks.length > 0 && (
+          <select
+            className="input-mini"
+            value={recordTrackId ?? blocksTracks[0]!.id}
+            onChange={(e) => setRecordTrackId(e.target.value)}
+            disabled={recording}
+            title="Дорожка блоков, куда пишутся клавиши во время записи"
+          >
+            {blocksTracks.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        )}
+        <button
+          className={recording ? 'btn btn-danger active' : 'btn'}
+          onClick={toggleRecording}
+          disabled={blocksTracks.length === 0}
+          title="Живая запись: клавиши из «Клавиши» (сцена/секвенсор) пишутся в выбранную дорожку блоков, вооружённые огибающие — тяните ползунок"
+        >
+          {recording ? '⏺ Идёт запись' : '⏺ Запись'}
+        </button>
       </div>
       {autoStatus && <div className="dim" style={{ padding: '4px 12px' }}>{autoStatus}</div>}
+      {recording && (
+        <div className="dim" style={{ padding: '4px 12px' }}>
+          Идёт запись в «{blocksTracks.find((t) => t.id === recordTrackId)?.name ?? '?'}»: жмите клавиши сцен/
+          секвенсоров (вкладка «Клавиши») — длительность нажатия пишется как длина блока. Для огибающих — кнопка
+          «●» у дорожки вооружает запись, тяните появившийся ползунок.
+        </div>
+      )}
 
       <div className="tl-scroll">
         <div className="tl-inner" style={{ width: HEAD_W + laneW }}>
@@ -781,6 +904,34 @@ function ShowEditor({
                         ),
                       )}
                     </select>
+                    {recording && (
+                      <>
+                        <button
+                          className={envRecordArmed.has(track.id) ? 'btn btn-small btn-danger' : 'btn btn-small'}
+                          title="Вооружить запись огибающей: тяните ползунок во время воспроизведения"
+                          onClick={() =>
+                            setEnvRecordArmed((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(track.id)) next.delete(track.id);
+                              else next.add(track.id);
+                              return next;
+                            })
+                          }
+                        >
+                          ●
+                        </button>
+                        {envRecordArmed.has(track.id) && (
+                          <input
+                            type="range"
+                            min={0}
+                            max={255}
+                            defaultValue={0}
+                            className="input-mini"
+                            onInput={(e) => recordEnvelopeValue(track, Number((e.target as HTMLInputElement).value))}
+                          />
+                        )}
+                      </>
+                    )}
                   </div>
                 )}
                 <div className="tl-head-controls">
