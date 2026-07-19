@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
 import {
+  actorPhases,
   editedToSourceMs,
   emptyProject,
   energyEnvelope,
@@ -48,6 +49,7 @@ import {
 import { AudioStore } from '../audio';
 import dgram from 'node:dgram';
 import { createServer as createTcpServer } from 'node:net';
+import { emaStep } from '../clock';
 import { DmxCapture } from '../dmxcapture';
 import { Engine } from '../engine';
 import { NetworkMonitor } from '../netmonitor';
@@ -698,6 +700,41 @@ async function main(): Promise<void> {
     'radialWaveSequenceScenes: 4 сцены с фазовым сдвигом — секвенсор из них даст бегущую волну',
   );
 
+  // Линейный фонтан: 5 насосов вдоль наклонной прямой — фазы 0..1 по порядку на линии.
+  const lineActors = Array.from({ length: 5 }, (_, i) => ({ deviceId: `ln${i}`, x: i * 2, y: i * 1 }));
+  const linePhases = actorPhases(lineActors, 'line');
+  check(
+    Math.abs(linePhases.get('ln0')! - 0) < 1e-9 &&
+      Math.abs(linePhases.get('ln2')! - 0.5) < 1e-9 &&
+      Math.abs(linePhases.get('ln4')! - 1) < 1e-9,
+    'actorPhases(line): фазы 0/0.5/1 вдоль наклонной линии (главная ось найдена)',
+  );
+  // Вытянутый прямоугольник (широкий и низкий): по углу вокруг центра вершины
+  // клюются неравномерно (короткие стороны рядом по углу), а по обходу контура
+  // фаза идёт пропорционально пройденному расстоянию — длинные стороны дают
+  // большие скачки фазы, короткие — маленькие. Проверяем именно это различие.
+  const rectActors = [
+    { deviceId: 'qA', x: 10, y: 1 },
+    { deviceId: 'qB', x: 10, y: -1 },
+    { deviceId: 'qC', x: -10, y: -1 },
+    { deviceId: 'qD', x: -10, y: 1 },
+  ];
+  const pathPhases = actorPhases(rectActors, 'path');
+  check(pathPhases.size === 4, 'actorPhases(path): фаза посчитана для всех актёров');
+  const sortedByPhase = [...pathPhases.entries()].sort((a, b) => a[1] - b[1]);
+  const gaps: number[] = [];
+  for (let i = 0; i < sortedByPhase.length; i++) {
+    const next = sortedByPhase[(i + 1) % sortedByPhase.length]![1];
+    const cur = sortedByPhase[i]![1];
+    gaps.push(next > cur ? next - cur : next - cur + 1); // с учётом замыкания через 0
+  }
+  const minGap = Math.min(...gaps);
+  const maxGap = Math.max(...gaps);
+  check(
+    maxGap / minGap > 5,
+    `actorPhases(path): для вытянутого прямоугольника скачки фазы разные (короткая/длинная сторона), отношение ${(maxGap / minGap).toFixed(1)}`,
+  );
+
   const invScene: Scene = { id: 'sX', name: 'Тест', values: { gp1: [200], gp2: [0] } };
   const inv = invertScene(invScene);
   check(inv.values['gp1']?.[0] === 55 && inv.values['gp2']?.[0] === 255, 'invertScene: 255-v по каждому каналу');
@@ -711,6 +748,26 @@ async function main(): Promise<void> {
       mirrored.values['gp4']?.[0] === 40,
     'mirrorScene: лево-право по оси X — gp1↔gp3 поменялись, gp2/gp4 на оси остались собой',
   );
+
+  console.log('— EMA-джиттер тик-планировщика: устойчивость к одиночному сбою —');
+  // Раньше avgJitterMs был «сумма/n» за всё время жизни движка: headless-процесс
+  // живёт сутками (§9, §18), и один сбой (сон Windows, зависание антивируса —
+  // что угодно, остановившее event loop) навсегда портил показание, потому что
+  // разбавить один гигантский сэмпл миллионами последующих нечем. Проверяем,
+  // что EMA-версия отходит от катастрофического выброса за разумное число тиков.
+  let ema = -1;
+  for (let i = 0; i < 200; i++) ema = emaStep(ema, 1, 0.01); // нормальная работа, ~1 мс джиттера
+  check(Math.abs(ema - 1) < 0.05, `emaStep: сходится к стабильному уровню шума (${ema.toFixed(3)} мс)`);
+  ema = emaStep(ema, 30_000_000, 0.01); // один катастрофический сбой (напр. сон ОС на часы)
+  const peakAfterStall = ema;
+  check(peakAfterStall > 100_000, 'emaStep: одиночный выброс сразу поднимает среднее — инцидент не прячется');
+  for (let i = 0; i < 500; i++) ema = emaStep(ema, 1, 0.01); // снова нормальная работа, 500 тиков ≈ 25 с
+  check(
+    ema < peakAfterStall * 0.01,
+    `emaStep: за 500 тиков (≈25 с) после сбоя среднее упало более чем в 100 раз (${peakAfterStall.toFixed(0)} → ${ema.toFixed(1)} мс) — со старым «сумма/n» оно осталось бы отравлено буквально годами`,
+  );
+  for (let i = 0; i < 600; i++) ema = emaStep(ema, 1, 0.01); // ещё ~30 с — полное восстановление к норме
+  check(ema < 10, `emaStep: ещё ~30 с — среднее полностью в норме (${ema.toFixed(2)} мс)`);
 
   console.log('— Аудиоанализ трека (§17 п.5) —');
   // Синтетический клик-трек: короткие импульсы ровно 4 раза в секунду = 240 BPM,

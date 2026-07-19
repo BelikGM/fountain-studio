@@ -14,12 +14,33 @@ export interface TickerStats {
   maxJitterMs: number;
 }
 
+/**
+ * Экспоненциальное скользящее среднее. prev < 0 — ещё не было сэмплов (первый
+ * сэмпл сразу становится средним, без разгона от нуля). Чистая функция —
+ * проверяется в смоуке отдельно от реального таймера.
+ */
+export function emaStep(prev: number, sample: number, alpha: number): number {
+  return prev < 0 ? sample : prev + alpha * (sample - prev);
+}
+
 export class Ticker {
   private running = false;
   private n = 0;
   private startNs = 0n;
   private timer: NodeJS.Timeout | undefined;
-  private jitterSum = 0;
+  /**
+   * avg — EMA, не «сумма/n» за всё время жизни движка: headless-эксплуатация
+   * (§9, §18) держит процесс сутками, и один-единственный сбой (сон Windows,
+   * зависшая антивирусная проверка, что угодно, остановившее event loop на
+   * время) даёт джиттер тика в порядки больше нормы; при кумулятивном среднем
+   * такой выброс отравляет «avg» на буквально годы вперёд (при миллионах уже
+   * накопленных тиков разбавить его обратно нечем) — показание становится
+   * бесполезным навсегда, хотя реальная работа давно в норме. EMA отражает
+   * недавнее поведение и отходит от выброса за секунды. max остаётся
+   * пожизненным — это осознанно другой вопрос («был ли когда-нибудь сбой»).
+   */
+  private static readonly EMA_ALPHA = 0.01;
+  private jitterEma = -1;
   private jitterMax = 0;
   private jitterLast = 0;
 
@@ -34,7 +55,7 @@ export class Ticker {
     this.running = true;
     this.n = 0;
     this.startNs = process.hrtime.bigint();
-    this.jitterSum = 0;
+    this.jitterEma = -1;
     this.jitterMax = 0;
     this.arm();
   }
@@ -68,7 +89,7 @@ export class Ticker {
     this.n++;
     const jitterMs = Number(process.hrtime.bigint() - target) / 1e6;
     this.jitterLast = jitterMs;
-    this.jitterSum += jitterMs;
+    this.jitterEma = emaStep(this.jitterEma, jitterMs, Ticker.EMA_ALPHA);
     if (jitterMs > this.jitterMax) this.jitterMax = jitterMs;
     try {
       this.onTick(this.n);
@@ -83,7 +104,7 @@ export class Ticker {
       ticks: this.n,
       intervalMs: this.intervalMs,
       lastJitterMs: round2(this.jitterLast),
-      avgJitterMs: this.n > 0 ? round2(this.jitterSum / this.n) : 0,
+      avgJitterMs: this.jitterEma < 0 ? 0 : round2(this.jitterEma),
       maxJitterMs: round2(this.jitterMax),
     };
   }
