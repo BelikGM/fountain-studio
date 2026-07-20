@@ -16,6 +16,14 @@ import type {
 /** Сколько записей журнала событий держим на клиенте (движок и так капает историю до 500). */
 const MAX_LOG_EVENTS = 500;
 
+/** Точка графика джиттера — §27 доработки, §3 п.5. */
+export interface JitterSample {
+  tsMs: number;
+  jitterMs: number;
+}
+/** Раз в секунду (частота 'stats' от движка) — час истории. */
+const MAX_JITTER_SAMPLES = 3600;
+
 export interface EngineConfigState {
   tickMs: number;
   universes: ConfigUniverse[];
@@ -53,6 +61,8 @@ export interface EngineConnection {
   savedAtMs: number | null;
   /** Журнал событий (§27 доработки, §3 п.1): расписание/пульты/клавиши/аварии, новые в конце. */
   logEvents: LogEvent[];
+  /** История джиттера тика (§27 доработки, §3 п.5) — до часа, ~1 точка/с, новые в конце. */
+  jitterHistory: JitterSample[];
   send: (msg: ClientMessage) => void;
   /** Применяет правку проекта локально и отправляет движку. */
   updateProject: (project: Project) => void;
@@ -100,6 +110,7 @@ export function useEngine(): EngineConnection {
   const [backups, setBackups] = useState<BackupInfo[]>([]);
   const [savedAtMs, setSavedAtMs] = useState<number | null>(null);
   const [logEvents, setLogEvents] = useState<LogEvent[]>([]);
+  const [jitterHistory, setJitterHistory] = useState<JitterSample[]>([]);
   const [playback, setPlayback] = useState<PlaybackState>({
     activeSceneId: null,
     running: [],
@@ -153,6 +164,10 @@ export function useEngine(): EngineConnection {
             break;
           case 'stats':
             setStats(msg.stats);
+            setJitterHistory((prev) => {
+              const next = [...prev, { tsMs: Date.now(), jitterMs: msg.stats.lastJitterMs }];
+              return next.length > MAX_JITTER_SAMPLES ? next.slice(next.length - MAX_JITTER_SAMPLES) : next;
+            });
             break;
           case 'frame':
             setFrames((prev) => ({ ...prev, [msg.universe]: base64ToBytes(msg.data) }));
@@ -351,6 +366,7 @@ export function useEngine(): EngineConnection {
     backups,
     savedAtMs,
     logEvents,
+    jitterHistory,
     send,
     updateProject,
     requestAudio,

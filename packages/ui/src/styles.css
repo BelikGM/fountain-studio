@@ -924,6 +924,15 @@ select {
   font-variant-numeric: tabular-nums;
 }
 
+/* ── График джиттера (§27 доработки, §3 п.5) ────────────────── */
+.jitter-spark {
+  width: 100%;
+  height: 60px;
+  display: block;
+}
+.jitter-line { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.jitter-dot { fill: var(--accent); }
+
 /* ── Журнал событий (§27 доработки, §3 п.1) ─────────────────── */
 .log-list {
   max-height: 360px;

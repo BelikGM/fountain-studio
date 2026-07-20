@@ -20,6 +20,7 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
             прислал состояние.
           </p>
         </section>
+        <JitterPanel engine={engine} />
         <EventLogPanel engine={engine} />
       </main>
     );
@@ -124,8 +125,55 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
         )}
       </section>
 
+      <JitterPanel engine={engine} />
       <EventLogPanel engine={engine} />
     </main>
+  );
+}
+
+/**
+ * Искровая линия джиттера тика (§27 доработки, §3 п.5) — до часа истории вместо
+ * голых чисел в статус-баре. Свой SVG-polyline, без графических библиотек —
+ * по тому же принципу, что и остальной проект (см. hsvToRgb в scenegen.ts).
+ */
+function JitterPanel({ engine }: { engine: EngineConnection }) {
+  const samples = engine.jitterHistory;
+  const stats = engine.stats;
+  return (
+    <section className="panel">
+      <h2>Джиттер тика {stats && <span className="dim">(тик {stats.intervalMs} мс)</span>}</h2>
+      {samples.length < 2 ? (
+        <p className="dim">Собираю историю — обновляется раз в секунду, подождите немного.</p>
+      ) : (
+        <JitterSparkline samples={samples} />
+      )}
+    </section>
+  );
+}
+
+function JitterSparkline({ samples }: { samples: { tsMs: number; jitterMs: number }[] }) {
+  const W = 600;
+  const H = 60;
+  const PAD = 4;
+  const max = Math.max(1, ...samples.map((s) => s.jitterMs));
+  const xOf = (i: number): number => (i / (samples.length - 1)) * (W - PAD * 2) + PAD;
+  const yOf = (v: number): number => H - PAD - (v / max) * (H - PAD * 2);
+  const points = samples.map((s, i) => `${xOf(i).toFixed(1)},${yOf(s.jitterMs).toFixed(1)}`).join(' ');
+  const last = samples[samples.length - 1]!;
+  const avg = samples.reduce((sum, s) => sum + s.jitterMs, 0) / samples.length;
+  const spanMin = (samples[samples.length - 1]!.tsMs - samples[0]!.tsMs) / 60000;
+
+  return (
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="jitter-spark" preserveAspectRatio="none">
+        <polyline points={points} className="jitter-line" />
+        <circle cx={xOf(samples.length - 1)} cy={yOf(last.jitterMs)} r={2.5} className="jitter-dot" />
+      </svg>
+      <div className="dim">
+        сейчас {last.jitterMs.toFixed(2)} мс · среднее за окно {avg.toFixed(2)} мс · пик {max.toFixed(2)} мс · окно ~
+        {spanMin < 1 ? `${Math.round(spanMin * 60)} с` : `${spanMin.toFixed(1)} мин`}
+      </div>
+    </div>
   );
 }
 
