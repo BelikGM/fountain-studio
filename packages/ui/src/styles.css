@@ -924,6 +924,15 @@ select {
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Журнал событий (§27 доработки, §3 п.1) ─────────────────── */
+.log-list {
+  max-height: 360px;
+  overflow-y: auto;
+}
+.log-source { color: var(--fg-dim); font-size: 12px; }
+.log-level-warn { color: var(--warn); }
+.log-level-error { color: var(--danger-text); }
+
 /* ── Модальный оверлей (рендер шоу в видео) ─────────────────── */
 .modal-overlay {
   position: fixed;

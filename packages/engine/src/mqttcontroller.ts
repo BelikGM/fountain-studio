@@ -1,4 +1,5 @@
 import type { MqttBinding } from '@fountain-studio/shared';
+import { eventLog } from './eventlog';
 import type { Engine } from './engine';
 import { MqttClient } from './mqttclient';
 import { fireRemoteAction } from './remotedispatch';
@@ -55,8 +56,14 @@ export class MqttController {
     const suffix = topic.slice(prefix.length);
     const binding = this.getBindings().find((b) => b.topic === suffix);
     if (!binding) return;
-    console.log(`[mqtt] ${topic} → ${binding.action.type}`);
+    eventLog.log('mqtt', `${topic} → ${binding.action.type}`);
     fireRemoteAction(this.engine, binding.action);
+  }
+
+  /** Публикация в произвольный топик под тем же префиксом — уведомления об авариях (§27 доработки, §3 п.4). */
+  publish(topicSuffix: string, payload: string): void {
+    if (!this.connected) return;
+    this.client.publish(`${this.topicPrefix}/${topicSuffix}`, payload);
   }
 
   startTelemetry(intervalMs = 5000): void {

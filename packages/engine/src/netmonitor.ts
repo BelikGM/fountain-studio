@@ -14,6 +14,7 @@
 import dgram from 'node:dgram';
 import type { NetworkEvent, NetworkState } from '@fountain-studio/shared';
 import { ARTNET_PORT } from './drivers/artnet';
+import { eventLog } from './eventlog';
 import { buildRdmPacket, OP_RDM, parseRdmPacket, unwrapArtRdm, wrapArtRdm, type RdmResponse } from './rdm';
 
 const OP_POLL = 0x2000;
@@ -283,7 +284,8 @@ export class NetworkMonitor {
   private event(text: string): void {
     this.log.push({ atMs: Date.now(), text });
     if (this.log.length > 100) this.log.splice(0, this.log.length - 100);
-    console.log(`[net] ${text}`);
+    const lost = text.includes('ПОТЕРЯНА') || text.includes('ПРОПАЛ');
+    eventLog.log('net', text, lost ? 'warn' : 'info');
     this.onChange?.();
   }
 

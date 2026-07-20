@@ -3,7 +3,7 @@ import { comboFromEvent, getCombo } from './hotkeys';
 import { registerTabNavigator } from './navigate';
 import { isOperatorLocked } from './operatorMode';
 import { useEngine } from './useEngine';
-import { KeysView } from './views/KeysView';
+import { KeysView, keyLabel } from './views/KeysView';
 import { ConsoleView } from './views/ConsoleView';
 import { LayoutView } from './views/LayoutView';
 import { OperatorScreen } from './views/OperatorScreen';
@@ -87,6 +87,20 @@ export function App() {
       if (!binding) return;
       e.preventDefault();
       const a = binding.action;
+      // Движок сам не видит клавиатурные привязки редактора — явно сообщаем
+      // о срабатывании в общий журнал событий (§27 доработки, §3 п.1).
+      const refName = (list: { id: string; name: string }[]): string =>
+        list.find((x) => x.id === a.refId)?.name ?? a.refId ?? '?';
+      const actionLabel: Record<typeof a.type, string> = {
+        scene: `сцена «${refName(project.scenes)}»`,
+        sequence: `секвенсор «${refName(project.sequences)}»`,
+        show: `шоу «${refName(project.shows)}»`,
+        playlist: `плейлист «${refName(project.playlists)}»`,
+        stopAll: 'стоп всё',
+        blackout: 'blackout',
+        pauseAll: 'пауза всего',
+      };
+      send({ type: 'clientEvent', source: 'key', message: `${keyLabel(e.code)} → ${actionLabel[a.type]}` });
       switch (a.type) {
         case 'scene':
           send({ type: 'setScene', sceneId: playback.activeSceneId === a.refId ? null : a.refId! });

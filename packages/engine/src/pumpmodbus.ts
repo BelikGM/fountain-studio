@@ -1,4 +1,5 @@
 import type { ModbusConnection, ModbusPumpConfig, ModbusState, PatchedDevice } from '@fountain-studio/shared';
+import { eventLog } from './eventlog';
 import { ModbusRtuClient } from './drivers/modbus-rtu';
 import { ModbusTcpClient } from './drivers/modbus-tcp';
 import type { ModbusTransport } from './drivers/modbus-transport';
@@ -49,6 +50,8 @@ function createTransport(c: ModbusConnection): ModbusTransport {
  */
 export class PumpModbusManager {
   onChange: (() => void) | null = null;
+  /** Новый код аварии ПЧ (0 не приходит — только code!==0) — уведомления (§27 доработки, §3 п.4). */
+  onAlarm: ((deviceId: string, code: number) => void) | null = null;
 
   private readonly transports = new Map<string, { transport: ModbusTransport; refCount: number }>();
   private readonly pumps = new Map<string, PumpEntry>();
@@ -158,7 +161,7 @@ export class PumpModbusManager {
   }
 
   private pollFaults(): void {
-    for (const entry of this.pumps.values()) {
+    for (const [deviceId, entry] of this.pumps.entries()) {
       if (entry.config.faultRegister === undefined || entry.writing) continue;
       const transport = this.transports.get(entry.connKey)?.transport;
       if (!transport) continue;
@@ -166,10 +169,19 @@ export class PumpModbusManager {
         .readHoldingRegister(entry.config.unitId ?? 1, entry.config.faultRegister)
         .then((code) => {
           const changed = entry.faultCode !== code;
+          const prevCode = entry.faultCode;
           entry.faultCode = code;
           entry.lastOkAt = Date.now();
           entry.lastError = null;
-          if (changed) this.onChange?.();
+          if (changed) {
+            if (code !== 0) {
+              eventLog.log('modbus', `насос «${deviceId}»: код аварии ${code}`, 'error');
+              this.onAlarm?.(deviceId, code);
+            } else if (prevCode) {
+              eventLog.log('modbus', `насос «${deviceId}»: авария снята (было ${prevCode})`);
+            }
+            this.onChange?.();
+          }
         })
         .catch((err) => {
           entry.lastError = err instanceof Error ? err.message : String(err);

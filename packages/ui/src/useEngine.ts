@@ -4,6 +4,7 @@ import type {
   ClientMessage,
   ConfigUniverse,
   EngineStats,
+  LogEvent,
   ModbusState,
   NetworkState,
   PlaybackState,
@@ -11,6 +12,9 @@ import type {
   ServerMessage,
   UniverseInfo,
 } from '@fountain-studio/shared';
+
+/** Сколько записей журнала событий держим на клиенте (движок и так капает историю до 500). */
+const MAX_LOG_EVENTS = 500;
 
 export interface EngineConfigState {
   tickMs: number;
@@ -47,6 +51,8 @@ export interface EngineConnection {
   backups: BackupInfo[];
   /** Unix-время последнего ответа на saveNow (Ctrl+S) — для краткого «✔ сохранено» в UI. */
   savedAtMs: number | null;
+  /** Журнал событий (§27 доработки, §3 п.1): расписание/пульты/клавиши/аварии, новые в конце. */
+  logEvents: LogEvent[];
   send: (msg: ClientMessage) => void;
   /** Применяет правку проекта локально и отправляет движку. */
   updateProject: (project: Project) => void;
@@ -93,6 +99,7 @@ export function useEngine(): EngineConnection {
   const [backupConfig, setBackupConfig] = useState<{ enabled: boolean; intervalMin: number } | null>(null);
   const [backups, setBackups] = useState<BackupInfo[]>([]);
   const [savedAtMs, setSavedAtMs] = useState<number | null>(null);
+  const [logEvents, setLogEvents] = useState<LogEvent[]>([]);
   const [playback, setPlayback] = useState<PlaybackState>({
     activeSceneId: null,
     running: [],
@@ -209,6 +216,15 @@ export function useEngine(): EngineConnection {
             break;
           case 'saved':
             setSavedAtMs(msg.atMs);
+            break;
+          case 'logHistory':
+            setLogEvents(msg.events);
+            break;
+          case 'logEvent':
+            setLogEvents((prev) => {
+              const next = [...prev, msg.event];
+              return next.length > MAX_LOG_EVENTS ? next.slice(next.length - MAX_LOG_EVENTS) : next;
+            });
             break;
         }
       };
@@ -334,6 +350,7 @@ export function useEngine(): EngineConnection {
     backupConfig,
     backups,
     savedAtMs,
+    logEvents,
     send,
     updateProject,
     requestAudio,

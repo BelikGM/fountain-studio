@@ -1,5 +1,6 @@
 import dgram from 'node:dgram';
 import { parseOscMessage, type OscBinding } from '@fountain-studio/shared';
+import { eventLog } from './eventlog';
 import type { Engine } from './engine';
 import { fireRemoteAction } from './remotedispatch';
 
@@ -23,8 +24,8 @@ export class OscServer {
   start(): void {
     this.socket = dgram.createSocket('udp4');
     this.socket.on('message', (msg) => this.handle(msg));
-    this.socket.on('error', (e) => console.error('[osc] ошибка сокета:', e.message));
-    this.socket.bind(this.port, () => console.log(`[osc] слушаю UDP ${this.port}`));
+    this.socket.on('error', (e) => eventLog.log('osc', `ошибка сокета: ${e.message}`, 'error'));
+    this.socket.bind(this.port, () => eventLog.log('osc', `слушаю UDP ${this.port}`));
   }
 
   private handle(msg: Buffer): void {
@@ -33,7 +34,7 @@ export class OscServer {
     if (parsed.args.length > 0 && parsed.args[0] === 0) return; // отпускание кнопки — игнор
     const binding = this.getBindings().find((b) => b.address === parsed.address);
     if (!binding) return;
-    console.log(`[osc] ${parsed.address} → ${binding.action.type}`);
+    eventLog.log('osc', `${parsed.address} → ${binding.action.type}`);
     fireRemoteAction(this.engine, binding.action);
   }
 

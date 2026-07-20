@@ -20,6 +20,7 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
             прислал состояние.
           </p>
         </section>
+        <EventLogPanel engine={engine} />
       </main>
     );
   }
@@ -109,7 +110,7 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
       </section>
 
       <section className="panel">
-        <h2>Журнал</h2>
+        <h2>Журнал сети</h2>
         {network.log.length === 0 ? (
           <p className="dim">Событий пока нет.</p>
         ) : (
@@ -122,7 +123,63 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
           </ul>
         )}
       </section>
+
+      <EventLogPanel engine={engine} />
     </main>
+  );
+}
+
+/**
+ * Общий журнал событий движка (§27 доработки, §3 п.1): расписание, пульты
+ * OSC/MQTT, клавиатурные привязки, аварии ПЧ, потери на линии — раньше было
+ * видно только в консоли процесса движка. Источник и уровень (инфо/предупреждение/
+ * ошибка) — из общего eventLog движка, см. packages/engine/src/eventlog.ts.
+ */
+function EventLogPanel({ engine }: { engine: EngineConnection }) {
+  const [sourceFilter, setSourceFilter] = useState('');
+  const events = engine.logEvents;
+  const sources = [...new Set(events.map((e) => e.source))].sort();
+  const visible = (sourceFilter ? events.filter((e) => e.source === sourceFilter) : events)
+    .slice()
+    .reverse()
+    .slice(0, 200);
+
+  return (
+    <section className="panel">
+      <h2>
+        Журнал событий
+        {sources.length > 1 && (
+          <select
+            className="input-mini"
+            style={{ marginLeft: 10 }}
+            value={sourceFilter}
+            onChange={(e) => setSourceFilter(e.target.value)}
+          >
+            <option value="">все источники</option>
+            {sources.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        )}
+      </h2>
+      {visible.length === 0 ? (
+        <p className="dim">Событий пока нет: расписание, OSC/MQTT-пульты, клавиши, аварии ПЧ появятся здесь.</p>
+      ) : (
+        <ul className="list log-list">
+          {visible.map((e) => (
+            <li key={e.id} className={`list-item log-level-${e.level}`}>
+              <span className="list-item-label">
+                <span className="dim">{new Date(e.tsMs).toLocaleTimeString('ru-RU')}</span>
+                <span className="log-source">[{e.source}]</span>
+                <span>{e.message}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

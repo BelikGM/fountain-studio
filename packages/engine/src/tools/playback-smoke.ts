@@ -55,6 +55,7 @@ import {
   colorChannelEnvelopePoints,
   sampleFrameStats,
   type VideoFrameSample,
+  type LogEvent,
   type ModbusState,
   type NetworkState,
   type PlaybackState,
@@ -572,6 +573,7 @@ let dmxCycleMsg: Extract<ServerMessage, { type: 'dmxCycle' }> | null = null;
 let remoteStatusMsg: Extract<ServerMessage, { type: 'remoteStatus' }> | null = null;
 let backupConfigMsg: Extract<ServerMessage, { type: 'backupConfig' }> | null = null;
 let backupListMsg: Extract<ServerMessage, { type: 'backupList' }> | null = null;
+let logEvents: LogEvent[] = [];
 let sawStep1 = false;
 let sawFadeMidpoint = false;
 
@@ -615,6 +617,10 @@ ws.on('message', (raw) => {
     backupConfigMsg = msg;
   } else if (msg.type === 'backupList') {
     backupListMsg = msg;
+  } else if (msg.type === 'logHistory') {
+    logEvents = msg.events;
+  } else if (msg.type === 'logEvent') {
+    logEvents = [...logEvents, msg.event];
   }
 });
 
@@ -1543,6 +1549,39 @@ async function main(): Promise<void> {
   send({ type: 'restoreBackup', file: snapshotFile });
   await waitFor('проект восстановлен из снимка', () => projectEcho?.name === nameBeforeSnapshot);
   check(true, 'restoreBackup вернул проект к состоянию на момент снимка (имя проекта совпало)');
+
+  console.log('— Журнал событий (§27 доработки, §3 п.1) —');
+  {
+    check(
+      logEvents.some((e) => e.source === 'schedule' && e.message.includes('Тестовый запуск')),
+      'eventLog: срабатывание расписания попало в журнал',
+    );
+    check(
+      logEvents.some((e) => e.source === 'osc' && e.message.includes('/scene/a')),
+      'eventLog: команда OSC попала в журнал',
+    );
+    check(
+      logEvents.some((e) => e.source === 'mqtt' && e.message.includes('stop-all')),
+      'eventLog: команда MQTT попала в журнал',
+    );
+    check(
+      logEvents.some((e) => e.source === 'net' && e.level === 'warn' && e.message.includes('ПОТЕРЯНА')),
+      'eventLog: потеря ноды помечена уровнем warn',
+    );
+    check(
+      logEvents.some((e) => e.source === 'modbus' && e.level === 'error' && e.message.includes('код аварии 7')),
+      'eventLog: авария насоса помечена уровнем error',
+    );
+
+    const before = logEvents.length;
+    send({ type: 'clientEvent', source: 'key', message: 'KeyA → сцена «Тест»' });
+    await waitFor('clientEvent дошёл как logEvent', () => logEvents.length > before);
+    const last = logEvents[logEvents.length - 1]!;
+    check(
+      last.source === 'key' && last.message.includes('KeyA'),
+      'eventLog: clientEvent от редактора (клавиша) попал в общий журнал',
+    );
+  }
 
   console.log('— Сохранение проекта —');
   await sleep(700); // дебаунс записи 500 мс

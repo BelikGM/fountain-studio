@@ -10,6 +10,7 @@ import {
 import type { AudioStore } from './audio';
 import type { BackupStore } from './backups';
 import type { DmxCapture } from './dmxcapture';
+import { eventLog } from './eventlog';
 import type { Engine } from './engine';
 import type { MqttController } from './mqttcontroller';
 import type { NetworkMonitor } from './netmonitor';
@@ -82,6 +83,9 @@ export function startServer(
     type: 'backupList',
     backups: backups?.list() ?? [],
   });
+  // Журнал событий (§27 доработки, §3 п.1): новое событие — сразу всем
+  // подключённым клиентам (не только тому, кто его вызвал).
+  eventLog.onEvent = (event) => broadcast({ type: 'logEvent', event });
 
   wss.on('connection', (ws) => {
     const hello: ServerMessage = {
@@ -98,6 +102,7 @@ export function startServer(
     ws.send(JSON.stringify({ type: 'modbus', state: engine.modbusState() } satisfies ServerMessage));
     ws.send(JSON.stringify(backupConfigMessage()));
     ws.send(JSON.stringify(backupListMessage()));
+    ws.send(JSON.stringify({ type: 'logHistory', events: eventLog.list() } satisfies ServerMessage));
     ws.send(JSON.stringify(remoteStatus()));
 
     ws.on('message', (raw) => {
@@ -304,12 +309,18 @@ export function startServer(
             engine.setProject(project);
             broadcast({ type: 'project', project });
             broadcastPlayback();
-            console.log(`[server] проект восстановлен из бэкапа ${msg.file}`);
+            eventLog.log('server', `проект восстановлен из бэкапа ${msg.file}`);
           } catch (err) {
-            console.error('[server] не удалось восстановить бэкап:', err);
+            eventLog.log('server', `не удалось восстановить бэкап: ${err instanceof Error ? err.message : String(err)}`, 'error');
           }
           break;
         }
+        // Источники на стороне редактора (клавиатурные привязки — движок сам
+        // их не видит) сообщают о срабатывании явно, чтобы попасть в общий
+        // журнал (§27 доработки, §3 п.1).
+        case 'clientEvent':
+          eventLog.log(msg.source, msg.message);
+          break;
       }
     });
   });

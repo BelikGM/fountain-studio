@@ -149,6 +149,21 @@ export interface BackupInfo {
 }
 
 /**
+ * Запись журнала событий (§27 доработки, §3 п.1) — что и когда сработало:
+ * расписание, пульты (OSC/MQTT), клавиши, ошибки движка. Раньше это было
+ * видно только в консоли процесса движка; source — короткий тег вида
+ * «schedule»/«osc»/«mqtt»/«net»/«key»/«modbus», совпадает с префиксом [xxx]
+ * в консольных логах движка.
+ */
+export interface LogEvent {
+  id: number;
+  tsMs: number;
+  source: string;
+  level: 'info' | 'warn' | 'error';
+  message: string;
+}
+
+/**
  * Конфигурация DMX-выхода вселенной — редактируемая часть fountain.config.json
  * (вкладка «Настройки»). Зеркало OutputConfig движка.
  */
@@ -227,7 +242,12 @@ export type ClientMessage =
   | { type: 'updateBackupConfig'; enabled: boolean; intervalMin: number }
   | { type: 'listBackups' }
   | { type: 'takeBackupNow' }
-  | { type: 'restoreBackup'; file: string };
+  | { type: 'restoreBackup'; file: string }
+  // Журнал событий (§27 доработки, §3 п.1): источники на стороне редактора
+  // (сейчас — клавиатурные привязки из вкладки «Клавиши») сами не видны
+  // движку, поэтому явно сообщают о срабатывании, чтобы попасть в общий
+  // журнал наравне с расписанием/OSC/MQTT.
+  | { type: 'clientEvent'; source: string; message: string };
 
 /** Движок → UI */
 export type ServerMessage =
@@ -259,4 +279,8 @@ export type ServerMessage =
   /** Список снимков (шлётся при подключении, после listBackups и после снятия нового снимка). */
   | { type: 'backupList'; backups: BackupInfo[] }
   /** Ответ на saveNow. */
-  | { type: 'saved'; atMs: number };
+  | { type: 'saved'; atMs: number }
+  /** Новое событие в журнале (шлётся всем клиентам сразу при возникновении). */
+  | { type: 'logEvent'; event: LogEvent }
+  /** История журнала (шлётся при подключении). */
+  | { type: 'logHistory'; events: LogEvent[] };

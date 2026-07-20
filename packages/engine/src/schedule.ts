@@ -1,4 +1,5 @@
 import type { ScheduleEntry } from '@fountain-studio/shared';
+import { eventLog } from './eventlog';
 import type { Engine } from './engine';
 
 /**
@@ -51,7 +52,7 @@ export class Scheduler {
 
   private fire(e: ScheduleEntry): void {
     const label = e.name !== '' ? e.name : e.id;
-    console.log(`[schedule] ${e.time} → ${e.action.type} (${label})`);
+    eventLog.log('schedule', `${e.time} → ${e.action.type} (${label})`);
     switch (e.action.type) {
       case 'playlist':
         this.engine.playPlaylist(e.action.refId, undefined);
