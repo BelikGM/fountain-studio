@@ -34,6 +34,11 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
   const [mode, setMode] = useState<'devices' | 'addresses'>('devices');
   const [showGenerator, setShowGenerator] = useState(false);
   const [filter, setFilter] = useState('');
+  // Переименование по значку прямо в строке списка (§27 доработки, по
+  // примеру прежнего приложения пользователя) — id сцены в редактировании,
+  // null — никто не редактируется.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
 
   // scenes — полный список (логика выбора/наименования не должна зависеть от
   // текста поиска); visibleScenes — то, что реально рисуем в списке слева.
@@ -67,22 +72,38 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
     setSelectedId(copy.id);
   };
 
-  const removeScene = (): void => {
-    if (!selected) return;
-    if (!confirmDelete('сцены', selected.name, sceneDependents(project, selected.id))) return;
+  const removeSceneById = (scene: Scene): void => {
+    if (!confirmDelete('сцены', scene.name, sceneDependents(project, scene.id))) return;
     updateProject({
       ...project,
-      scenes: project.scenes.filter((s) => s.id !== selected.id),
+      scenes: project.scenes.filter((s) => s.id !== scene.id),
       // Шаги секвенсоров, ссылавшиеся на сцену, удаляем.
       sequences: project.sequences.map((q) => ({
         ...q,
-        steps: q.steps.filter((st) => st.sceneId !== selected.id),
+        steps: q.steps.filter((st) => st.sceneId !== scene.id),
       })),
     });
+    if (renamingId === scene.id) setRenamingId(null);
+  };
+
+  const removeScene = (): void => {
+    if (!selected) return;
+    removeSceneById(selected);
   };
 
   const updateScene = (scene: Scene): void => {
     updateProject({ ...project, scenes: project.scenes.map((s) => (s.id === scene.id ? scene : s)) });
+  };
+
+  const startRename = (scene: Scene): void => {
+    setRenamingId(scene.id);
+    setRenameDraft(scene.name);
+  };
+
+  const commitRename = (scene: Scene): void => {
+    const name = renameDraft.trim();
+    if (name && name !== scene.name) updateScene({ ...scene, name });
+    setRenamingId(null);
   };
 
   const captureFromConsole = (): void => {
@@ -123,10 +144,49 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
                 (s.id === selectedId ? 'list-item selected' : 'list-item') +
                 (playback.activeSceneId === s.id ? ' playing' : '')
               }
-              onClick={() => setSelectedId(s.id)}
+              onClick={() => renamingId !== s.id && setSelectedId(s.id)}
             >
-              {s.name}
-              {playback.activeSceneId === s.id && <span className="badge badge-live">в эфире</span>}
+              <span className="list-item-label">
+                {renamingId === s.id ? (
+                  <input
+                    className="input input-mini list-item-rename"
+                    autoFocus
+                    value={renameDraft}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    onBlur={() => commitRename(s)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') e.currentTarget.blur();
+                      else if (e.key === 'Escape') setRenamingId(null);
+                    }}
+                  />
+                ) : (
+                  <span className="list-item-name">{s.name}</span>
+                )}
+                {playback.activeSceneId === s.id && <span className="badge badge-live">в эфире</span>}
+              </span>
+              <span className="list-item-actions">
+                <button
+                  className="icon-btn"
+                  title="Переименовать"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    startRename(s);
+                  }}
+                >
+                  ✎
+                </button>
+                <button
+                  className="icon-btn icon-btn-danger"
+                  title="Удалить сцену"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeSceneById(s);
+                  }}
+                >
+                  🗑
+                </button>
+              </span>
             </li>
           ))}
         </ul>

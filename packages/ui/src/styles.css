@@ -450,6 +450,48 @@ select {
 }
 .list-item.playing { color: var(--ok); }
 
+/* Пункт списка — переименование/удаление по значкам при наведении, вместо
+   поиска кнопки в шапке (§27 доработки, по примеру прежнего приложения). */
+.list-item-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+.list-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.list-item-rename {
+  min-width: 0;
+  width: 100%;
+}
+.list-item-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.list-item:hover .list-item-actions,
+.list-item:focus-within .list-item-actions {
+  opacity: 1;
+}
+.icon-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 5px;
+  cursor: pointer;
+  color: var(--fg-dim);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.icon-btn:hover { background: var(--bg); border-color: var(--border); color: var(--fg); }
+.icon-btn-danger:hover { background: var(--danger-bg); border-color: var(--danger); color: var(--danger-text); }
+
 /* ── Панели и формы ──────────────────────────────────────── */
 .panel {
   background: var(--bg-panel);
