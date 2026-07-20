@@ -104,6 +104,7 @@ function PlaylistEditor({
   const shows = project?.shows ?? [];
   const live = playback.playlist?.playlistId === playlist.id ? playback.playlist : null;
   const showName = (id: string): string => shows.find((s) => s.id === id)?.name ?? '(шоу удалено)';
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
 
   const totalMs = playlist.items.reduce((sum, it) => {
     const show = shows.find((s) => s.id === it.showId);
@@ -115,6 +116,16 @@ function PlaylistEditor({
     if (j < 0 || j >= playlist.items.length) return;
     const items = [...playlist.items];
     [items[i], items[j]] = [items[j]!, items[i]!];
+    onChange({ ...playlist, items });
+  };
+
+  // Перетаскивание строк — то же самое, что кнопки ↑↓, за один шаг на любую
+  // позицию (§27 доработки, УХ п.9).
+  const reorderItem = (from: number, to: number): void => {
+    if (from === to) return;
+    const items = [...playlist.items];
+    const [moved] = items.splice(from, 1);
+    items.splice(to, 0, moved!);
     onChange({ ...playlist, items });
   };
 
@@ -170,6 +181,7 @@ function PlaylistEditor({
           <table className="table">
             <thead>
               <tr>
+                <th></th>
                 <th>#</th>
                 <th>Шоу</th>
                 <th>Длительность</th>
@@ -181,7 +193,28 @@ function PlaylistEditor({
               {playlist.items.map((item, i) => {
                 const show = shows.find((s) => s.id === item.showId);
                 return (
-                  <tr key={i} className={live && !live.inGap && live.itemIndex === i ? 'row-playing' : ''}>
+                  <tr
+                    key={i}
+                    className={
+                      (live && !live.inGap && live.itemIndex === i ? 'row-playing ' : '') +
+                      (dragIndex === i ? 'row-dragging' : '')
+                    }
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (dragIndex !== null) reorderItem(dragIndex, i);
+                      setDragIndex(null);
+                    }}
+                  >
+                    <td
+                      className="drag-handle"
+                      title="Перетащить, чтобы изменить порядок"
+                      draggable
+                      onDragStart={() => setDragIndex(i)}
+                      onDragEnd={() => setDragIndex(null)}
+                    >
+                      ⠿
+                    </td>
                     <td className="dim">{i + 1}</td>
                     <td>
                       <select

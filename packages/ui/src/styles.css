@@ -534,6 +534,17 @@ select {
 .row-error td { background: var(--danger-bg); }
 .row-playing td { background: var(--ok-bg); }
 
+/* Перетаскивание строк таблицы (шаги секвенсора, шоу в плейлисте) — §27 п.9. */
+.drag-handle {
+  cursor: grab;
+  color: var(--fg-dim);
+  text-align: center;
+  width: 20px;
+  user-select: none;
+}
+.drag-handle:active { cursor: grabbing; }
+.row-dragging { opacity: 0.4; }
+
 /* ── Карточки устройств в редакторе сцен ─────────────────── */
 .device-grid {
   display: grid;

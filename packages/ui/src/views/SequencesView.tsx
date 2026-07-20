@@ -123,6 +123,7 @@ function SequenceEditor({
   const { project, send } = engine;
   const scenes = project!.scenes;
   const sceneName = (id: string): string => scenes.find((s) => s.id === id)?.name ?? '(сцена удалена)';
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
 
   const patchStep = (i: number, patch: Partial<SequenceStep>): void => {
     onChange({ ...sequence, steps: sequence.steps.map((s, j) => (j === i ? { ...s, ...patch } : s)) });
@@ -133,6 +134,16 @@ function SequenceEditor({
     if (j < 0 || j >= sequence.steps.length) return;
     const steps = [...sequence.steps];
     [steps[i], steps[j]] = [steps[j]!, steps[i]!];
+    onChange({ ...sequence, steps });
+  };
+
+  // Перетаскивание строк — то же самое, что кнопки ↑↓, просто на несколько
+  // позиций за раз (§27 доработки, УХ п.9).
+  const reorderStep = (from: number, to: number): void => {
+    if (from === to) return;
+    const steps = [...sequence.steps];
+    const [moved] = steps.splice(from, 1);
+    steps.splice(to, 0, moved!);
     onChange({ ...sequence, steps });
   };
 
@@ -190,6 +201,7 @@ function SequenceEditor({
           <table className="table">
             <thead>
               <tr>
+                <th></th>
                 <th>#</th>
                 <th>Сцена</th>
                 <th>Фейд, мс</th>
@@ -199,7 +211,27 @@ function SequenceEditor({
             </thead>
             <tbody>
               {sequence.steps.map((step, i) => (
-                <tr key={i} className={running && running.stepIndex === i ? 'row-playing' : ''}>
+                <tr
+                  key={i}
+                  className={
+                    (running && running.stepIndex === i ? 'row-playing ' : '') + (dragIndex === i ? 'row-dragging' : '')
+                  }
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (dragIndex !== null) reorderStep(dragIndex, i);
+                    setDragIndex(null);
+                  }}
+                >
+                  <td
+                    className="drag-handle"
+                    title="Перетащить, чтобы изменить порядок"
+                    draggable
+                    onDragStart={() => setDragIndex(i)}
+                    onDragEnd={() => setDragIndex(null)}
+                  >
+                    ⠿
+                  </td>
                   <td className="dim">{i + 1}</td>
                   <td>
                     <select value={step.sceneId} onChange={(e) => patchStep(i, { sceneId: e.target.value })}>
