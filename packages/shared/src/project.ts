@@ -271,6 +271,14 @@ export interface Project {
   dmxTriggers: DmxTrigger[];
   /** Безопасное снижение струй по ветру (§27 доработки, §4 п.1). */
   windLimit: WindLimitConfig;
+  /**
+   * Холостая сцена (§27 доработки, по примеру прежнего приложения —
+   * «Color Form») — держится на выходе, когда ничего не играет (нет активной
+   * сцены/секвенсора/шоу), вместо гашения в чёрное. null — как раньше,
+   * чёрное. Пауза между элементами плейлиста — намеренное затемнение, туда
+   * не подставляется (см. Playback.tick).
+   */
+  idleSceneId: string | null;
   /** 3D-схема фонтана (вкладка «3D»). */
   layout: FountainLayout;
 }
@@ -340,6 +348,7 @@ export function emptyProject(name = 'Новый проект'): Project {
     mqttBindings: [],
     dmxTriggers: [],
     windLimit: defaultWindLimitConfig(),
+    idleSceneId: null,
     layout: emptyLayout(),
   };
 }
@@ -455,6 +464,7 @@ export function sanitizeProject(raw: unknown): Project {
     mqttBindings: [],
     dmxTriggers: [],
     windLimit: defaultWindLimitConfig(),
+    idleSceneId: null,
     layout: emptyLayout(),
   };
   if (Array.isArray(r.profiles)) {
@@ -561,6 +571,8 @@ export function sanitizeProject(raw: unknown): Project {
   project.mqttBindings = sanitizeMqttBindings(r.mqttBindings, remoteIds);
   project.dmxTriggers = sanitizeDmxTriggers(r.dmxTriggers, remoteIds);
   project.windLimit = sanitizeWindLimitConfig(r.windLimit);
+  project.idleSceneId =
+    typeof r.idleSceneId === 'string' && project.scenes.some((s) => s.id === r.idleSceneId) ? r.idleSceneId : null;
   project.layout = sanitizeLayout(r.layout, deviceIds);
   return project;
 }

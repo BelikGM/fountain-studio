@@ -769,6 +769,39 @@ async function main(): Promise<void> {
   await waitFor('общий стоп', () => playback.running.length === 0 && ch(1) === 0 && ch(10) === 0);
   check(true, 'общий стоп — все каналы в ноль');
 
+  console.log('— Холостая сцена (§27 доработки, по примеру прежнего приложения — «Color Form») —');
+  {
+    send({ type: 'updateProject', project: { ...store.project, idleSceneId: 'sceneA' } });
+    await waitFor('idleSceneId применён', () => projectEcho?.idleSceneId === 'sceneA');
+    // valve1 (ch2) и R-канал rgb1 (ch10) — без калибровки, точные числа из sceneA (200/255/[255,0,40]).
+    await waitFor('холостая сцена на выходе — ничего не играет', () => ch(2) === 255 && ch(10) === 255, 2000);
+    check(true, 'idleSceneId: пока ничего не играет — на выходе холостая сцена вместо чёрного');
+
+    send({ type: 'setScene', sceneId: 'sceneB' }); // sceneB не трогает valve1/R — обнулятся, если холостая реально снята
+    await waitFor(
+      'активная сцена полностью вытеснила холостую (не смешивается)',
+      () => ch(2) === 0 && ch(10) === 0 && ch(11) === 128,
+      2000,
+    );
+    check(true, 'холостая сцена не подмешивается, пока реально что-то играет');
+
+    send({ type: 'setScene', sceneId: null });
+    await waitFor('холостая сцена вернулась после снятия активной', () => ch(2) === 255 && ch(10) === 255, 2000);
+    check(true, 'снятие активной сцены — холостая снова на выходе');
+
+    // Пауза между элементами плейлиста — намеренное затемнение, холостая туда не подставляется.
+    send({ type: 'playPlaylist', playlistId: 'pl1' });
+    await waitFor('элемент 1 играет', () => playback.playlist?.itemIndex === 0 && ch(1) === 200, 2000);
+    await waitFor('пауза между шоу — чёрное, не холостая', () => playback.playlist?.inGap === true && ch(2) === 0, 2000);
+    check(true, 'пауза между элементами плейлиста остаётся чёрной, даже когда задана холостая сцена');
+    send({ type: 'stopPlaylist' });
+    await waitFor('плейлист остановлен, холостая снова на выходе', () => ch(2) === 255 && ch(10) === 255, 2000);
+
+    send({ type: 'updateProject', project: { ...store.project, idleSceneId: null } });
+    await waitFor('idleSceneId снят', () => projectEcho?.idleSceneId === null);
+    await waitFor('без холостой сцены — чёрное', () => ch(2) === 0 && ch(10) === 0);
+  }
+
   console.log('— Пауза всего (§27 доработки: заморозка картины, не гашение) —');
   send({ type: 'startSequence', sequenceId: 'seq1' });
   await waitFor('шаг 1 играет', () => ch(1) === 200 && ch(2) === 255);

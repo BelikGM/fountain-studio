@@ -480,6 +480,42 @@ function WindLimitPanel({ engine }: { engine: EngineConnection }) {
 }
 
 /**
+ * Холостая сцена (§27 доработки, по примеру прежнего приложения —
+ * «Color Form») — что держится на выходе, когда ничего не играет, вместо
+ * гашения в чёрное. Пауза между элементами плейлиста — исключение (см.
+ * Playback.tick), туда холостая сцена не подставляется.
+ */
+function IdleScenePanel({ engine }: { engine: EngineConnection }) {
+  const { project, updateProject } = engine;
+  if (!project) return null;
+  return (
+    <section className="panel">
+      <h2>Холостая сцена</h2>
+      <p className="dim">
+        Держится на выходе, когда ничего не играет (нет активной сцены/секвенсора/шоу) — вместо чёрного. Пауза между
+        песнями плейлиста — исключение, там всегда чёрное намеренно.
+      </p>
+      <div className="form-row">
+        <label className="field">
+          Сцена:{' '}
+          <select
+            value={project.idleSceneId ?? ''}
+            onChange={(e) => updateProject({ ...project, idleSceneId: e.target.value || null })}
+          >
+            <option value="">— нет (чёрное) —</option>
+            {project.scenes.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+    </section>
+  );
+}
+
+/**
  * Настройки движка: вселенные (DMX-линии) и шаг тика — редактирование
  * fountain.config.json из интерфейса, без текстового редактора. Движок
  * применяет на лету (воспроизведение при этом останавливается) и сохраняет
@@ -706,6 +742,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
       <BackupPanel engine={engine} />
       <AutostartPanel engine={engine} />
       <WindLimitPanel engine={engine} />
+      <IdleScenePanel engine={engine} />
       <HotkeysPanel />
       <OperatorPanel />
     </main>

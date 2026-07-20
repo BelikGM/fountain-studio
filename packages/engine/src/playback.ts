@@ -401,6 +401,24 @@ export class Playback {
     this.advancePlaylistIfDue(nowMs);
     for (const buf of this.merged.values()) buf.fill(0);
 
+    // Холостая сцена (§27 доработки, по примеру прежнего приложения —
+    // «Color Form») — только когда действительно ничего не запущено; пауза
+    // между элементами плейлиста — намеренное затемнение, туда не подставляем.
+    if (
+      this.activeSceneId === null &&
+      this.running.length === 0 &&
+      this.showRt === null &&
+      this.playlistRt === null &&
+      this.project?.idleSceneId
+    ) {
+      const idle = this.compiled.get(this.project.idleSceneId);
+      if (idle) {
+        for (const [universe, target] of idle) {
+          this.merged.get(universe)?.set(target);
+        }
+      }
+    }
+
     if (this.activeSceneId !== null) {
       const scene = this.compiled.get(this.activeSceneId);
       if (scene) {
