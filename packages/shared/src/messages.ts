@@ -247,7 +247,11 @@ export type ClientMessage =
   // (сейчас — клавиатурные привязки из вкладки «Клавиши») сами не видны
   // движку, поэтому явно сообщают о срабатывании, чтобы попасть в общий
   // журнал наравне с расписанием/OSC/MQTT.
-  | { type: 'clientEvent'; source: string; message: string };
+  | { type: 'clientEvent'; source: string; message: string }
+  // Автозапуск движка при входе в Windows (§27 доработки, §3 п.3) — обёртка
+  // над задачей планировщика (та же, что раньше ставилась PowerShell-скриптом).
+  | { type: 'getAutostart' }
+  | { type: 'setAutostart'; enabled: boolean };
 
 /** Движок → UI */
 export type ServerMessage =
@@ -283,4 +287,6 @@ export type ServerMessage =
   /** Новое событие в журнале (шлётся всем клиентам сразу при возникновении). */
   | { type: 'logEvent'; event: LogEvent }
   /** История журнала (шлётся при подключении). */
-  | { type: 'logHistory'; events: LogEvent[] };
+  | { type: 'logHistory'; events: LogEvent[] }
+  /** Статус автозапуска (шлётся при подключении и после setAutostart). */
+  | { type: 'autostartState'; supported: boolean; enabled: boolean; error?: string };

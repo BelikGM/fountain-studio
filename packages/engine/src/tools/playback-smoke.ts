@@ -574,6 +574,7 @@ let remoteStatusMsg: Extract<ServerMessage, { type: 'remoteStatus' }> | null = n
 let backupConfigMsg: Extract<ServerMessage, { type: 'backupConfig' }> | null = null;
 let backupListMsg: Extract<ServerMessage, { type: 'backupList' }> | null = null;
 let logEvents: LogEvent[] = [];
+let autostartMsg: Extract<ServerMessage, { type: 'autostartState' }> | null = null;
 let sawStep1 = false;
 let sawFadeMidpoint = false;
 
@@ -621,6 +622,8 @@ ws.on('message', (raw) => {
     logEvents = msg.events;
   } else if (msg.type === 'logEvent') {
     logEvents = [...logEvents, msg.event];
+  } else if (msg.type === 'autostartState') {
+    autostartMsg = msg;
   }
 });
 
@@ -1528,6 +1531,20 @@ async function main(): Promise<void> {
   send({ type: 'getAudio', name: 'тест.mp3' });
   await waitFor('ответ getAudio', () => audioMsg !== null);
   check(audioMsg!.name === 'тест.mp3' && audioMsg!.dataBase64 === audioData, 'аудиофайл сохранён и отдан байт в байт');
+
+  console.log('— Автозапуск при входе в Windows (§27 доработки, §3 п.3) —');
+  {
+    // Только чтение (isAutostartEnabled → schtasks /Query, безопасно) — умышленно
+    // НЕ вызываем setAutostart здесь: это создало/удалило бы реальную задачу
+    // планировщика на машине, где выполняется тест.
+    send({ type: 'getAutostart' });
+    await waitFor('ответ getAutostart получен', () => autostartMsg !== null);
+    check(
+      autostartMsg!.supported === true,
+      `autostart: репозиторий определён верно, платформа поддержана (supported=${autostartMsg!.supported})`,
+    );
+    check(autostartMsg!.enabled === false, 'autostart: задачи планировщика ещё нет на этой машине');
+  }
 
   console.log('— Авто-бэкапы проекта (§27 доработки, УХ п.5) —');
   send({ type: 'listBackups' });

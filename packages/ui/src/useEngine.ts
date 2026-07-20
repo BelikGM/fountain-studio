@@ -24,6 +24,13 @@ export interface JitterSample {
 /** Раз в секунду (частота 'stats' от движка) — час истории. */
 const MAX_JITTER_SAMPLES = 3600;
 
+/** Автозапуск при входе в Windows (§27 доработки, §3 п.3). */
+export interface AutostartState {
+  supported: boolean;
+  enabled: boolean;
+  error?: string;
+}
+
 export interface EngineConfigState {
   tickMs: number;
   universes: ConfigUniverse[];
@@ -63,6 +70,8 @@ export interface EngineConnection {
   logEvents: LogEvent[];
   /** История джиттера тика (§27 доработки, §3 п.5) — до часа, ~1 точка/с, новые в конце. */
   jitterHistory: JitterSample[];
+  /** Автозапуск при входе в Windows (null — движок ещё не прислал). */
+  autostart: AutostartState | null;
   send: (msg: ClientMessage) => void;
   /** Применяет правку проекта локально и отправляет движку. */
   updateProject: (project: Project) => void;
@@ -111,6 +120,7 @@ export function useEngine(): EngineConnection {
   const [savedAtMs, setSavedAtMs] = useState<number | null>(null);
   const [logEvents, setLogEvents] = useState<LogEvent[]>([]);
   const [jitterHistory, setJitterHistory] = useState<JitterSample[]>([]);
+  const [autostart, setAutostartState] = useState<AutostartState | null>(null);
   const [playback, setPlayback] = useState<PlaybackState>({
     activeSceneId: null,
     running: [],
@@ -241,6 +251,9 @@ export function useEngine(): EngineConnection {
               return next.length > MAX_LOG_EVENTS ? next.slice(next.length - MAX_LOG_EVENTS) : next;
             });
             break;
+          case 'autostartState':
+            setAutostartState({ supported: msg.supported, enabled: msg.enabled, error: msg.error });
+            break;
         }
       };
     };
@@ -367,6 +380,7 @@ export function useEngine(): EngineConnection {
     savedAtMs,
     logEvents,
     jitterHistory,
+    autostart,
     send,
     updateProject,
     requestAudio,

@@ -8,6 +8,7 @@ import {
   type ServerMessage,
 } from '@fountain-studio/shared';
 import type { AudioStore } from './audio';
+import { isAutostartEnabled, isAutostartSupported, setAutostart, unsupportedReason } from './autostart';
 import type { BackupStore } from './backups';
 import type { DmxCapture } from './dmxcapture';
 import { eventLog } from './eventlog';
@@ -86,6 +87,16 @@ export function startServer(
   // Журнал событий (§27 доработки, §3 п.1): новое событие — сразу всем
   // подключённым клиентам (не только тому, кто его вызвал).
   eventLog.onEvent = (event) => broadcast({ type: 'logEvent', event });
+  const autostartMessage = (error?: string): Extract<ServerMessage, { type: 'autostartState' }> => {
+    const supported = isAutostartSupported();
+    const reason = error ?? (supported ? undefined : (unsupportedReason() ?? undefined));
+    return {
+      type: 'autostartState',
+      supported,
+      enabled: supported && isAutostartEnabled(),
+      ...(reason ? { error: reason } : {}),
+    };
+  };
 
   wss.on('connection', (ws) => {
     const hello: ServerMessage = {
@@ -103,6 +114,7 @@ export function startServer(
     ws.send(JSON.stringify(backupConfigMessage()));
     ws.send(JSON.stringify(backupListMessage()));
     ws.send(JSON.stringify({ type: 'logHistory', events: eventLog.list() } satisfies ServerMessage));
+    ws.send(JSON.stringify(autostartMessage()));
     ws.send(JSON.stringify(remoteStatus()));
 
     ws.on('message', (raw) => {
@@ -321,6 +333,21 @@ export function startServer(
         case 'clientEvent':
           eventLog.log(msg.source, msg.message);
           break;
+        case 'getAutostart':
+          ws.send(JSON.stringify(autostartMessage()));
+          break;
+        case 'setAutostart': {
+          const result = setAutostart(msg.enabled);
+          eventLog.log(
+            'server',
+            result.ok
+              ? `автозапуск при входе в Windows: ${msg.enabled ? 'включён' : 'выключен'}`
+              : `не удалось изменить автозапуск: ${result.error}`,
+            result.ok ? 'info' : 'error',
+          );
+          broadcast(autostartMessage(result.ok ? undefined : result.error));
+          break;
+        }
       }
     });
   });

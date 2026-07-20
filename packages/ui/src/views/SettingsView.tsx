@@ -362,6 +362,49 @@ function BackupPanel({ engine }: { engine: EngineConnection }) {
 }
 
 /**
+ * Автозапуск движка при входе в Windows (§27 доработки, §3 п.3) — та же задача
+ * планировщика, что раньше ставилась вручную (`tools/install-autostart.ps1`),
+ * теперь по кнопке. Сторож (engine:watchdog) перезапускает движок при падении.
+ */
+function AutostartPanel({ engine }: { engine: EngineConnection }) {
+  const { autostart, send } = engine;
+
+  useEffect(() => {
+    send({ type: 'getAutostart' });
+  }, [send]);
+
+  return (
+    <section className="panel">
+      <h2>Автозапуск</h2>
+      {!autostart ? (
+        <p className="dim">Ожидание состояния от движка…</p>
+      ) : !autostart.supported ? (
+        <p className="dim">{autostart.error ?? 'Поддержано только на Windows (планировщик задач).'}</p>
+      ) : (
+        <>
+          <p className="dim">
+            Движок запускается сам при входе в Windows и продолжает работать в фоне (сторож
+            перезапускает его при падении) — фонтан отыграет расписание, даже если никто не открыл
+            редактор после перезагрузки/отключения питания.
+          </p>
+          <div className="form-row">
+            <label className="field">
+              <input
+                type="checkbox"
+                checked={autostart.enabled}
+                onChange={(e) => send({ type: 'setAutostart', enabled: e.target.checked })}
+              />{' '}
+              Запускать при старте Windows
+            </label>
+            {autostart.error && <span className="error-text">{autostart.error}</span>}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+/**
  * Настройки движка: вселенные (DMX-линии) и шаг тика — редактирование
  * fountain.config.json из интерфейса, без текстового редактора. Движок
  * применяет на лету (воспроизведение при этом останавливается) и сохраняет
@@ -586,6 +629,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
       </div>
 
       <BackupPanel engine={engine} />
+      <AutostartPanel engine={engine} />
       <HotkeysPanel />
       <OperatorPanel />
     </main>
