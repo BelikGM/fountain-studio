@@ -25,8 +25,10 @@ import {
   type ShowBlock,
   type ShowTrack,
 } from '@fountain-studio/shared';
+import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
 import { ListFilter } from '../components/ListFilter';
 import { confirmDelete } from '../confirmDelete';
+import { comboFromEvent, getCombo } from '../hotkeys';
 import type { EngineConnection } from '../useEngine';
 import { extractVideoFrameSamples } from '../videoFrames';
 
@@ -475,7 +477,9 @@ function ShowEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispMs, scale, show.tracks.length]);
 
-  // Пробел — пуск/пауза, Home — в начало (когда фокус не в поле ввода).
+  // Пробел — пуск/пауза, Home — в начало, Ctrl+C/Ctrl+V — копировать/вставить
+  // выбранный блок таймлайна (§27 доработки, УХ п.13) — вставка на позицию
+  // плейхеда, в ту же дорожку, откуда скопирован (когда фокус не в поле ввода).
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const tag = (e.target as HTMLElement).tagName;
@@ -486,6 +490,23 @@ function ShowEditor({
       } else if (e.code === 'Home') {
         e.preventDefault();
         seek(0);
+      } else if (comboFromEvent(e) === getCombo('copy')) {
+        if (!selBlock) return;
+        const track = showRef.current.tracks.find((t) => t.id === selBlock.trackId);
+        const block = track && track.kind === 'blocks' ? track.blocks.find((b) => b.id === selBlock.blockId) : undefined;
+        if (block) {
+          e.preventDefault();
+          copyToClipboard('showBlock', { trackId: selBlock.trackId, block });
+        }
+      } else if (comboFromEvent(e) === getCombo('paste') && clipboardHasKind('showBlock')) {
+        const clip = pasteFromClipboard<{ trackId: string; block: ShowBlock }>('showBlock');
+        const track = clip ? showRef.current.tracks.find((t) => t.id === clip.trackId) : undefined;
+        if (clip && track && track.kind === 'blocks') {
+          e.preventDefault();
+          const newBlock: ShowBlock = { ...clip.block, id: uid(), startMs: Math.round(currentPos()) };
+          updateTrack({ ...track, blocks: [...track.blocks, newBlock].sort((a, b) => a.startMs - b.startMs) });
+          setSelBlock({ trackId: track.id, blockId: newBlock.id });
+        }
       }
     };
     window.addEventListener('keydown', onKey);

@@ -18,6 +18,7 @@ import {
   type NozzleKind,
   type Project,
 } from '@fountain-studio/shared';
+import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
 import { comboFromEvent, getCombo } from '../hotkeys';
 import type { EngineConnection } from '../useEngine';
 import { FountainScene, type SelectedElement } from '../three/FountainScene';
@@ -144,13 +145,60 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
     );
   }, [selected]);
 
-  // Горячие клавиши редактора на выбранном элементе (§27 доработки, УХ п.6):
-  // дублировать/удалить/снять выделение/сдвинуть стрелками. Тот же эффект, что
-  // и одноимённые кнопки в панели свойств справа — просто с клавиатуры.
+  // Горячие клавиши редактора на выбранном элементе (§27 доработки, УХ п.6,
+  // копирование — п.13): дублировать/удалить/снять выделение/сдвинуть
+  // стрелками/копировать/вставить. Тот же эффект, что и одноимённые кнопки в
+  // панели свойств справа — просто с клавиатуры. Paste не требует выделения
+  // (можно вставить, когда ничего не выбрано), остальные действия — требуют.
   const NUDGE_STEP = 0.1;
   useEffect(() => {
-    if (!project || !selected) return;
+    if (!project) return;
     const layout = project.layout;
+    const pasteClipboard = (): void => {
+      if (clipboardHasKind('nozzle')) {
+        const n = pasteFromClipboard<Nozzle>('nozzle');
+        if (!n) return;
+        const copy: Nozzle = { ...n, id: uid(), name: `${n.name} коп`, x: n.x + 0.5 };
+        updateProject({ ...project, layout: { ...layout, nozzles: [...layout.nozzles, copy] } });
+        setSelected({ type: 'nozzle', id: copy.id });
+      } else if (clipboardHasKind('light')) {
+        const l = pasteFromClipboard<LayoutLight>('light');
+        if (!l) return;
+        const copy: LayoutLight = { ...l, id: uid(), name: `${l.name} коп`, x: l.x + 0.5 };
+        updateProject({ ...project, layout: { ...layout, lights: [...layout.lights, copy] } });
+        setSelected({ type: 'light', id: copy.id });
+      } else if (clipboardHasKind('bowl')) {
+        const b = pasteFromClipboard<Bowl>('bowl');
+        if (!b) return;
+        const copy: Bowl = { ...b, id: uid(), name: `${b.name} коп`, x: b.x + 0.5 };
+        updateProject({ ...project, layout: { ...layout, bowls: [...layout.bowls, copy] } });
+        setSelected({ type: 'bowl', id: copy.id });
+      }
+    };
+    if (!selected) {
+      const onKeyIdle = (e: KeyboardEvent): void => {
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+        if (comboFromEvent(e) === getCombo('paste')) {
+          e.preventDefault();
+          pasteClipboard();
+        }
+      };
+      window.addEventListener('keydown', onKeyIdle);
+      return () => window.removeEventListener('keydown', onKeyIdle);
+    }
+    const copySelected = (): void => {
+      if (selected.type === 'nozzle') {
+        const n = layout.nozzles.find((x) => x.id === selected.id);
+        if (n) copyToClipboard('nozzle', n);
+      } else if (selected.type === 'light') {
+        const l = layout.lights.find((x) => x.id === selected.id);
+        if (l) copyToClipboard('light', l);
+      } else {
+        const b = layout.bowls.find((x) => x.id === selected.id);
+        if (b) copyToClipboard('bowl', b);
+      }
+    };
     const duplicateSelected = (): void => {
       if (selected.type === 'nozzle') {
         const n = layout.nozzles.find((x) => x.id === selected.id);
@@ -195,7 +243,13 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
       const combo = comboFromEvent(e);
-      if (combo === getCombo('duplicate')) {
+      if (combo === getCombo('copy')) {
+        e.preventDefault();
+        copySelected();
+      } else if (combo === getCombo('paste')) {
+        e.preventDefault();
+        pasteClipboard();
+      } else if (combo === getCombo('duplicate')) {
         e.preventDefault();
         duplicateSelected();
       } else if (combo === getCombo('delete')) {

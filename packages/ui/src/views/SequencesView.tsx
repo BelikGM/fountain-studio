@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { sequenceDependents, uid, type Sequence, type SequenceStep } from '@fountain-studio/shared';
+import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
 import { ListFilter } from '../components/ListFilter';
 import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
@@ -124,6 +125,10 @@ function SequenceEditor({
   const scenes = project!.scenes;
   const sceneName = (id: string): string => scenes.find((s) => s.id === id)?.name ?? '(сцена удалена)';
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  // clipboardHasKind сам по себе не React-состояние — отдельный флаг, чтобы
+  // кнопка «Вставить шаг» появлялась сразу после копирования, без ожидания
+  // случайного внешнего перерендера.
+  const [hasStepClip, setHasStepClip] = useState(() => clipboardHasKind('sequenceStep'));
 
   const patchStep = (i: number, patch: Partial<SequenceStep>): void => {
     onChange({ ...sequence, steps: sequence.steps.map((s, j) => (j === i ? { ...s, ...patch } : s)) });
@@ -145,6 +150,12 @@ function SequenceEditor({
     const [moved] = steps.splice(from, 1);
     steps.splice(to, 0, moved!);
     onChange({ ...sequence, steps });
+  };
+
+  // Copy/paste шага (§27 доработки, УХ п.13) — вставка добавляет копию в конец.
+  const pasteStep = (): void => {
+    const step = pasteFromClipboard<SequenceStep>('sequenceStep');
+    if (step) onChange({ ...sequence, steps: [...sequence.steps, { ...step }] });
   };
 
   const totalMs = sequence.steps.reduce((sum, s) => sum + s.holdMs, 0);
@@ -278,6 +289,16 @@ function SequenceEditor({
                     </button>
                     <button
                       className="btn btn-small"
+                      title="Копировать шаг"
+                      onClick={() => {
+                        copyToClipboard('sequenceStep', step);
+                        setHasStepClip(true);
+                      }}
+                    >
+                      ⧉
+                    </button>
+                    <button
+                      className="btn btn-small"
                       onClick={() => onChange({ ...sequence, steps: sequence.steps.filter((_, j) => j !== i) })}
                     >
                       ✕
@@ -299,6 +320,11 @@ function SequenceEditor({
             >
               + Шаг
             </button>
+            {hasStepClip && (
+              <button className="btn btn-small" onClick={pasteStep}>
+                Вставить шаг
+              </button>
+            )}
           </div>
         </>
       )}

@@ -11,6 +11,8 @@ export type HotkeyId =
   | 'undo'
   | 'redo'
   | 'save'
+  | 'copy'
+  | 'paste'
   | 'duplicate'
   | 'delete'
   | 'deselect'
@@ -30,6 +32,8 @@ export const HOTKEY_DEFS: HotkeyDef[] = [
   { id: 'undo', label: 'Отменить', hint: 'глобально', default: 'Ctrl+KeyZ' },
   { id: 'redo', label: 'Повторить', hint: 'глобально', default: 'Ctrl+KeyY' },
   { id: 'save', label: 'Сохранить сейчас', hint: 'глобально', default: 'Ctrl+KeyS' },
+  { id: 'copy', label: 'Копировать выбранное', hint: '3D, Шоу', default: 'Ctrl+KeyC' },
+  { id: 'paste', label: 'Вставить', hint: '3D, Шоу', default: 'Ctrl+KeyV' },
   { id: 'duplicate', label: 'Дублировать выбранное', hint: '3D', default: 'Ctrl+KeyD' },
   { id: 'delete', label: 'Удалить выбранное', hint: '3D', default: 'Delete' },
   { id: 'deselect', label: 'Снять выделение', hint: '3D', default: 'Escape' },

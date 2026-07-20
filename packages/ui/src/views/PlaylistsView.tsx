@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { playlistDependents, uid, type Playlist } from '@fountain-studio/shared';
+import { playlistDependents, uid, type Playlist, type PlaylistItem } from '@fountain-studio/shared';
+import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
 import { ListFilter } from '../components/ListFilter';
 import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
@@ -105,6 +106,7 @@ function PlaylistEditor({
   const live = playback.playlist?.playlistId === playlist.id ? playback.playlist : null;
   const showName = (id: string): string => shows.find((s) => s.id === id)?.name ?? '(шоу удалено)';
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [hasItemClip, setHasItemClip] = useState(() => clipboardHasKind('playlistItem'));
 
   const totalMs = playlist.items.reduce((sum, it) => {
     const show = shows.find((s) => s.id === it.showId);
@@ -127,6 +129,12 @@ function PlaylistEditor({
     const [moved] = items.splice(from, 1);
     items.splice(to, 0, moved!);
     onChange({ ...playlist, items });
+  };
+
+  // Copy/paste пункта плейлиста (§27 доработки, УХ п.13) — вставка добавляет в конец.
+  const pasteItem = (): void => {
+    const item = pasteFromClipboard<PlaylistItem>('playlistItem');
+    if (item) onChange({ ...playlist, items: [...playlist.items, { ...item }] });
   };
 
   return (
@@ -265,6 +273,16 @@ function PlaylistEditor({
                       </button>
                       <button
                         className="btn btn-small"
+                        title="Копировать пункт"
+                        onClick={() => {
+                          copyToClipboard('playlistItem', item);
+                          setHasItemClip(true);
+                        }}
+                      >
+                        ⧉
+                      </button>
+                      <button
+                        className="btn btn-small"
                         onClick={() => onChange({ ...playlist, items: playlist.items.filter((_, j) => j !== i) })}
                       >
                         ✕
@@ -284,6 +302,11 @@ function PlaylistEditor({
             >
               + Шоу в плейлист
             </button>
+            {hasItemClip && (
+              <button className="btn btn-small" onClick={pasteItem}>
+                Вставить пункт
+              </button>
+            )}
           </div>
         </>
       )}

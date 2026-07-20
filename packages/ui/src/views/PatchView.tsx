@@ -22,6 +22,7 @@ import {
   type PumpModbusStatus,
   type WizardRow,
 } from '@fountain-studio/shared';
+import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
 import { confirmDelete } from '../confirmDelete';
 import { requestTab } from '../navigate';
 import type { EngineConnection } from '../useEngine';
@@ -426,6 +427,24 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
   const [trimOpenId, setTrimOpenId] = useState<string | null>(null);
   const [modbusOpenId, setModbusOpenId] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
+  const [hasDeviceClip, setHasDeviceClip] = useState(() => clipboardHasKind('device'));
+
+  // Copy/paste прибора (§27 доработки, УХ п.13) — вставка ищет свободный адрес
+  // в той же вселенной, откуда скопирован (авто-адресация, как «Добавить устройства»).
+  const pasteDevice = (): void => {
+    const src = pasteFromClipboard<PatchedDevice>('device');
+    if (!src) return;
+    const size = profiles.get(src.profileId)?.channels.length ?? 1;
+    const address = nextFreeAddress(project!, src.universe, size, 1);
+    if (address === null) {
+      window.alert('Во вселенной нет свободного блока адресов под этот прибор.');
+      return;
+    }
+    const m = src.name.match(/^(.*?)(\d+)$/);
+    const name = m ? `${m[1]}${Number(m[2]) + 1}` : `${src.name} коп`;
+    const device: PatchedDevice = { ...src, id: uid(), name, address };
+    updateProject({ ...project!, devices: [...project!.devices, device] });
+  };
 
   const patchDevice = (id: string, patch: Partial<PatchedDevice>): void => {
     updateProject({
@@ -448,9 +467,21 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
     updateProject(swapDeviceAddresses(project!, selectedIds[0]!, selectedIds[1]!));
   };
 
+  // Сдвиг адресов — «с разрешения» (обсуждение мастера объекта, §27 п.11):
+  // сам сдвиг не запрещаем, но если он создаёт пересечение адресов, которого
+  // не было — сначала явное подтверждение с именами пострадавших приборов.
   const doShift = (): void => {
     if (selectedIds.length === 0 || shiftBy === 0) return;
-    updateProject(shiftDeviceAddresses(project!, selectedIds, shiftBy));
+    const shifted = shiftDeviceAddresses(project!, selectedIds, shiftBy);
+    const before = findPatchIssues(project!).collisions;
+    const after = findPatchIssues(shifted).collisions;
+    const newlyColliding = [...after].filter((id) => !before.has(id));
+    if (newlyColliding.length > 0) {
+      const names = newlyColliding.map((id) => shifted.devices.find((d) => d.id === id)?.name ?? id).join(', ');
+      const ok = window.confirm(`Сдвиг создаст пересечение адресов: ${names}.\n\nВсё равно сдвинуть?`);
+      if (!ok) return;
+    }
+    updateProject(shifted);
   };
 
   const removeDevice = (id: string): void => {
@@ -522,6 +553,11 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
             {selectedIds.length > 0 && (
               <button className="btn btn-small" onClick={() => setSelected(new Set())}>
                 снять выбор
+              </button>
+            )}
+            {hasDeviceClip && (
+              <button className="btn btn-small" onClick={pasteDevice}>
+                Вставить прибор
               </button>
             )}
           </div>
@@ -601,6 +637,16 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                           ПЧ
                         </button>
                       )}{' '}
+                      <button
+                        className="btn btn-small"
+                        title="Копировать прибор"
+                        onClick={() => {
+                          copyToClipboard('device', d);
+                          setHasDeviceClip(true);
+                        }}
+                      >
+                        ⧉
+                      </button>{' '}
                       <button className="btn btn-small" onClick={() => removeDevice(d.id)}>
                         ✕
                       </button>
