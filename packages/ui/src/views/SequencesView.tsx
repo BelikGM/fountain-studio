@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { sequenceDependents, uid, type Sequence, type SequenceStep } from '@fountain-studio/shared';
+import { ListFilter } from '../components/ListFilter';
 import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
 
@@ -7,8 +8,10 @@ import type { EngineConnection } from '../useEngine';
 export function SequencesView({ engine }: { engine: EngineConnection }) {
   const { project, playback, send, updateProject } = engine;
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [filter, setFilter] = useState('');
 
   const sequences = project?.sequences ?? [];
+  const visibleSequences = sequences.filter((q) => q.name.toLowerCase().includes(filter.trim().toLowerCase()));
   const selected = sequences.find((q) => q.id === selectedId) ?? null;
 
   useEffect(() => {
@@ -65,8 +68,9 @@ export function SequencesView({ engine }: { engine: EngineConnection }) {
             Удалить
           </button>
         </div>
+        {sequences.length > 5 && <ListFilter value={filter} onChange={setFilter} />}
         <ul className="list">
-          {sequences.map((q) => {
+          {visibleSequences.map((q) => {
             const r = runInfo(q.id);
             return (
               <li

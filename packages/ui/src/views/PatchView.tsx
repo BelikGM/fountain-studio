@@ -204,6 +204,7 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
   const [shiftBy, setShiftBy] = useState(1);
   const [trimOpenId, setTrimOpenId] = useState<string | null>(null);
   const [modbusOpenId, setModbusOpenId] = useState<string | null>(null);
+  const [filter, setFilter] = useState('');
 
   const patchDevice = (id: string, patch: Partial<PatchedDevice>): void => {
     updateProject({
@@ -243,7 +244,9 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
     updateProject({ ...project!, devices: project!.devices.filter((d) => d.id !== id), scenes });
   };
 
-  const sorted = [...project!.devices].sort((a, b) => a.universe - b.universe || a.address - b.address);
+  const sorted = [...project!.devices]
+    .sort((a, b) => a.universe - b.universe || a.address - b.address)
+    .filter((d) => d.name.toLowerCase().includes(filter.trim().toLowerCase()));
 
   return (
     <section className="panel">
@@ -256,8 +259,21 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
           <span className="error-text"> ⚠ за пределами 1–512: {issues.outOfRange.size}</span>
         )}
       </h2>
-      {sorted.length === 0 ? (
+      {project!.devices.length > 5 && (
+        <div className="form-row">
+          <input
+            className="input"
+            style={{ width: 220 }}
+            placeholder="Поиск по имени…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+        </div>
+      )}
+      {project!.devices.length === 0 ? (
         <div className="dim">Пока пусто — добавьте устройства выше.</div>
+      ) : sorted.length === 0 ? (
+        <div className="dim">Ничего не найдено по «{filter}».</div>
       ) : (
         <>
           <div className="form-row">

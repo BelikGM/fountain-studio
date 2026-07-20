@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { playlistDependents, uid, type Playlist } from '@fountain-studio/shared';
+import { ListFilter } from '../components/ListFilter';
 import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
 
@@ -10,8 +11,10 @@ import type { EngineConnection } from '../useEngine';
 export function PlaylistsView({ engine }: { engine: EngineConnection }) {
   const { project, playback, send, updateProject } = engine;
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [filter, setFilter] = useState('');
 
   const playlists = project?.playlists ?? [];
+  const visiblePlaylists = playlists.filter((p) => p.name.toLowerCase().includes(filter.trim().toLowerCase()));
   const selected = playlists.find((p) => p.id === selectedId) ?? null;
 
   useEffect(() => {
@@ -53,8 +56,9 @@ export function PlaylistsView({ engine }: { engine: EngineConnection }) {
             Удалить
           </button>
         </div>
+        {playlists.length > 5 && <ListFilter value={filter} onChange={setFilter} />}
         <ul className="list">
-          {playlists.map((p) => (
+          {visiblePlaylists.map((p) => (
             <li
               key={p.id}
               className={

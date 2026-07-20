@@ -17,6 +17,7 @@ import {
   type Sequence,
   type WaveSceneOptions,
 } from '@fountain-studio/shared';
+import { ListFilter } from '../components/ListFilter';
 import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
 
@@ -28,8 +29,12 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mode, setMode] = useState<'devices' | 'addresses'>('devices');
   const [showGenerator, setShowGenerator] = useState(false);
+  const [filter, setFilter] = useState('');
 
+  // scenes — полный список (логика выбора/наименования не должна зависеть от
+  // текста поиска); visibleScenes — то, что реально рисуем в списке слева.
   const scenes = project?.scenes ?? [];
+  const visibleScenes = scenes.filter((s) => s.name.toLowerCase().includes(filter.trim().toLowerCase()));
   const selected = scenes.find((s) => s.id === selectedId) ?? null;
 
   useEffect(() => {
@@ -105,8 +110,9 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
             Удалить
           </button>
         </div>
+        {scenes.length > 5 && <ListFilter value={filter} onChange={setFilter} />}
         <ul className="list">
-          {scenes.map((s) => (
+          {visibleScenes.map((s) => (
             <li
               key={s.id}
               className={

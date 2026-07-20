@@ -25,6 +25,7 @@ import {
   type ShowBlock,
   type ShowTrack,
 } from '@fountain-studio/shared';
+import { ListFilter } from '../components/ListFilter';
 import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
 import { extractVideoFrameSamples } from '../videoFrames';
@@ -51,8 +52,10 @@ function fmtTime(ms: number): string {
 export function ShowView({ engine }: { engine: EngineConnection }) {
   const { project, playback, send, updateProject } = engine;
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showFilter, setShowFilter] = useState('');
 
   const shows = project?.shows ?? [];
+  const visibleShows = shows.filter((s) => s.name.toLowerCase().includes(showFilter.trim().toLowerCase()));
   const selected = shows.find((s) => s.id === selectedId) ?? null;
 
   useEffect(() => {
@@ -111,8 +114,9 @@ export function ShowView({ engine }: { engine: EngineConnection }) {
             Удалить
           </button>
         </div>
+        {shows.length > 5 && <ListFilter value={showFilter} onChange={setShowFilter} />}
         <ul className="list">
-          {shows.map((s) => (
+          {visibleShows.map((s) => (
             <li
               key={s.id}
               className={

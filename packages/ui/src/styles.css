@@ -382,6 +382,8 @@ select {
   flex-wrap: wrap;
 }
 
+.list-filter { width: 100%; }
+
 .content {
   flex: 1;
   overflow-y: auto;
