@@ -627,6 +627,16 @@ select {
   background: var(--bg-track);
   cursor: pointer;
 }
+.color-presets { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.color-swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.color-swatch:hover { border-color: var(--accent); }
 
 .toggle-open {
   background: var(--ok-bg);

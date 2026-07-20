@@ -16,6 +16,8 @@ import {
   actorPhases,
   bandEnergyEnvelope,
   bandEnvelopePoints,
+  breathingSequenceScenes,
+  cascadeSequenceScenes,
   editedToSourceMs,
   emptyProject,
   encodeOscMessage,
@@ -36,7 +38,9 @@ import {
   profileMap,
   radialWaveScene,
   radialWaveSequenceScenes,
+  rainbowSequenceScenes,
   ringPositions,
+  saluteSequenceScenes,
   sanitizeProject,
   shiftDeviceAddresses,
   silenceRanges,
@@ -971,6 +975,55 @@ async function main(): Promise<void> {
       mirrored.values['gp4']?.[0] === 40,
     'mirrorScene: лево-право по оси X — gp1↔gp3 поменялись, gp2/gp4 на оси остались собой',
   );
+
+  console.log('— Библиотека эффектов-генераторов: радуга/дыхание/каскад/салют (§27 п.15) —');
+  {
+    const rgbDevices: Project['devices'] = genActors.map((a) => ({
+      id: a.deviceId,
+      name: a.deviceId,
+      profileId: 'rgb',
+      universe: 1,
+      address: 1,
+    }));
+    const rainbow = rainbowSequenceScenes(genActors, rgbDevices, genProfiles, 4, { mode: 'angle' });
+    check(
+      rainbow.length === 4 &&
+        JSON.stringify(rainbow[0]!.values['gp1']) === JSON.stringify([255, 0, 0]) &&
+        JSON.stringify(rainbow[0]!.values['gp3']) === JSON.stringify([0, 255, 255]),
+      `rainbowSequenceScenes: на шаге 0 — gp1 (0°) красный, gp3 (180°) циан (${JSON.stringify(rainbow[0]!.values['gp1'])}, ${JSON.stringify(rainbow[0]!.values['gp3'])})`,
+    );
+
+    const breathing = breathingSequenceScenes(genActors, genDevices, genProfiles, 4, {});
+    check(
+      breathing[0]!.values['gp1']![0] === 0 &&
+        breathing[2]!.values['gp1']![0] === 255 &&
+        breathing[1]!.values['gp1']![0] === breathing[3]!.values['gp1']![0],
+      `breathingSequenceScenes: единый пульс на все актёры — мин на шаге 0, макс на шаге 2, симметрия 1/3 (${breathing.map((s) => s.values['gp1']![0]).join(',')})`,
+    );
+
+    const cascade = cascadeSequenceScenes(genActors, genDevices, genProfiles, 4, { mode: 'angle', windowFrac: 0.1 });
+    check(
+      cascade.every((s, i) => {
+        const litIds = Object.entries(s.values)
+          .filter(([, v]) => v[0] === 255)
+          .map(([id]) => id);
+        return litIds.length === 1 && litIds[0] === `gp${i + 1}`;
+      }),
+      'cascadeSequenceScenes: на каждом шаге зажжён ровно один актёр — тот, чья фаза совпала с окном',
+    );
+
+    const salute1 = saluteSequenceScenes(genActors, genDevices, genProfiles, 5, { seed: 42, burstSize: 1 });
+    const salute2 = saluteSequenceScenes(genActors, genDevices, genProfiles, 5, { seed: 42, burstSize: 1 });
+    check(
+      // id — случайный uid() на каждый вызов, сравниваем только сами значения каналов.
+      JSON.stringify(salute1.map((s) => s.values)) === JSON.stringify(salute2.map((s) => s.values)),
+      'saluteSequenceScenes: одинаковый seed → одинаковый результат (воспроизводимо, не Math.random)',
+    );
+    check(
+      salute1.every((s) => Object.values(s.values).filter((v) => v[0] === 255).length === 1),
+      'saluteSequenceScenes: burstSize=1 — на каждом шаге вспыхивает ровно один актёр',
+    );
+  }
 
   console.log('— EMA-джиттер тик-планировщика: устойчивость к одиночному сбою —');
   // Раньше avgJitterMs был «сумма/n» за всё время жизни движка: headless-процесс

@@ -217,3 +217,222 @@ export function radialWaveSequenceScenes(
   }
   return out;
 }
+
+/**
+ * Библиотека эффектов-генераторов поверх Генератора (§27 доработки, УХ п.15):
+ * радуга/дыхание/каскад/салют. Та же философия, что и у волны выше — чистые
+ * детерминированные функции, результат такой же редактируемый набор сцен
+ * (для секвенсора «по кругу»), никакой отдельной логики в движке не нужно.
+ */
+
+/** HSV (h 0..360, s/v 0..1) → RGB 0..255. */
+function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
+  const c = v * s;
+  const hp = ((h % 360) + 360) % 360 / 60;
+  const x = c * (1 - Math.abs((hp % 2) - 1));
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (hp < 1) [r, g, b] = [c, x, 0];
+  else if (hp < 2) [r, g, b] = [x, c, 0];
+  else if (hp < 3) [r, g, b] = [0, c, x];
+  else if (hp < 4) [r, g, b] = [0, x, c];
+  else if (hp < 5) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+  const m = v - c;
+  return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+}
+
+/** Индексы каналов R/G/B в профиле, или null — профиль не RGB(W). */
+function rgbChannelIndex(profile: DeviceProfile): { r: number; g: number; b: number } | null {
+  const r = profile.channels.findIndex((c) => c.role === 'red');
+  const g = profile.channels.findIndex((c) => c.role === 'green');
+  const b = profile.channels.findIndex((c) => c.role === 'blue');
+  return r >= 0 && g >= 0 && b >= 0 ? { r, g, b } : null;
+}
+
+export interface RainbowOptions {
+  mode?: 'angle' | 'path' | 'line';
+  saturation?: number; // 0..1, по умолчанию 1
+  value?: number; // 0..1, по умолчанию 1
+  centerX?: number;
+  centerY?: number;
+}
+
+/** Радуга: цвет светильника — от его фазы по фигуре, набор шагов вращает оттенок по кругу. */
+export function rainbowSequenceScenes(
+  actors: GeoActor[],
+  devices: PatchedDevice[],
+  profiles: Map<string, DeviceProfile>,
+  steps: number,
+  opts: RainbowOptions = {},
+): Scene[] {
+  const mode = opts.mode ?? 'angle';
+  const sat = Math.max(0, Math.min(1, opts.saturation ?? 1));
+  const val = Math.max(0, Math.min(1, opts.value ?? 1));
+  const phases = actorPhases(actors, mode, opts.centerX, opts.centerY);
+  const byId = new Map(devices.map((d) => [d.id, d]));
+  const n = Math.max(1, Math.round(steps));
+  const out: Scene[] = [];
+  for (let i = 0; i < n; i++) {
+    const shift = (360 * i) / n;
+    const values: Record<string, number[]> = {};
+    for (const a of actors) {
+      const device = byId.get(a.deviceId);
+      const profile = device ? profiles.get(device.profileId) : undefined;
+      const rgb = profile ? rgbChannelIndex(profile) : null;
+      if (!profile || !rgb) continue;
+      const hue = (phases.get(a.deviceId) ?? 0) * 360 + shift;
+      const [r, g, b] = hsvToRgb(hue, sat, val);
+      const vals = new Array(profile.channels.length).fill(0);
+      vals[rgb.r] = r;
+      vals[rgb.g] = g;
+      vals[rgb.b] = b;
+      values[a.deviceId] = vals;
+    }
+    out.push({ id: uid(), name: `Радуга ${i + 1}/${n}`, values });
+  }
+  return out;
+}
+
+export interface BreathingOptions {
+  min?: number;
+  max?: number;
+  /** Форма кривой: 'sine' — симметричный вдох-выдох, 'pulse' — резче нарастание, мягче спад. */
+  shape?: 'sine' | 'pulse';
+}
+
+/** Дыхание: все актёры одновременно и одинаково нарастают и затухают (не по позиции — единый пульс). */
+export function breathingSequenceScenes(
+  actors: GeoActor[],
+  devices: PatchedDevice[],
+  profiles: Map<string, DeviceProfile>,
+  steps: number,
+  opts: BreathingOptions = {},
+): Scene[] {
+  const min = Math.max(0, Math.min(255, opts.min ?? 0));
+  const max = Math.max(min, Math.min(255, opts.max ?? 255));
+  const shape = opts.shape ?? 'sine';
+  const byId = new Map(devices.map((d) => [d.id, d]));
+  const n = Math.max(1, Math.round(steps));
+  const out: Scene[] = [];
+  for (let i = 0; i < n; i++) {
+    const p = i / n; // 0..1
+    const raw = (Math.sin(2 * Math.PI * p - Math.PI / 2) + 1) / 2; // 0..1, начинается снизу
+    const level = shape === 'pulse' ? Math.pow(raw, 0.5) : raw;
+    const value = Math.round(min + level * (max - min));
+    const values: Record<string, number[]> = {};
+    for (const a of actors) {
+      const device = byId.get(a.deviceId);
+      const profile = device ? profiles.get(device.profileId) : undefined;
+      if (!profile || profile.channels.length !== 1) continue;
+      values[a.deviceId] = [profile.twoState ? (value >= 128 ? 255 : 0) : value];
+    }
+    out.push({ id: uid(), name: `Дыхание ${i + 1}/${n}`, values });
+  }
+  return out;
+}
+
+export interface CascadeOptions {
+  mode?: 'angle' | 'path' | 'line';
+  /** Доля актёров, «зажжённых» одновременно (окно волны), 0..1. По умолчанию 0.2. */
+  windowFrac?: number;
+  min?: number;
+  max?: number;
+  centerX?: number;
+  centerY?: number;
+}
+
+/** Каскад: жёсткая бегущая полоса вдоль фигуры (не плавная синусоида, как «волна» — включено/выключено по окну). */
+export function cascadeSequenceScenes(
+  actors: GeoActor[],
+  devices: PatchedDevice[],
+  profiles: Map<string, DeviceProfile>,
+  steps: number,
+  opts: CascadeOptions = {},
+): Scene[] {
+  const mode = opts.mode ?? 'path';
+  const windowFrac = Math.max(0.02, Math.min(1, opts.windowFrac ?? 0.2));
+  const min = Math.max(0, Math.min(255, opts.min ?? 0));
+  const max = Math.max(min, Math.min(255, opts.max ?? 255));
+  const phases = actorPhases(actors, mode, opts.centerX, opts.centerY);
+  const byId = new Map(devices.map((d) => [d.id, d]));
+  const n = Math.max(1, Math.round(steps));
+  const out: Scene[] = [];
+  for (let i = 0; i < n; i++) {
+    const center = i / n;
+    const values: Record<string, number[]> = {};
+    for (const a of actors) {
+      const device = byId.get(a.deviceId);
+      const profile = device ? profiles.get(device.profileId) : undefined;
+      if (!profile || profile.channels.length !== 1) continue;
+      const p = phases.get(a.deviceId) ?? 0;
+      // Кольцевое расстояние по фазе 0..1 (фигура замкнута).
+      const d = Math.abs(p - center);
+      const dist = Math.min(d, 1 - d);
+      const lit = dist <= windowFrac / 2;
+      const value = lit ? max : min;
+      values[a.deviceId] = [profile.twoState ? (value >= 128 ? 255 : 0) : value];
+    }
+    out.push({ id: uid(), name: `Каскад ${i + 1}/${n}`, values });
+  }
+  return out;
+}
+
+export interface SaluteOptions {
+  min?: number;
+  max?: number;
+  /** Сколько актёров вспыхивает за один шаг (случайно), по умолчанию 1. */
+  burstSize?: number;
+  seed?: number;
+}
+
+/** Простой ГПСЧ (mulberry32) — детерминированные «случайные» вспышки по seed, воспроизводимо между вызовами. */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Салют: на каждом шаге случайная горстка актёров вспыхивает на полную и гаснет к следующему шагу. */
+export function saluteSequenceScenes(
+  actors: GeoActor[],
+  devices: PatchedDevice[],
+  profiles: Map<string, DeviceProfile>,
+  steps: number,
+  opts: SaluteOptions = {},
+): Scene[] {
+  const min = Math.max(0, Math.min(255, opts.min ?? 0));
+  const max = Math.max(min, Math.min(255, opts.max ?? 255));
+  const burstSize = Math.max(1, Math.round(opts.burstSize ?? 1));
+  const rand = mulberry32(opts.seed ?? 1);
+  const byId = new Map(devices.map((d) => [d.id, d]));
+  const singleChannelActors = actors.filter((a) => {
+    const device = byId.get(a.deviceId);
+    const profile = device ? profiles.get(device.profileId) : undefined;
+    return profile && profile.channels.length === 1;
+  });
+  const n = Math.max(1, Math.round(steps));
+  const out: Scene[] = [];
+  for (let i = 0; i < n; i++) {
+    const lit = new Set<string>();
+    const pool = [...singleChannelActors];
+    for (let k = 0; k < burstSize && pool.length > 0; k++) {
+      const idx = Math.floor(rand() * pool.length);
+      lit.add(pool.splice(idx, 1)[0]!.deviceId);
+    }
+    const values: Record<string, number[]> = {};
+    for (const a of singleChannelActors) {
+      const device = byId.get(a.deviceId)!;
+      const profile = profiles.get(device.profileId)!;
+      const value = lit.has(a.deviceId) ? max : min;
+      values[a.deviceId] = [profile.twoState ? (value >= 128 ? 255 : 0) : value];
+    }
+    out.push({ id: uid(), name: `Салют ${i + 1}/${n}`, values });
+  }
+  return out;
+}

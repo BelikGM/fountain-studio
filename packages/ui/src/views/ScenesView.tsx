@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   DMX_UNIVERSE_SIZE,
+  breathingSequenceScenes,
+  cascadeSequenceScenes,
   invertScene,
   layoutActors,
   mirrorScene,
   profileMap,
   radialWaveScene,
   radialWaveSequenceScenes,
+  rainbowSequenceScenes,
+  saluteSequenceScenes,
   sceneDependents,
   uid,
   type ActorRole,
@@ -243,6 +247,7 @@ function GeneratorPanel({
   const [fadeMs, setFadeMs] = useState(100);
   const [captureUniverse, setCaptureUniverse] = useState(engine.universes[0]?.id ?? 1);
   const [captureStatus, setCaptureStatus] = useState<string | null>(null);
+  const [burstSize, setBurstSize] = useState(1);
 
   const actors = useMemo(() => layoutActors(project.layout, role), [project.layout, role]);
   const profiles = useMemo(() => profileMap(project), [project]);
@@ -275,6 +280,31 @@ function GeneratorPanel({
       sequences: [...project.sequences, sequence],
     });
   };
+
+  // Библиотека эффектов-генераторов (§27 доработки, УХ п.15) — та же механика,
+  // что и «бегущая волна»: набор сцен + секвенсор «по кругу» из них.
+  const addEffectSequence = (name: string, scenes: Scene[]): void => {
+    if (scenes.length === 0) return;
+    const sequence: Sequence = {
+      id: uid(),
+      name: `${name} (${scenes.length} шаг.)`,
+      mode: 'loop',
+      steps: scenes.map((s) => ({ sceneId: s.id, holdMs, fadeMs })),
+    };
+    updateProject({
+      ...project,
+      scenes: [...project.scenes, ...scenes],
+      sequences: [...project.sequences, sequence],
+    });
+  };
+  const doRainbow = (): void =>
+    addEffectSequence('Радуга', rainbowSequenceScenes(actors, project.devices, profiles, steps, { mode: waveMode }));
+  const doBreathing = (): void =>
+    addEffectSequence('Дыхание', breathingSequenceScenes(actors, project.devices, profiles, steps, { min, max }));
+  const doCascade = (): void =>
+    addEffectSequence('Каскад', cascadeSequenceScenes(actors, project.devices, profiles, steps, { mode: waveMode, min, max }));
+  const doSalute = (): void =>
+    addEffectSequence('Салют', saluteSequenceScenes(actors, project.devices, profiles, steps, { min, max, burstSize }));
 
   // Импорт с линии (§17 п.1): кадр внешнего ArtDMX → значения устройств этой вселенной.
   const doCaptureScene = async (): Promise<void> => {
@@ -440,6 +470,35 @@ function GeneratorPanel({
         <button className="btn active" disabled={actors.length === 0} onClick={doWaveSequence}>
           Создать секвенсор «бегущая волна»
         </button>
+      </div>
+
+      <div className="form-row">
+        <span className="dim">
+          Библиотека эффектов — те же «Шагов/Держать/Фейд» выше, секвенсор «по кругу»:
+        </span>
+        <button className="btn" disabled={actors.length === 0} onClick={doRainbow} title="Только светильники RGB/RGBW — оттенок по фазе фигуры, вращается по шагам">
+          🌈 Радуга
+        </button>
+        <button className="btn" disabled={actors.length === 0} onClick={doBreathing} title="Одноканальные устройства — все разом плавно вдох-выдох">
+          🫁 Дыхание
+        </button>
+        <button className="btn" disabled={actors.length === 0} onClick={doCascade} title="Одноканальные устройства — узкая бегущая полоса вдоль фигуры">
+          🌊 Каскад
+        </button>
+        <button className="btn" disabled={actors.length === 0} onClick={doSalute} title="Одноканальные устройства — случайные вспышки">
+          🎆 Салют
+        </button>
+        <label className="field">
+          Вспышек за раз:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={1}
+            max={Math.max(1, actors.length)}
+            value={burstSize}
+            onChange={(e) => setBurstSize(Math.max(1, Number(e.target.value)))}
+          />
+        </label>
       </div>
 
       <div className="form-row">
@@ -628,19 +687,40 @@ function DeviceCard({
       ) : (
         <>
           {hasColor && (
-            <input
-              type="color"
-              className="color-input"
-              value={rgbToHex(val(rgbIdx.r), val(rgbIdx.g), val(rgbIdx.b))}
-              onChange={(e) => {
-                const [r, g, b] = hexToRgb(e.target.value);
-                const next = profile.channels.map((_, k) => val(k));
-                next[rgbIdx.r] = r;
-                next[rgbIdx.g] = g;
-                next[rgbIdx.b] = b;
-                onChange(next);
-              }}
-            />
+            <>
+              <input
+                type="color"
+                className="color-input"
+                value={rgbToHex(val(rgbIdx.r), val(rgbIdx.g), val(rgbIdx.b))}
+                onChange={(e) => {
+                  const [r, g, b] = hexToRgb(e.target.value);
+                  const next = profile.channels.map((_, k) => val(k));
+                  next[rgbIdx.r] = r;
+                  next[rgbIdx.g] = g;
+                  next[rgbIdx.b] = b;
+                  onChange(next);
+                }}
+              />
+              <div className="color-presets">
+                {COLOR_PRESETS.map((p) => (
+                  <button
+                    key={p.name}
+                    type="button"
+                    className="color-swatch"
+                    style={{ background: p.hex }}
+                    title={p.name}
+                    onClick={() => {
+                      const [r, g, b] = hexToRgb(p.hex);
+                      const next = profile.channels.map((_, k) => val(k));
+                      next[rgbIdx.r] = r;
+                      next[rgbIdx.g] = g;
+                      next[rgbIdx.b] = b;
+                      onChange(next);
+                    }}
+                  />
+                ))}
+              </div>
+            </>
           )}
           {profile.channels.map((c, i) => (
             <label className="channel-row" key={i}>
@@ -667,6 +747,20 @@ function DeviceCard({
     </div>
   );
 }
+
+/** Цветовые пресеты (§27 доработки, УХ п.15) — быстрый клик вместо открытия палитры. */
+const COLOR_PRESETS: { name: string; hex: string }[] = [
+  { name: 'Красный', hex: '#ff0000' },
+  { name: 'Оранжевый', hex: '#ff8000' },
+  { name: 'Жёлтый', hex: '#ffe000' },
+  { name: 'Зелёный', hex: '#00ff40' },
+  { name: 'Голубой', hex: '#00e0ff' },
+  { name: 'Синий', hex: '#2040ff' },
+  { name: 'Фиолетовый', hex: '#a020ff' },
+  { name: 'Розовый', hex: '#ff40c0' },
+  { name: 'Белый', hex: '#ffffff' },
+  { name: 'Тёплый белый', hex: '#ffcf94' },
+];
 
 function rgbToHex(r: number, g: number, b: number): string {
   return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
