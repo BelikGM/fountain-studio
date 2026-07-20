@@ -33,7 +33,8 @@ export type NozzleKind =
   | 'mist' // туман / рассеивающая
   | 'foam' // пенная
   | 'laminar' // ламинарная
-  | 'rotating'; // вращающаяся
+  | 'rotating' // вращающаяся
+  | 'variable'; // вариативная: конус раскрывается/собирается, два насоса
 
 export const NOZZLE_KINDS: { id: NozzleKind; label: string }[] = [
   { id: 'straight', label: 'Прямая струя' },
@@ -45,6 +46,7 @@ export const NOZZLE_KINDS: { id: NozzleKind; label: string }[] = [
   { id: 'foam', label: 'Пенная' },
   { id: 'laminar', label: 'Ламинарная' },
   { id: 'rotating', label: 'Вращающаяся' },
+  { id: 'variable', label: 'Вариативная (2 насоса)' },
 ];
 
 export interface Nozzle {
@@ -61,11 +63,19 @@ export interface Nozzle {
   headingDeg: number;
   /** Высота струи при значении 255, м. */
   maxHeightM: number;
+  /** Диаметр струи у сопла, м — толщина у основания (§27 доработки, п.12). */
+  widthM: number;
+  /** Угол раскрытия конуса, ° — только kind='variable' (двухнасосная). */
+  coneAngleDeg: number;
+  /** Скорость вращения направления, °/с — только kind='rotating'. */
+  rotationSpeedDegPerSec: number;
   /** Инерция давления: время разгона и спада (фильтр 1-го порядка), мс. */
   riseMs: number;
   fallMs: number;
   /** Насос (канал intensity) — производительность струи. null — не привязан. */
   pumpDeviceId: string | null;
+  /** Второй насос — только kind='variable' (раскрытие конуса своим напором). null — не привязан. */
+  pump2DeviceId: string | null;
   /** Клапан (0/255) — отсечение струи. null — клапана нет. */
   valveDeviceId: string | null;
   /** Прожектор, подсвечивающий эту струю (цвет частиц). */
@@ -93,22 +103,27 @@ export function emptyLayout(): FountainLayout {
 }
 
 /** Умолчания физики струи по типу форсунки. */
-export function nozzleDefaults(kind: NozzleKind): { maxHeightM: number; riseMs: number; fallMs: number } {
+export function nozzleDefaults(
+  kind: NozzleKind,
+): { maxHeightM: number; riseMs: number; fallMs: number; widthM: number; coneAngleDeg: number; rotationSpeedDegPerSec: number } {
+  const extra = { widthM: 0.03, coneAngleDeg: 25, rotationSpeedDegPerSec: 60 };
   switch (kind) {
     case 'foam':
-      return { maxHeightM: 2, riseMs: 500, fallMs: 700 };
+      return { maxHeightM: 2, riseMs: 500, fallMs: 700, ...extra, widthM: 0.08 };
     case 'mist':
-      return { maxHeightM: 1.5, riseMs: 300, fallMs: 400 };
+      return { maxHeightM: 1.5, riseMs: 300, fallMs: 400, ...extra, widthM: 0.05 };
     case 'veil':
     case 'fan':
-      return { maxHeightM: 2.5, riseMs: 600, fallMs: 800 };
+      return { maxHeightM: 2.5, riseMs: 600, fallMs: 800, ...extra, widthM: 0.06 };
     case 'laminar':
-      return { maxHeightM: 4, riseMs: 400, fallMs: 500 };
+      return { maxHeightM: 4, riseMs: 400, fallMs: 500, ...extra, widthM: 0.02 };
     case 'canopy':
     case 'flower':
-      return { maxHeightM: 3, riseMs: 700, fallMs: 900 };
+      return { maxHeightM: 3, riseMs: 700, fallMs: 900, ...extra };
+    case 'variable':
+      return { maxHeightM: 4, riseMs: 500, fallMs: 700, ...extra, widthM: 0.04 };
     default:
-      return { maxHeightM: 5, riseMs: 800, fallMs: 1100 };
+      return { maxHeightM: 5, riseMs: 800, fallMs: 1100, ...extra };
   }
 }
 
@@ -189,9 +204,13 @@ export function sanitizeLayout(raw: unknown, deviceIds: Set<string>): FountainLa
         tiltDeg: round3(num(n.tiltDeg, 0, 0, 85)),
         headingDeg: round3(num(n.headingDeg, 0, 0, 360)),
         maxHeightM: round3(num(n.maxHeightM, def.maxHeightM, 0.1, 100)),
+        widthM: round3(num(n.widthM, def.widthM, 0.005, 2)),
+        coneAngleDeg: round3(num(n.coneAngleDeg, def.coneAngleDeg, 1, 90)),
+        rotationSpeedDegPerSec: round3(num(n.rotationSpeedDegPerSec, def.rotationSpeedDegPerSec, -720, 720)),
         riseMs: Math.round(num(n.riseMs, def.riseMs, 0, 60000)),
         fallMs: Math.round(num(n.fallMs, def.fallMs, 0, 60000)),
         pumpDeviceId: devRef(n.pumpDeviceId, deviceIds),
+        pump2DeviceId: devRef(n.pump2DeviceId, deviceIds),
         valveDeviceId: devRef(n.valveDeviceId, deviceIds),
         lightDeviceId: devRef(n.lightDeviceId, deviceIds),
       });

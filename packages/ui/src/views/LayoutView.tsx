@@ -97,6 +97,13 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
           }
           return { flow: bound ? flow : 0, cut };
         },
+        pump2Level: (n) => {
+          const map = deviceIndexRef.current;
+          const pump2 = n.pump2DeviceId ? map.get(n.pump2DeviceId) : undefined;
+          if (!pump2) return 0;
+          const ci = Math.max(0, pump2.roles.indexOf('intensity'));
+          return chan(pump2, ci) / 255;
+        },
         lightColor: (deviceId) => {
           if (!deviceId) return null;
           const d = deviceIndexRef.current.get(deviceId);
@@ -335,6 +342,7 @@ function AddTools({
     headingDeg: 0,
     ...nozzleDefaults(kind),
     pumpDeviceId: null,
+    pump2DeviceId: null,
     valveDeviceId: null,
     lightDeviceId: null,
   });
@@ -532,6 +540,7 @@ function DxfImport({ project, setLayout }: { project: Project; setLayout: (l: Fo
           headingDeg: 0,
           ...def,
           pumpDeviceId: null,
+          pump2DeviceId: null,
           valveDeviceId: null,
           lightDeviceId: null,
         })),
@@ -722,12 +731,35 @@ function NozzleProps({
         <NumField label="Наклон, °" value={nozzle.tiltDeg} step={1} onChange={(v) => patch({ tiltDeg: Math.max(0, Math.min(85, v)) })} />
         <NumField label="Азимут, °" value={nozzle.headingDeg} step={5} onChange={(v) => patch({ headingDeg: ((v % 360) + 360) % 360 })} />
         <NumField label="Высота струи, м" value={nozzle.maxHeightM} step={0.5} onChange={(v) => patch({ maxHeightM: Math.max(0.1, v) })} />
+        <NumField label="Диаметр струи, м" value={nozzle.widthM} step={0.01} onChange={(v) => patch({ widthM: Math.max(0.005, v) })} />
+        {nozzle.kind === 'variable' && (
+          <NumField
+            label="Угол раскрытия конуса, °"
+            value={nozzle.coneAngleDeg}
+            step={1}
+            onChange={(v) => patch({ coneAngleDeg: Math.max(1, Math.min(90, v)) })}
+          />
+        )}
+        {nozzle.kind === 'rotating' && (
+          <NumField
+            label="Скорость вращения, °/с"
+            value={nozzle.rotationSpeedDegPerSec}
+            step={10}
+            onChange={(v) => patch({ rotationSpeedDegPerSec: v })}
+          />
+        )}
         <NumField label="Разгон, мс" value={nozzle.riseMs} step={100} onChange={(v) => patch({ riseMs: Math.max(0, Math.round(v)) })} />
         <NumField label="Спад, мс" value={nozzle.fallMs} step={100} onChange={(v) => patch({ fallMs: Math.max(0, Math.round(v)) })} />
         <h3>Привязка</h3>
         <label className="field">
           Насос: <DeviceSelect project={project} kind="pump" value={nozzle.pumpDeviceId} onChange={(id) => patch({ pumpDeviceId: id })} />
         </label>
+        {nozzle.kind === 'variable' && (
+          <label className="field">
+            Насос 2 (раскрытие):{' '}
+            <DeviceSelect project={project} kind="pump" value={nozzle.pump2DeviceId} onChange={(id) => patch({ pump2DeviceId: id })} />
+          </label>
+        )}
         <label className="field">
           Клапан: <DeviceSelect project={project} kind="valve" value={nozzle.valveDeviceId} onChange={(id) => patch({ valveDeviceId: id })} />
         </label>

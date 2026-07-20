@@ -21,6 +21,8 @@ export interface SceneHooks {
   live: {
     /** Цель струи 0..1 по DMX (насос+клапан); cut — клапан закрыт (резкий спад). */
     nozzleFlow(n: Nozzle): { flow: number; cut: boolean };
+    /** Второй насос вариативной форсунки (kind='variable') — 0..1, раскрытие конуса. 0, если не привязан. */
+    pump2Level(n: Nozzle): number;
     /** Цвет прожектора 0..1 или null, если не привязан/нет данных. */
     lightColor(deviceId: string | null): [number, number, number] | null;
   };
@@ -58,7 +60,12 @@ const KIND_PHYSICS: Record<
   veil: { spreadDeg: 6, rate: 600, ringDeg: 55, vScale: 0.8 },
   mist: { spreadDeg: 30, rate: 650, drag: 2.6 },
   foam: { spreadDeg: 7, rate: 750, foam: true },
-  rotating: { spreadDeg: 3, rate: 420, rotateDegPerS: 120 },
+  // Скорость вращения — per-nozzle из n.rotationSpeedDegPerSec (см. simulate()), не константа типа.
+  rotating: { spreadDeg: 3, rate: 420 },
+  // spreadDeg (минимальный, «собранный») переопределяется вверх до n.coneAngleDeg
+  // напором второго насоса (см. simulate()) — двухнасосная форсунка меняет раскрытие
+  // конуса напором, не типом.
+  variable: { spreadDeg: 2, rate: 480 },
 };
 
 const G = 9.81;
@@ -395,11 +402,18 @@ export class FountainScene {
       if (cur < 0.02) continue;
 
       let heading = n.headingDeg;
-      if (phys.rotateDegPerS) {
-        const phase = (this.rotPhase.get(n.id) ?? 0) + phys.rotateDegPerS * dt;
+      if (n.kind === 'rotating') {
+        const phase = (this.rotPhase.get(n.id) ?? 0) + n.rotationSpeedDegPerSec * dt;
         this.rotPhase.set(n.id, phase % 360);
         heading += phase;
       }
+
+      // Вариативная форсунка: конус раскрывается от «собранного» (phys.spreadDeg)
+      // до n.coneAngleDeg напором второго насоса — не свойство типа, а живое DMX-значение.
+      const spreadDeg =
+        n.kind === 'variable'
+          ? phys.spreadDeg + this.hooks.live.pump2Level(n) * (n.coneAngleDeg - phys.spreadDeg)
+          : phys.spreadDeg;
 
       const acc = (this.emitAcc.get(n.id) ?? 0) + phys.rate * cur * dt;
       const count = Math.floor(acc);
@@ -408,7 +422,7 @@ export class FountainScene {
       const v0 = Math.sqrt(2 * G * n.maxHeightM) * cur * (phys.vScale ?? 1);
       const color = this.nozzleColor(n, phys.foam === true);
       for (let i = 0; i < count && this.alive < MAX_PARTICLES; i++) {
-        this.spawn(n, phys, heading, v0, color);
+        this.spawn(n, phys, spreadDeg, heading, v0, color);
       }
     }
 
@@ -464,18 +478,23 @@ export class FountainScene {
   private spawn(
     n: Nozzle,
     phys: (typeof KIND_PHYSICS)[NozzleKind],
+    spreadDeg: number,
     headingDeg: number,
     v0: number,
     color: [number, number, number],
   ): void {
     const i = this.alive++;
-    this.px[i] = n.x;
-    this.py[i] = n.y;
+    // Диаметр сопла (n.widthM) — частицы стартуют не из точки, а с маленького пятна
+    // у сопла: визуально читается как толщина струи у основания.
+    const r = (n.widthM / 2) * Math.sqrt(Math.random());
+    const a = Math.random() * Math.PI * 2;
+    this.px[i] = n.x + Math.cos(a) * r;
+    this.py[i] = n.y + Math.sin(a) * r;
     this.pz[i] = Math.max(0.01, n.z);
 
     const tilt = (n.tiltDeg * Math.PI) / 180;
     const heading = (headingDeg * Math.PI) / 180;
-    const spread = (phys.spreadDeg * Math.PI) / 180;
+    const spread = (spreadDeg * Math.PI) / 180;
 
     // Полярный угол от вертикали и азимут направления вылета.
     let polar: number;
