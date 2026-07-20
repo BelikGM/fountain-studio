@@ -62,7 +62,15 @@ export interface EngineConnection {
   requestRdm: (
     req: Extract<ClientMessage, { type: 'rdmRequest' }>,
   ) => Promise<Extract<ServerMessage, { type: 'rdmResponse' }>>;
+  /** Undo/Redo (§27 доработки, УХ п.4) — история правок проекта в памяти текущего сеанса. */
+  undo: () => void;
+  redo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
 }
+
+/** Сколько шагов истории Undo/Redo держим в памяти. */
+const MAX_HISTORY = 50;
 
 // В Electron страница открывается с file:// — hostname пустой, движок локальный.
 const ENGINE_URL = `ws://${location.hostname || '127.0.0.1'}:9520`;
@@ -92,6 +100,9 @@ export function useEngine(): EngineConnection {
   const wsRef = useRef<WebSocket | null>(null);
   /** Сколько наших правок ещё «в полёте» — их эхо от движка не применяем, чтобы не сбивать ввод. */
   const pendingEditsRef = useRef(0);
+  /** История Undo/Redo — состояния проекта в памяти сеанса, не переживает перезагрузку страницы. */
+  const undoStackRef = useRef<Project[]>([]);
+  const redoStackRef = useRef<Project[]>([]);
   /** Ожидающие ответа getAudio: имя файла → колбэки. */
   const audioWaitersRef = useRef(new Map<string, ((data: Uint8Array | null) => void)[]>());
   /** Ожидающие ответов захвата DMX по вселенной. */
@@ -212,12 +223,37 @@ export function useEngine(): EngineConnection {
 
   const updateProject = useCallback(
     (next: Project) => {
+      if (project) {
+        undoStackRef.current.push(project);
+        if (undoStackRef.current.length > MAX_HISTORY) undoStackRef.current.shift();
+      }
+      redoStackRef.current = [];
       setProject(next);
       pendingEditsRef.current++;
       send({ type: 'updateProject', project: next });
     },
-    [send],
+    [project, send],
   );
+
+  /** Ctrl+Z — откат последней правки, по одному действию за вызов, в памяти сеанса. */
+  const undo = useCallback(() => {
+    const prev = undoStackRef.current.pop();
+    if (!prev || !project) return;
+    redoStackRef.current.push(project);
+    setProject(prev);
+    pendingEditsRef.current++;
+    send({ type: 'updateProject', project: prev });
+  }, [project, send]);
+
+  /** Ctrl+Y — вернуть то, что отменили Ctrl+Z. */
+  const redo = useCallback(() => {
+    const next = redoStackRef.current.pop();
+    if (!next || !project) return;
+    undoStackRef.current.push(project);
+    setProject(next);
+    pendingEditsRef.current++;
+    send({ type: 'updateProject', project: next });
+  }, [project, send]);
 
   const requestAudio = useCallback(
     (name: string) =>
@@ -297,6 +333,10 @@ export function useEngine(): EngineConnection {
     requestDmxCapture,
     requestDmxCycle,
     requestRdm,
+    undo,
+    redo,
+    canUndo: undoStackRef.current.length > 0,
+    canRedo: redoStackRef.current.length > 0,
   };
 }
 

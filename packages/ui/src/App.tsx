@@ -44,7 +44,7 @@ const TABS: { id: Tab; label: string; full: string }[] = [
 
 export function App() {
   const engine = useEngine();
-  const { connected, version, stats, project, playback, send } = engine;
+  const { connected, version, stats, project, playback, send, undo, redo } = engine;
   const [tab, setTab] = useState<Tab>('console');
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
     localStorage.getItem('fs-theme') === 'light' ? 'light' : 'dark',
@@ -101,6 +101,26 @@ export function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [project, playback, send]);
+
+  // Ctrl+Z/Ctrl+Y — история правок проекта (§27 доработки, УХ п.4). Отдельно от
+  // привязок «Клавиатуры» выше: те явно игнорируют ctrlKey, конфликтов нет.
+  // Внутри полей ввода не перехватываем — там работает штатный undo браузера.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (!e.ctrlKey || e.altKey || e.metaKey || e.repeat) return;
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+      if (e.code === 'KeyZ') {
+        e.preventDefault();
+        undo();
+      } else if (e.code === 'KeyY') {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [undo, redo]);
 
   return (
     <div className="app">
