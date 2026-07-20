@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { comboFromEvent, getCombo } from './hotkeys';
 import { useEngine } from './useEngine';
 import { KeysView } from './views/KeysView';
 import { ConsoleView } from './views/ConsoleView';
@@ -44,7 +45,14 @@ const TABS: { id: Tab; label: string; full: string }[] = [
 
 export function App() {
   const engine = useEngine();
-  const { connected, version, stats, project, playback, send, undo, redo } = engine;
+  const { connected, version, stats, project, playback, send, undo, redo, savedAtMs } = engine;
+  const [showSaved, setShowSaved] = useState(false);
+  useEffect(() => {
+    if (savedAtMs === null) return;
+    setShowSaved(true);
+    const t = window.setTimeout(() => setShowSaved(false), 2000);
+    return () => window.clearTimeout(t);
+  }, [savedAtMs]);
   const [tab, setTab] = useState<Tab>('console');
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
     localStorage.getItem('fs-theme') === 'light' ? 'light' : 'dark',
@@ -102,25 +110,31 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [project, playback, send]);
 
-  // Ctrl+Z/Ctrl+Y — история правок проекта (§27 доработки, УХ п.4). Отдельно от
-  // привязок «Клавиатуры» выше: те явно игнорируют ctrlKey, конфликтов нет.
-  // Внутри полей ввода не перехватываем — там работает штатный undo браузера.
+  // Горячие клавиши редактора — отменить/повторить/сохранить (§27 доработки,
+  // УХ п.6), комбинации переназначаются в «Настройках» (см. hotkeys.ts).
+  // Отдельно от привязок «Клавиатуры» выше: те явно игнорируют ctrlKey,
+  // конфликтов нет. Внутри полей ввода не перехватываем — там работает
+  // штатный undo браузера.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (!e.ctrlKey || e.altKey || e.metaKey || e.repeat) return;
+      if (!e.ctrlKey || e.repeat) return;
       const tag = (e.target as HTMLElement).tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
-      if (e.code === 'KeyZ') {
+      const combo = comboFromEvent(e);
+      if (combo === getCombo('undo')) {
         e.preventDefault();
         undo();
-      } else if (e.code === 'KeyY') {
+      } else if (combo === getCombo('redo')) {
         e.preventDefault();
         redo();
+      } else if (combo === getCombo('save')) {
+        e.preventDefault();
+        send({ type: 'saveNow' });
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [undo, redo]);
+  }, [undo, redo, send]);
 
   return (
     <div className="app">
@@ -185,6 +199,7 @@ export function App() {
       {tab === 'settings' && <SettingsView engine={engine} />}
 
       <footer className="statusbar">
+        {showSaved && <span className="ok-text">✔ сохранено</span>}
         {stats ? (
           <>
             <span title="Шаг обновления: движок шлёт новый DMX-кадр каждые 50 мс — 20 раз в секунду">

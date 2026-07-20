@@ -1,6 +1,112 @@
 import { useEffect, useState } from 'react';
 import type { BackupInfo, ConfigUniverse } from '@fountain-studio/shared';
+import {
+  HOTKEY_DEFS,
+  comboFromEvent,
+  comboLabel,
+  findConflict,
+  resetCombo,
+  setCombo,
+  useHotkey,
+  type HotkeyId,
+} from '../hotkeys';
 import type { EngineConnection } from '../useEngine';
+
+/**
+ * Переназначение горячих клавиш редактора (§27 доработки, УХ п.6) — те, что
+ * относятся к самому приложению (отменить/сохранить/дублировать…), не к
+ * «Клавиатуре» (та привязывает клавиши к сценам/шоу конкретного проекта и
+ * живёт отдельной вкладкой). Хранится в localStorage — предпочтение этого
+ * компьютера, не часть проекта.
+ */
+function HotkeyRow({ id }: { id: HotkeyId }) {
+  const def = HOTKEY_DEFS.find((d) => d.id === id)!;
+  const combo = useHotkey(id);
+  const [capturing, setCapturing] = useState(false);
+  const [conflict, setConflict] = useState<HotkeyId | null>(null);
+
+  useEffect(() => {
+    if (!capturing) return;
+    const onKey = (e: KeyboardEvent): void => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.code === 'Escape') {
+        setCapturing(false);
+        return;
+      }
+      const next = comboFromEvent(e);
+      const clash = findConflict(next, id);
+      if (clash) {
+        setConflict(clash);
+        setCapturing(false);
+        return;
+      }
+      setCombo(id, next);
+      setCapturing(false);
+    };
+    window.addEventListener('keydown', onKey, { capture: true });
+    return () => window.removeEventListener('keydown', onKey, { capture: true });
+  }, [capturing, id]);
+
+  return (
+    <tr>
+      <td>
+        {def.label}
+        {def.hint && <span className="dim"> · {def.hint}</span>}
+      </td>
+      <td>
+        <button
+          className={capturing ? 'btn active' : 'btn'}
+          onClick={() => {
+            setConflict(null);
+            setCapturing(!capturing);
+          }}
+        >
+          {capturing ? 'нажмите комбинацию… (Esc — отмена)' : comboLabel(combo)}
+        </button>
+        {conflict && (
+          <span className="error-text">
+            {' '}
+            уже занято: «{HOTKEY_DEFS.find((d) => d.id === conflict)!.label}»
+          </span>
+        )}
+      </td>
+      <td>
+        {combo !== def.default && (
+          <button className="btn btn-small" onClick={() => resetCombo(id)} title="Вернуть по умолчанию">
+            ↺
+          </button>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+function HotkeysPanel() {
+  return (
+    <section className="panel">
+      <h2>Горячие клавиши</h2>
+      <p className="dim">
+        Команды самого редактора — не путать с «Клавиатурой» (та привязывает клавиши к сценам и
+        шоу конкретного проекта). Хранится на этом компьютере, с проектом не переносится.
+      </p>
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Команда</th>
+            <th>Комбинация</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {HOTKEY_DEFS.map((d) => (
+            <HotkeyRow key={d.id} id={d.id} />
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
 
 function fmtBackupTime(atMs: number): string {
   return new Date(atMs).toLocaleString('ru-RU', {
@@ -340,6 +446,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
       </div>
 
       <BackupPanel engine={engine} />
+      <HotkeysPanel />
     </main>
   );
 }

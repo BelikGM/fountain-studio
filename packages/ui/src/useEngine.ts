@@ -45,6 +45,8 @@ export interface EngineConnection {
   backupConfig: { enabled: boolean; intervalMin: number } | null;
   /** Список снимков, новые сверху. */
   backups: BackupInfo[];
+  /** Unix-время последнего ответа на saveNow (Ctrl+S) — для краткого «✔ сохранено» в UI. */
+  savedAtMs: number | null;
   send: (msg: ClientMessage) => void;
   /** Применяет правку проекта локально и отправляет движку. */
   updateProject: (project: Project) => void;
@@ -90,6 +92,7 @@ export function useEngine(): EngineConnection {
   const [engineConfig, setEngineConfig] = useState<EngineConfigState | null>(null);
   const [backupConfig, setBackupConfig] = useState<{ enabled: boolean; intervalMin: number } | null>(null);
   const [backups, setBackups] = useState<BackupInfo[]>([]);
+  const [savedAtMs, setSavedAtMs] = useState<number | null>(null);
   const [playback, setPlayback] = useState<PlaybackState>({
     activeSceneId: null,
     running: [],
@@ -203,6 +206,9 @@ export function useEngine(): EngineConnection {
             break;
           case 'backupList':
             setBackups(msg.backups);
+            break;
+          case 'saved':
+            setSavedAtMs(msg.atMs);
             break;
         }
       };
@@ -327,6 +333,7 @@ export function useEngine(): EngineConnection {
     engineConfig,
     backupConfig,
     backups,
+    savedAtMs,
     send,
     updateProject,
     requestAudio,

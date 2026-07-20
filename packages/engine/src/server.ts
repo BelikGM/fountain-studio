@@ -287,6 +287,10 @@ export function startServer(
         case 'listBackups':
           ws.send(JSON.stringify(backupListMessage()));
           break;
+        case 'saveNow':
+          store.flush();
+          ws.send(JSON.stringify({ type: 'saved', atMs: Date.now() } satisfies ServerMessage));
+          break;
         case 'takeBackupNow':
           if (!backups) break;
           backups.snapshot();

@@ -184,6 +184,10 @@ export type ClientMessage =
   | { type: 'testPattern'; mode: TestPatternMode }
   // Проект: полная замена (редактор шлёт после каждого изменения, движок сохраняет на диск).
   | { type: 'updateProject'; project: Project }
+  // Ctrl+S (§27 доработки, УХ п.6): принудительный немедленный flush на диск —
+  // живое автосохранение и так непрерывное (дебаунс 500мс), эта команда просто
+  // не даёт ждать и подтверждает результат в UI.
+  | { type: 'saveNow' }
   // Транспорт воспроизведения.
   | { type: 'setScene'; sceneId: string | null }
   | { type: 'startSequence'; sequenceId: string }
@@ -253,4 +257,6 @@ export type ServerMessage =
   /** Настройка авто-бэкапов (шлётся при подключении и после updateBackupConfig). */
   | { type: 'backupConfig'; enabled: boolean; intervalMin: number }
   /** Список снимков (шлётся при подключении, после listBackups и после снятия нового снимка). */
-  | { type: 'backupList'; backups: BackupInfo[] };
+  | { type: 'backupList'; backups: BackupInfo[] }
+  /** Ответ на saveNow. */
+  | { type: 'saved'; atMs: number };

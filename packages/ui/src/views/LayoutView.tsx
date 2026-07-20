@@ -18,6 +18,7 @@ import {
   type NozzleKind,
   type Project,
 } from '@fountain-studio/shared';
+import { comboFromEvent, getCombo } from '../hotkeys';
 import type { EngineConnection } from '../useEngine';
 import { FountainScene, type SelectedElement } from '../three/FountainScene';
 
@@ -135,6 +136,85 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
         : null,
     );
   }, [selected]);
+
+  // Горячие клавиши редактора на выбранном элементе (§27 доработки, УХ п.6):
+  // дублировать/удалить/снять выделение/сдвинуть стрелками. Тот же эффект, что
+  // и одноимённые кнопки в панели свойств справа — просто с клавиатуры.
+  const NUDGE_STEP = 0.1;
+  useEffect(() => {
+    if (!project || !selected) return;
+    const layout = project.layout;
+    const duplicateSelected = (): void => {
+      if (selected.type === 'nozzle') {
+        const n = layout.nozzles.find((x) => x.id === selected.id);
+        if (!n) return;
+        const copy: Nozzle = { ...n, id: uid(), name: `${n.name} коп`, x: n.x + 0.5 };
+        updateProject({ ...project, layout: { ...layout, nozzles: [...layout.nozzles, copy] } });
+        setSelected({ type: 'nozzle', id: copy.id });
+      } else if (selected.type === 'light') {
+        const l = layout.lights.find((x) => x.id === selected.id);
+        if (!l) return;
+        const copy: LayoutLight = { ...l, id: uid(), name: `${l.name} коп`, x: l.x + 0.5 };
+        updateProject({ ...project, layout: { ...layout, lights: [...layout.lights, copy] } });
+        setSelected({ type: 'light', id: copy.id });
+      } else {
+        const b = layout.bowls.find((x) => x.id === selected.id);
+        if (!b) return;
+        const copy: Bowl = { ...b, id: uid(), name: `${b.name} коп`, x: b.x + 0.5 };
+        updateProject({ ...project, layout: { ...layout, bowls: [...layout.bowls, copy] } });
+        setSelected({ type: 'bowl', id: copy.id });
+      }
+    };
+    const deleteSelected = (): void => {
+      const next: FountainLayout =
+        selected.type === 'nozzle'
+          ? { ...layout, nozzles: layout.nozzles.filter((n) => n.id !== selected.id) }
+          : selected.type === 'light'
+            ? { ...layout, lights: layout.lights.filter((l) => l.id !== selected.id) }
+            : { ...layout, bowls: layout.bowls.filter((b) => b.id !== selected.id) };
+      updateProject({ ...project, layout: next });
+      setSelected(null);
+    };
+    const nudge = (dx: number, dy: number): void => {
+      const next: FountainLayout =
+        selected.type === 'nozzle'
+          ? { ...layout, nozzles: layout.nozzles.map((n) => (n.id === selected.id ? { ...n, x: n.x + dx, y: n.y + dy } : n)) }
+          : selected.type === 'light'
+            ? { ...layout, lights: layout.lights.map((l) => (l.id === selected.id ? { ...l, x: l.x + dx, y: l.y + dy } : l)) }
+            : { ...layout, bowls: layout.bowls.map((b) => (b.id === selected.id ? { ...b, x: b.x + dx, y: b.y + dy } : b)) };
+      updateProject({ ...project, layout: next });
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+      const combo = comboFromEvent(e);
+      if (combo === getCombo('duplicate')) {
+        e.preventDefault();
+        duplicateSelected();
+      } else if (combo === getCombo('delete')) {
+        if (e.repeat) return;
+        e.preventDefault();
+        deleteSelected();
+      } else if (combo === getCombo('deselect')) {
+        e.preventDefault();
+        setSelected(null);
+      } else if (combo === getCombo('nudgeUp')) {
+        e.preventDefault();
+        nudge(0, NUDGE_STEP);
+      } else if (combo === getCombo('nudgeDown')) {
+        e.preventDefault();
+        nudge(0, -NUDGE_STEP);
+      } else if (combo === getCombo('nudgeLeft')) {
+        e.preventDefault();
+        nudge(-NUDGE_STEP, 0);
+      } else if (combo === getCombo('nudgeRight')) {
+        e.preventDefault();
+        nudge(NUDGE_STEP, 0);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [project, selected, updateProject]);
 
   if (!project) return <main className="view">Ожидание проекта от движка…</main>;
   const layout = project.layout;
@@ -688,6 +768,16 @@ function LightProps({
       </label>
       <div className="sidebar-actions">
         <button
+          className="btn btn-small"
+          onClick={() => {
+            const copy: LayoutLight = { ...light, id: uid(), name: `${light.name} коп`, x: light.x + 0.5 };
+            setLayout({ ...layout, lights: [...layout.lights, copy] });
+            onSelect({ type: 'light', id: copy.id });
+          }}
+        >
+          Дублировать
+        </button>
+        <button
           className="btn btn-small btn-danger"
           onClick={() => {
             setLayout({ ...layout, lights: layout.lights.filter((l) => l.id !== light.id) });
@@ -740,6 +830,16 @@ function BowlProps({
       )}
       <NumField label="Борт, м" value={bowl.height} step={0.1} onChange={(v) => patch({ height: Math.max(0, v) })} />
       <div className="sidebar-actions">
+        <button
+          className="btn btn-small"
+          onClick={() => {
+            const copy: Bowl = { ...bowl, id: uid(), name: `${bowl.name} коп`, x: bowl.x + 0.5 };
+            setLayout({ ...layout, bowls: [...layout.bowls, copy] });
+            onSelect({ type: 'bowl', id: copy.id });
+          }}
+        >
+          Дублировать
+        </button>
         <button
           className="btn btn-small btn-danger"
           onClick={() => {

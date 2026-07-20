@@ -607,6 +607,7 @@ select {
 .content-show { overflow-y: auto; }
 .spacer { flex: 1; }
 .warn { color: var(--warn); font-size: 12px; }
+.ok-text { color: var(--ok); font-weight: 600; }
 .time-display {
   font-variant-numeric: tabular-nums;
   font-size: 15px;
