@@ -1163,7 +1163,14 @@ function ShowEditor({
         <div className="tl-inner" style={{ width: HEAD_W + laneW }}>
           <div className="tl-row" style={{ height: RULER_H }}>
             <div className="tl-head tl-head-ruler" />
-            <Ruler laneW={laneW} scale={scale} durMs={durMs} onSeek={seek} beatsMs={snapToBeat ? beatsMs : []} />
+            <Ruler
+              laneW={laneW}
+              scale={scale}
+              durMs={durMs}
+              currentMs={dispMs}
+              onSeek={seek}
+              beatsMs={snapToBeat ? beatsMs : []}
+            />
           </div>
 
           <div className="tl-row" style={{ height: AUDIO_H }}>
@@ -1484,12 +1491,14 @@ function Ruler({
   laneW,
   scale,
   durMs,
+  currentMs,
   onSeek,
   beatsMs = [],
 }: {
   laneW: number;
   scale: number;
   durMs: number;
+  currentMs: number;
   onSeek: (ms: number) => void;
   /** Сетка долей (§27 доработки, УХ п.14) — пусто, если прилипание выключено/темп не определён. */
   beatsMs?: number[];
@@ -1506,8 +1515,31 @@ function Ruler({
     const r = e.currentTarget.getBoundingClientRect();
     onSeek(((e.clientX - r.left) / scale) * 1000);
   };
+
+  // Колесо мыши — скраб (§27 доработки, по примеру прежнего приложения). React
+  // вешает onWheel как passive-слушатель — preventDefault там молча не
+  // срабатывает (и страница вместе со скрабом прокручивается) — нужен родной
+  // addEventListener с passive:false. currentMs/onSeek — через ref, чтобы не
+  // пересоздавать слушатель на каждый рендер (позиция обновляется часто).
+  const rulerElRef = useRef<HTMLDivElement | null>(null);
+  const wheelStateRef = useRef({ currentMs, onSeek });
+  wheelStateRef.current = { currentMs, onSeek };
+  useEffect(() => {
+    const el = rulerElRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent): void => {
+      e.preventDefault();
+      const stepMs = e.shiftKey ? 1000 : 200;
+      const { currentMs: cur, onSeek: seek } = wheelStateRef.current;
+      seek(cur + (e.deltaY > 0 ? stepMs : -stepMs));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
+
   return (
     <div
+      ref={rulerElRef}
       className="tl-lane ruler"
       style={{ width: laneW }}
       onMouseDown={(e) => {

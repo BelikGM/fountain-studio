@@ -717,6 +717,11 @@ select {
   font-size: 11px;
   pointer-events: none;
 }
+.canvas3d-reset {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+}
 .sidebar-props { width: 280px; }
 
 /* ── Вкладка «Шоу»: таймлайн ─────────────────────────────── */

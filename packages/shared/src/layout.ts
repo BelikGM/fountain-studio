@@ -78,6 +78,13 @@ export interface Nozzle {
   pump2DeviceId: string | null;
   /** Клапан (0/255) — отсечение струи. null — клапана нет. */
   valveDeviceId: string | null;
+  /**
+   * Клапан следует за насосом (§27 доработки, «Influence: Valve by Pump») —
+   * движок сам держит клапан открытым, пока канал насоса > 0, без ручной
+   * записи значения клапана в каждой сцене. Действует только когда заданы
+   * оба устройства; переопределяет любое другое значение клапана на тике.
+   */
+  valveFollowsPump: boolean;
   /** Прожектор, подсвечивающий эту струю (цвет частиц). */
   lightDeviceId: string | null;
 }
@@ -212,6 +219,7 @@ export function sanitizeLayout(raw: unknown, deviceIds: Set<string>): FountainLa
         pumpDeviceId: devRef(n.pumpDeviceId, deviceIds),
         pump2DeviceId: devRef(n.pump2DeviceId, deviceIds),
         valveDeviceId: devRef(n.valveDeviceId, deviceIds),
+        valveFollowsPump: n.valveFollowsPump === true,
         lightDeviceId: devRef(n.lightDeviceId, deviceIds),
       });
     }

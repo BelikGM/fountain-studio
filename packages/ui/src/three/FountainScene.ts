@@ -72,6 +72,8 @@ const G = 9.81;
 const MAX_PARTICLES = 24000;
 /** Базовый цвет воды без подсветки (тускло-голубой). */
 const WATER_DIM: [number, number, number] = [0.16, 0.22, 0.3];
+/** Исходное положение камеры — и при старте, и при «сбросе камеры» (§27 доработки). */
+const CAMERA_INITIAL = { position: new THREE.Vector3(10, -14, 9), target: new THREE.Vector3(0, 0, 1) };
 
 export class FountainScene {
   hooks: SceneHooks;
@@ -131,10 +133,10 @@ export class FountainScene {
 
     this.camera = new THREE.PerspectiveCamera(50, 1, 0.1, 500);
     this.camera.up.set(0, 0, 1);
-    this.camera.position.set(10, -14, 9);
+    this.camera.position.copy(CAMERA_INITIAL.position);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.target.set(0, 0, 1);
+    this.controls.target.copy(CAMERA_INITIAL.target);
     this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
     this.controls.minDistance = 2;
     this.controls.maxDistance = 120;
@@ -191,6 +193,13 @@ export class FountainScene {
     el.addEventListener('pointerup', this.onPointerUp);
 
     this.raf = requestAnimationFrame(this.tick);
+  }
+
+  /** Вернуть камеру к исходному положению/цели (§27 доработки — «сброс камеры»). */
+  resetCamera(): void {
+    this.camera.position.copy(CAMERA_INITIAL.position);
+    this.controls.target.copy(CAMERA_INITIAL.target);
+    this.controls.update();
   }
 
   dispose(): void {

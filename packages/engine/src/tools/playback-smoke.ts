@@ -1054,6 +1054,7 @@ async function main(): Promise<void> {
       pumpDeviceId: a.deviceId,
       pump2DeviceId: null,
       valveDeviceId: null,
+      valveFollowsPump: false,
       lightDeviceId: null,
     })),
   };
@@ -1653,6 +1654,72 @@ async function main(): Promise<void> {
     send({ type: 'setChannel', universe: 1, channel: 1, value: 0 });
     send({ type: 'setChannel', universe: 1, channel: 10, value: 0 });
     await waitFor('каналы сброшены после теста', () => ch(1) === 0 && ch(10) === 0);
+  }
+
+  console.log('— Клапан следует за насосом («Influence: Valve by Pump», §27 доработки) —');
+  {
+    const layoutBefore = store.project.layout;
+    send({
+      type: 'updateProject',
+      project: {
+        ...store.project,
+        layout: {
+          ...layoutBefore,
+          nozzles: [
+            ...layoutBefore.nozzles,
+            {
+              id: 'noz-influence-test',
+              name: 'Тест-влияние',
+              kind: 'straight',
+              x: 0,
+              y: 0,
+              z: 0,
+              tiltDeg: 0,
+              headingDeg: 0,
+              maxHeightM: 3,
+              widthM: 0.03,
+              coneAngleDeg: 25,
+              rotationSpeedDegPerSec: 60,
+              riseMs: 0,
+              fallMs: 0,
+              pumpDeviceId: 'pump1',
+              pump2DeviceId: null,
+              valveDeviceId: 'valve1',
+              valveFollowsPump: true,
+              lightDeviceId: null,
+            },
+          ],
+        },
+      },
+    });
+    await waitFor(
+      'форсунка с valveFollowsPump применена',
+      () => (projectEcho?.layout.nozzles.length ?? 0) > layoutBefore.nozzles.length,
+    );
+
+    // pump1 к этому месту уже несёт калибровку min:50/max:200 (восстановлена
+    // предыдущим тестом ветра) — сырое значение 150 придёт откалиброванным,
+    // не ровно 150, поэтому проверяем «> 0», а не точное число.
+    send({ type: 'setChannel', universe: 1, channel: 1, value: 150 }); // pump1 > 0
+    await waitFor('клапан открылся вслед за насосом', () => ch(1) > 0 && ch(2) === 255, 2000);
+    check(true, 'valveFollowsPump: насос>0 → клапан автоматически 255, без явной записи в сцену');
+
+    send({ type: 'setChannel', universe: 1, channel: 1, value: 0 }); // pump1 = 0
+    await waitFor('клапан закрылся вслед за насосом', () => ch(1) === 0 && ch(2) === 0, 2000);
+    check(true, 'valveFollowsPump: насос=0 → клапан автоматически закрыт (0)');
+
+    send({ type: 'setChannel', universe: 1, channel: 2, value: 255 }); // попытка вручную открыть клапан
+    await waitFor('ручное открытие клапана переопределено флагом (насос всё ещё 0)', () => ch(2) === 0, 2000);
+    check(true, 'valveFollowsPump переопределяет ручное управление клапаном, пока флаг включён');
+
+    send({ type: 'updateProject', project: { ...store.project, layout: layoutBefore } });
+    await waitFor(
+      'тестовая форсунка убрана',
+      () => (projectEcho?.layout.nozzles.length ?? 0) === layoutBefore.nozzles.length,
+    );
+    send({ type: 'setChannel', universe: 1, channel: 1, value: 0 });
+    send({ type: 'setChannel', universe: 1, channel: 2, value: 0 });
+    await waitFor('каналы сброшены после теста', () => ch(1) === 0 && ch(2) === 0);
   }
 
   console.log('— Насос на Modbus TCP (мок-ПЧ, карта регистров Elhart EMD-PUMP) —');

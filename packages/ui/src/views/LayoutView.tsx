@@ -231,6 +231,13 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
       </aside>
       <div className="content content-3d">
         <div className="canvas3d" ref={containerRef} />
+        <button
+          className="btn btn-small canvas3d-reset"
+          title="Вернуть камеру к исходному положению"
+          onClick={() => sceneRef.current?.resetCamera()}
+        >
+          ⟲ Камера
+        </button>
         <div className="canvas3d-hint dim">
           ЛКМ по элементу — выбрать и тащить · ЛКМ по пустому — вращение · колесо — зум · ПКМ — панорама
         </div>
@@ -338,6 +345,7 @@ function AddTools({
     pumpDeviceId: null,
     pump2DeviceId: null,
     valveDeviceId: null,
+    valveFollowsPump: false,
     lightDeviceId: null,
   });
 
@@ -536,6 +544,7 @@ function DxfImport({ project, setLayout }: { project: Project; setLayout: (l: Fo
           pumpDeviceId: null,
           pump2DeviceId: null,
           valveDeviceId: null,
+          valveFollowsPump: false,
           lightDeviceId: null,
         })),
       ],
@@ -757,6 +766,19 @@ function NozzleProps({
         <label className="field">
           Клапан: <DeviceSelect project={project} kind="valve" value={nozzle.valveDeviceId} onChange={(id) => patch({ valveDeviceId: id })} />
         </label>
+        {nozzle.pumpDeviceId && nozzle.valveDeviceId && (
+          <label
+            className="field"
+            title="Движок сам держит клапан открытым, пока насос > 0 — не нужно вручную задавать клапан в каждой сцене"
+          >
+            <input
+              type="checkbox"
+              checked={nozzle.valveFollowsPump}
+              onChange={(e) => patch({ valveFollowsPump: e.target.checked })}
+            />{' '}
+            Клапан следует за насосом
+          </label>
+        )}
         <label className="field">
           Подсветка: <DeviceSelect project={project} kind="lamp" value={nozzle.lightDeviceId} onChange={(id) => patch({ lightDeviceId: id })} />
         </label>

@@ -69,6 +69,13 @@ export class Engine {
    * набор индексов адресов (адрес-1).
    */
   private pumpChannels = new Map<number, Set<number>>();
+  /**
+   * Клапан следует за насосом (§27 доработки, «Influence: Valve by Pump») —
+   * universeId → пары индексов адресов (адрес-1) клапан/насос из форсунок с
+   * layout.nozzles[].valveFollowsPump=true. Применяется последним шагом на
+   * тике, переопределяя любое другое значение клапана.
+   */
+  private valveFollowsPump = new Map<number, { valveIdx: number; pumpIdx: number }[]>();
   private windLimitConfig: WindLimitConfig = defaultWindLimitConfig();
   /** Текущее показание скорости ветра, м/с — null, пока никто не ввёл/не прислал. */
   private windSpeed: number | null = null;
@@ -173,6 +180,12 @@ export class Engine {
             }
           }
         }
+        // Клапан следует за насосом (§27 доработки) — последний шаг, после
+        // калибровки и ветра, читает уже итоговое значение канала насоса.
+        const follows = this.valveFollowsPump.get(u.id);
+        if (follows) {
+          for (const f of follows) u.out[f.valveIdx] = u.out[f.pumpIdx]! > 0 ? 255 : 0;
+        }
       } else {
         fillTestPattern(this.pattern, tSec, i, u.out);
       }
@@ -265,6 +278,30 @@ export class Engine {
       }
     }
     this.windLimitConfig = project.windLimit;
+
+    this.valveFollowsPump.clear();
+    const deviceById = new Map(project.devices.map((d) => [d.id, d]));
+    for (const n of project.layout.nozzles) {
+      if (!n.valveFollowsPump || !n.pumpDeviceId || !n.valveDeviceId) continue;
+      const pump = deviceById.get(n.pumpDeviceId);
+      const valve = deviceById.get(n.valveDeviceId);
+      if (!pump || !valve || pump.universe !== valve.universe) continue;
+      const pumpProfile = profiles.get(pump.profileId);
+      const valveProfile = profiles.get(valve.profileId);
+      if (!pumpProfile || !valveProfile) continue;
+      const pumpCh = pumpProfile.channels.findIndex((c) => c.role === 'intensity');
+      const valveCh = valveProfile.channels.findIndex((c) => c.role === 'open');
+      if (pumpCh < 0 || valveCh < 0) continue;
+      const pumpIdx = pump.address - 1 + pumpCh;
+      const valveIdx = valve.address - 1 + valveCh;
+      if (pumpIdx < 0 || pumpIdx >= DMX_UNIVERSE_SIZE || valveIdx < 0 || valveIdx >= DMX_UNIVERSE_SIZE) continue;
+      let list = this.valveFollowsPump.get(pump.universe);
+      if (!list) {
+        list = [];
+        this.valveFollowsPump.set(pump.universe, list);
+      }
+      list.push({ valveIdx, pumpIdx });
+    }
   }
 
   /** Ручной ввод (пока нет датчика по Modbus/MQTT — задел под него, см. windlimit.ts) или null — сбросить. */

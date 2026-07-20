@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { DMX_UNIVERSE_SIZE, profileMap, type TestPatternMode } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
 import { Fader } from '../components/Fader';
+import { COLOR_PRESETS, hexToRgb } from '../colorPresets';
 
 /** Варианты числа адресов на странице; 512 — вся вселенная одной лентой. */
 const PAGE_SIZES = [16, 32, 64, 128, 256, DMX_UNIVERSE_SIZE];
@@ -52,6 +53,23 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
   // того же места. Без подтверждения — действие безопасно обратимо.
   const togglePause = (): void => {
     send({ type: playback.pausedAll ? 'resumeAll' : 'pauseAll' });
+  };
+
+  // Массовое управление по типу прибора (§27 доработки, по примеру прежнего
+  // приложения — «все насосы/клапаны/светильники разом», для пусконаладки).
+  // Пишет во все подходящие адреса каналами setChannel — тот же путь, что и
+  // обычный фейдер, просто циклом по устройствам нужного вида.
+  const setAllOfKind = (kind: 'pump' | 'valve' | 'lamp', roles: Partial<Record<string, number>>): void => {
+    if (!project) return;
+    const profiles = profileMap(project);
+    for (const d of project.devices) {
+      const profile = profiles.get(d.profileId);
+      if (!profile || profile.kind !== kind) continue;
+      profile.channels.forEach((c, i) => {
+        const v = roles[c.role];
+        if (v !== undefined) send({ type: 'setChannel', universe: d.universe, channel: d.address + i, value: v });
+      });
+    }
   };
 
   // При первом hello выбираем первую вселенную.
@@ -190,6 +208,44 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
             )}
           </div>
         )}
+
+        <div className="group">
+          <span className="group-label" title="Пишет сразу во все приборы этого вида из патча — для пусконаладки">
+            Все по типу:
+          </span>
+          <label className="field">
+            Насосы:{' '}
+            <input
+              type="range"
+              min={0}
+              max={255}
+              defaultValue={0}
+              onChange={(e) => setAllOfKind('pump', { intensity: Number(e.target.value) })}
+            />
+          </label>
+          <button className="btn btn-small" onClick={() => setAllOfKind('valve', { open: 255 })}>
+            Клапаны: откр.
+          </button>
+          <button className="btn btn-small" onClick={() => setAllOfKind('valve', { open: 0 })}>
+            Клапаны: закр.
+          </button>
+          <span className="dim">Свет:</span>
+          <div className="color-presets">
+            {COLOR_PRESETS.map((p) => (
+              <button
+                key={p.hex}
+                type="button"
+                className="color-swatch"
+                style={{ background: p.hex }}
+                title={p.name}
+                onClick={() => {
+                  const [r, g, b] = hexToRgb(p.hex);
+                  setAllOfKind('lamp', { red: r, green: g, blue: b });
+                }}
+              />
+            ))}
+          </div>
+        </div>
 
         <div className="group">
           <button
