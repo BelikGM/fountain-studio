@@ -795,6 +795,9 @@ function ModbusEditor({
           {status && (
             <div className={status.faultCode ? 'error-text' : 'dim'}>
               {status.connected ? '✔ на связи' : '✖ нет связи'} · уставка {status.lastFreqHz.toFixed(1)} Гц
+              {status.currentA !== null ? ` · ${status.currentA.toFixed(2)} А` : ''}
+              {status.speedRpm !== null ? ` · ${Math.round(status.speedRpm)} об/мин` : ''}
+              {status.tempC !== null ? ` · ${status.tempC.toFixed(1)}°C` : ''}
               {status.faultCode ? ` · АВАРИЯ, код ${status.faultCode}` : ''}
               {status.lastError ? ` · ${status.lastError}` : ''}
             </div>
@@ -923,9 +926,86 @@ function ModbusEditor({
               />
             </label>
           </div>
+          <p className="dim" style={{ marginTop: 4 }}>
+            Телеметрия (§27 доработки, §4 п.2) — панель здоровья насоса; поле пустое — регистр не опрашивается.
+            Опрашивается тем же циклом, что и авария (раз в 3 с).
+          </p>
+          <div className="form-row">
+            <label className="field">
+              Регистр тока:{' '}
+              <input
+                className="input input-num"
+                type="number"
+                min={0}
+                value={config.currentRegister ?? ''}
+                placeholder="не задан"
+                onChange={(e) => set({ currentRegister: e.target.value === '' ? undefined : Number(e.target.value) })}
+              />
+            </label>
+            <label className="field">
+              Единиц регистра/А:{' '}
+              <input
+                className="input input-num"
+                type="number"
+                min={1}
+                disabled={config.currentRegister === undefined}
+                value={config.currentScale ?? 100}
+                onChange={(e) => set({ currentScale: Number(e.target.value) })}
+              />
+            </label>
+          </div>
+          <div className="form-row">
+            <label className="field">
+              Регистр оборотов:{' '}
+              <input
+                className="input input-num"
+                type="number"
+                min={0}
+                value={config.speedRegister ?? ''}
+                placeholder="не задан"
+                onChange={(e) => set({ speedRegister: e.target.value === '' ? undefined : Number(e.target.value) })}
+              />
+            </label>
+            <label className="field">
+              Единиц регистра/об·мин:{' '}
+              <input
+                className="input input-num"
+                type="number"
+                min={1}
+                disabled={config.speedRegister === undefined}
+                value={config.speedScale ?? 1}
+                onChange={(e) => set({ speedScale: Number(e.target.value) })}
+              />
+            </label>
+          </div>
+          <div className="form-row">
+            <label className="field">
+              Регистр температуры:{' '}
+              <input
+                className="input input-num"
+                type="number"
+                min={0}
+                value={config.tempRegister ?? ''}
+                placeholder="не задан"
+                onChange={(e) => set({ tempRegister: e.target.value === '' ? undefined : Number(e.target.value) })}
+              />
+            </label>
+            <label className="field">
+              Единиц регистра/°C:{' '}
+              <input
+                className="input input-num"
+                type="number"
+                min={1}
+                disabled={config.tempRegister === undefined}
+                value={config.tempScale ?? 10}
+                onChange={(e) => set({ tempScale: Number(e.target.value) })}
+              />
+            </label>
+          </div>
           <span className="dim">
             Дефолты полей — карта регистров Elhart EMD-PUMP: 8193 = уставка частоты (сотые Гц), 8192 = команда
-            (2=пуск, 1=стоп), 10 = код последней аварии. Для другой модели ПЧ сверьте с её картой регистров.
+            (2=пуск, 1=стоп), 10 = код последней аварии. Для другой модели ПЧ (и телеметрии) сверьте с её картой
+            регистров.
           </span>
         </>
       )}

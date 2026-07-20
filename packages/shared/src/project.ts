@@ -94,6 +94,17 @@ export interface ModbusPumpConfig {
   freqRegScale?: number;
   cmdRegister?: number; // holding-регистр команд пуск/стоп, 0-based
   faultRegister?: number; // holding-регистр кода аварии (0 = нет аварии), 0-based
+  /**
+   * Телеметрия насоса (§27 доработки, §4 п.2) — необязательные holding-регистры
+   * для чтения (панель здоровья насоса в UI). Не привязано к одной модели ПЧ:
+   * адрес и масштаб настраиваются per-device, как и остальные поля здесь.
+   */
+  currentRegister?: number; // ток, 0-based
+  currentScale?: number; // единиц регистра на 1 А, по умолчанию 100 (сотые ампера)
+  speedRegister?: number; // обороты, 0-based
+  speedScale?: number; // единиц регистра на 1 об/мин, по умолчанию 1
+  tempRegister?: number; // температура, 0-based
+  tempScale?: number; // единиц регистра на 1°C, по умолчанию 10 (десятые градуса)
 }
 
 /** Устройство, поставленное в патч: профиль + вселенная + первый адрес. */
@@ -160,6 +171,27 @@ export function sanitizeModbusConfig(raw: unknown): ModbusPumpConfig | undefined
   if (Number.isInteger(r.cmdRegister) && (r.cmdRegister as number) >= 0) config.cmdRegister = r.cmdRegister as number;
   if (Number.isInteger(r.faultRegister) && (r.faultRegister as number) >= 0) {
     config.faultRegister = r.faultRegister as number;
+  }
+  const tele = (reg: unknown, scale: unknown): { register?: number; scale?: number } => {
+    if (!Number.isInteger(reg) || (reg as number) < 0) return {};
+    const out: { register?: number; scale?: number } = { register: reg as number };
+    if (typeof scale === 'number' && Number.isFinite(scale) && scale > 0) out.scale = scale;
+    return out;
+  };
+  const cur = tele(r.currentRegister, r.currentScale);
+  if (cur.register !== undefined) {
+    config.currentRegister = cur.register;
+    if (cur.scale !== undefined) config.currentScale = cur.scale;
+  }
+  const speed = tele(r.speedRegister, r.speedScale);
+  if (speed.register !== undefined) {
+    config.speedRegister = speed.register;
+    if (speed.scale !== undefined) config.speedScale = speed.scale;
+  }
+  const temp = tele(r.tempRegister, r.tempScale);
+  if (temp.register !== undefined) {
+    config.tempRegister = temp.register;
+    if (temp.scale !== undefined) config.tempScale = temp.scale;
   }
   return config;
 }

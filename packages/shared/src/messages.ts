@@ -131,6 +131,10 @@ export interface PumpModbusStatus {
   /** Мс с последней успешной записи/чтения; -1 — успешного обмена ещё не было. */
   ageMs: number;
   lastError: string | null;
+  /** Телеметрия (§27 доработки, §4 п.2) — null, если соответствующий регистр не задан в конфиге. */
+  currentA: number | null;
+  speedRpm: number | null;
+  tempC: number | null;
 }
 
 export interface ModbusState {

@@ -6,7 +6,7 @@ import type { ModbusTransport } from './drivers/modbus-transport';
 
 const WRITE_THROTTLE_MS = 200; // не чаще 5 записей/с при изменении значения канала
 const KEEPALIVE_MS = 1000; // повтор даже без изменений — у многих ПЧ вотчдог связи гасит привод без свежих команд
-const FAULT_POLL_MS = 3000;
+const HEALTH_POLL_MS = 3000; // аварии + телеметрия (§27 доработки, §4 п.2) — один цикл опроса
 
 interface PumpEntry {
   config: ModbusPumpConfig;
@@ -18,6 +18,10 @@ interface PumpEntry {
   faultCode: number | null;
   lastOkAt: number;
   lastError: string | null;
+  /** Телеметрия (§27 доработки, §4 п.2) — null, пока соответствующий регистр не задан или не прочитан. */
+  currentA: number | null;
+  speedRpm: number | null;
+  tempC: number | null;
 }
 
 function connectionKey(c: ModbusConnection): string {
@@ -87,10 +91,13 @@ export class PumpModbusManager {
         faultCode: null,
         lastOkAt: 0,
         lastError: null,
+        currentA: null,
+        speedRpm: null,
+        tempC: null,
       });
     }
-    if (this.pumps.size > 0) this.ensureFaultPolling();
-    else this.stopFaultPolling();
+    if (this.pumps.size > 0) this.ensureHealthPolling();
+    else this.stopHealthPolling();
   }
 
   private acquireTransport(key: string, conn: ModbusConnection): void {
@@ -148,44 +155,83 @@ export class PumpModbusManager {
     }
   }
 
-  private ensureFaultPolling(): void {
+  private ensureHealthPolling(): void {
     if (this.faultTimer) return;
-    this.faultTimer = setInterval(() => this.pollFaults(), FAULT_POLL_MS);
+    this.faultTimer = setInterval(() => this.pollHealth(), HEALTH_POLL_MS);
   }
 
-  private stopFaultPolling(): void {
+  private stopHealthPolling(): void {
     if (this.faultTimer) {
       clearInterval(this.faultTimer);
       this.faultTimer = null;
     }
   }
 
-  private pollFaults(): void {
+  private pollHealth(): void {
     for (const [deviceId, entry] of this.pumps.entries()) {
-      if (entry.config.faultRegister === undefined || entry.writing) continue;
+      if (entry.writing) continue;
       const transport = this.transports.get(entry.connKey)?.transport;
       if (!transport) continue;
-      transport
-        .readHoldingRegister(entry.config.unitId ?? 1, entry.config.faultRegister)
-        .then((code) => {
-          const changed = entry.faultCode !== code;
-          const prevCode = entry.faultCode;
-          entry.faultCode = code;
-          entry.lastOkAt = Date.now();
-          entry.lastError = null;
-          if (changed) {
-            if (code !== 0) {
-              eventLog.log('modbus', `насос «${deviceId}»: код аварии ${code}`, 'error');
-              this.onAlarm?.(deviceId, code);
-            } else if (prevCode) {
-              eventLog.log('modbus', `насос «${deviceId}»: авария снята (было ${prevCode})`);
+      const unitId = entry.config.unitId ?? 1;
+
+      if (entry.config.faultRegister !== undefined) {
+        transport
+          .readHoldingRegister(unitId, entry.config.faultRegister)
+          .then((code) => {
+            const changed = entry.faultCode !== code;
+            const prevCode = entry.faultCode;
+            entry.faultCode = code;
+            entry.lastOkAt = Date.now();
+            entry.lastError = null;
+            if (changed) {
+              if (code !== 0) {
+                eventLog.log('modbus', `насос «${deviceId}»: код аварии ${code}`, 'error');
+                this.onAlarm?.(deviceId, code);
+              } else if (prevCode) {
+                eventLog.log('modbus', `насос «${deviceId}»: авария снята (было ${prevCode})`);
+              }
+              this.onChange?.();
             }
+          })
+          .catch((err) => {
+            entry.lastError = err instanceof Error ? err.message : String(err);
+          });
+      }
+      // Телеметрия (§27 доработки, §4 п.2) — панель здоровья насоса, регистры
+      // необязательны и настраиваются per-device (не привязано к одной модели ПЧ).
+      if (entry.config.currentRegister !== undefined) {
+        transport
+          .readHoldingRegister(unitId, entry.config.currentRegister)
+          .then((raw) => {
+            entry.currentA = raw / (entry.config.currentScale ?? 100);
             this.onChange?.();
-          }
-        })
-        .catch((err) => {
-          entry.lastError = err instanceof Error ? err.message : String(err);
-        });
+          })
+          .catch((err) => {
+            entry.lastError = err instanceof Error ? err.message : String(err);
+          });
+      }
+      if (entry.config.speedRegister !== undefined) {
+        transport
+          .readHoldingRegister(unitId, entry.config.speedRegister)
+          .then((raw) => {
+            entry.speedRpm = raw / (entry.config.speedScale ?? 1);
+            this.onChange?.();
+          })
+          .catch((err) => {
+            entry.lastError = err instanceof Error ? err.message : String(err);
+          });
+      }
+      if (entry.config.tempRegister !== undefined) {
+        transport
+          .readHoldingRegister(unitId, entry.config.tempRegister)
+          .then((raw) => {
+            entry.tempC = raw / (entry.config.tempScale ?? 10);
+            this.onChange?.();
+          })
+          .catch((err) => {
+            entry.lastError = err instanceof Error ? err.message : String(err);
+          });
+      }
     }
     this.onChange?.(); // возраст (ageMs) в UI обновляется даже без изменений состояния
   }
@@ -200,12 +246,15 @@ export class PumpModbusManager {
         faultCode: e.config.faultRegister === undefined ? null : e.faultCode,
         ageMs: e.lastOkAt === 0 ? -1 : now - e.lastOkAt,
         lastError: e.lastError,
+        currentA: e.config.currentRegister === undefined ? null : e.currentA,
+        speedRpm: e.config.speedRegister === undefined ? null : e.speedRpm,
+        tempC: e.config.tempRegister === undefined ? null : e.tempC,
       })),
     };
   }
 
   stop(): void {
-    this.stopFaultPolling();
+    this.stopHealthPolling();
     for (const { transport } of this.transports.values()) transport.close();
     this.transports.clear();
     this.pumps.clear();

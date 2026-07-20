@@ -252,6 +252,11 @@ const vfdRegs = new Map<number, number>([
   [8193, 0], // FREQ_SET
   [8192, 0], // CMD
   [10, 0], // F0.10 — код последней аварии
+  // Телеметрия (§27 доработки, §4 п.2) — условные тестовые регистры (не карта
+  // Elhart, та телеметрию не описывает — сверяется с картой конкретного ПЧ).
+  [11, 150], // ток, сотые А → 1.50 А
+  [12, 1450], // обороты, напрямую об/мин
+  [13, 452], // температура, десятые °C → 45.2°C
 ]);
 const vfdWrites: { register: number; value: number; at: number }[] = [];
 const vfdServer = createTcpServer((socket) => {
@@ -472,6 +477,9 @@ const demo: Project = {
         freqScaleHz: 50,
         cmdRegister: 8192,
         faultRegister: 10,
+        currentRegister: 11,
+        speedRegister: 12,
+        tempRegister: 13,
       },
     },
   ],
@@ -1648,8 +1656,7 @@ async function main(): Promise<void> {
   }
 
   console.log('— Насос на Modbus TCP (мок-ПЧ, карта регистров Elhart EMD-PUMP) —');
-  const pumpStatus = (): { connected: boolean; lastFreqHz: number; faultCode: number | null } | undefined =>
-    modbusState?.pumps.find((p) => p.deviceId === 'pump2');
+  const pumpStatus = () => modbusState?.pumps.find((p) => p.deviceId === 'pump2');
   send({ type: 'setChannel', universe: 1, channel: 20, value: 200 });
   await waitFor(
     'уставка и пуск записаны в ПЧ',
@@ -1680,6 +1687,24 @@ async function main(): Promise<void> {
   vfdRegs.set(10, 7); // мок-ПЧ сообщает аварию (код 7 по карте Elhart — «пониженное напряжение шины DC»)
   await waitFor('авария обнаружена', () => pumpStatus()?.faultCode === 7, 4000);
   check(true, 'опрос аварии: код 7 из регистра F0.10 дошёл до UI-состояния насоса');
+
+  await waitFor(
+    'телеметрия прочитана',
+    () => pumpStatus()?.currentA !== null && pumpStatus()?.speedRpm !== null && pumpStatus()?.tempC !== null,
+    4000,
+  );
+  check(
+    Math.abs((pumpStatus()?.currentA ?? -1) - 1.5) < 0.01,
+    `телеметрия (§27 доработки, §4 п.2): ток 1.50 А из регистра 11 (сотые А) прочитан верно (${pumpStatus()?.currentA})`,
+  );
+  check(
+    pumpStatus()?.speedRpm === 1450,
+    `телеметрия: обороты 1450 об/мин из регистра 12 прочитаны верно (${pumpStatus()?.speedRpm})`,
+  );
+  check(
+    Math.abs((pumpStatus()?.tempC ?? -1) - 45.2) < 0.01,
+    `телеметрия: температура 45.2°C из регистра 13 (десятые °C) прочитана верно (${pumpStatus()?.tempC})`,
+  );
 
   console.log('— Удалённое управление: OSC и MQTT (§1 доработки) —');
   mockNode.send(encodeOscMessage('/scene/a'), OSC_PORT, '127.0.0.1');
