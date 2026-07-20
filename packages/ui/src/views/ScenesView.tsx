@@ -22,6 +22,7 @@ import {
   type WaveSceneOptions,
 } from '@fountain-studio/shared';
 import { ListFilter } from '../components/ListFilter';
+import { PencilIcon, TrashIcon } from '../components/Icons';
 import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
 
@@ -174,7 +175,7 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
                     startRename(s);
                   }}
                 >
-                  ✎
+                  <PencilIcon />
                 </button>
                 <button
                   className="icon-btn icon-btn-danger"
@@ -184,7 +185,7 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
                     removeSceneById(s);
                   }}
                 >
-                  🗑
+                  <TrashIcon />
                 </button>
               </span>
             </li>

@@ -480,14 +480,15 @@ select {
   opacity: 1;
 }
 .icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 4px;
-  padding: 2px 5px;
+  padding: 4px;
   cursor: pointer;
   color: var(--fg-dim);
-  font-size: 13px;
-  line-height: 1.4;
 }
 .icon-btn:hover { background: var(--bg); border-color: var(--border); color: var(--fg); }
 .icon-btn-danger:hover { background: var(--danger-bg); border-color: var(--danger); color: var(--danger-text); }
