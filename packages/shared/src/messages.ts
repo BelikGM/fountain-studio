@@ -214,6 +214,12 @@ export type ClientMessage =
   | { type: 'pauseSequence'; sequenceId: string }
   | { type: 'resumeSequence'; sequenceId: string }
   | { type: 'stopSequence'; sequenceId: string }
+  // Группы секвенсоров (§27 доработки) — запускает/останавливает/ставит на
+  // паузу всех участников группы в одном тике движка (см. Playback.startGroup).
+  | { type: 'startSequenceGroup'; groupId: string }
+  | { type: 'pauseSequenceGroup'; groupId: string }
+  | { type: 'resumeSequenceGroup'; groupId: string }
+  | { type: 'stopSequenceGroup'; groupId: string }
   | { type: 'stopAllPlayback' }
   // Транспорт шоу. Аудио играет редактор; syncShow — периодическая коррекция
   // позиции движка по аудио-часам (мастер-клок — звук).

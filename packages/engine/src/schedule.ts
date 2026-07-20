@@ -63,6 +63,9 @@ export class Scheduler {
       case 'sequence':
         this.engine.startSequence(e.action.refId);
         break;
+      case 'sequenceGroup':
+        this.engine.startSequenceGroup(e.action.refId);
+        break;
       case 'scene':
         this.engine.setScene(e.action.refId);
         break;

@@ -5,11 +5,19 @@
  * Действия-переключатели: повторное нажатие останавливает то, что запустило.
  */
 
-export type KeyActionType = 'scene' | 'sequence' | 'show' | 'playlist' | 'stopAll' | 'blackout' | 'pauseAll';
+export type KeyActionType =
+  | 'scene'
+  | 'sequence'
+  | 'sequenceGroup'
+  | 'show'
+  | 'playlist'
+  | 'stopAll'
+  | 'blackout'
+  | 'pauseAll';
 
 export interface KeyAction {
   type: KeyActionType;
-  /** Для scene/sequence/show/playlist — id цели. */
+  /** Для scene/sequence/sequenceGroup/show/playlist — id цели. */
   refId?: string;
 }
 
@@ -22,7 +30,13 @@ export interface KeyBinding {
 
 export function sanitizeKeys(
   raw: unknown,
-  ids: { scenes: Set<string>; sequences: Set<string>; shows: Set<string>; playlists: Set<string> },
+  ids: {
+    scenes: Set<string>;
+    sequences: Set<string>;
+    sequenceGroups: Set<string>;
+    shows: Set<string>;
+    playlists: Set<string>;
+  },
 ): KeyBinding[] {
   if (!Array.isArray(raw)) return [];
   const out: KeyBinding[] = [];
@@ -36,6 +50,8 @@ export function sanitizeKeys(
     if (a.type === 'stopAll' || a.type === 'blackout' || a.type === 'pauseAll') action = { type: a.type };
     else if (a.type === 'scene' && a.refId !== undefined && ids.scenes.has(a.refId)) action = { type: 'scene', refId: a.refId };
     else if (a.type === 'sequence' && a.refId !== undefined && ids.sequences.has(a.refId)) action = { type: 'sequence', refId: a.refId };
+    else if (a.type === 'sequenceGroup' && a.refId !== undefined && ids.sequenceGroups.has(a.refId))
+      action = { type: 'sequenceGroup', refId: a.refId };
     else if (a.type === 'show' && a.refId !== undefined && ids.shows.has(a.refId)) action = { type: 'show', refId: a.refId };
     else if (a.type === 'playlist' && a.refId !== undefined && ids.playlists.has(a.refId)) action = { type: 'playlist', refId: a.refId };
     if (!action) continue;

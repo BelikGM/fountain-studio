@@ -94,6 +94,7 @@ export function App() {
       const actionLabel: Record<typeof a.type, string> = {
         scene: `сцена «${refName(project.scenes)}»`,
         sequence: `секвенсор «${refName(project.sequences)}»`,
+        sequenceGroup: `группа секвенсоров «${refName(project.sequenceGroups)}»`,
         show: `шоу «${refName(project.shows)}»`,
         playlist: `плейлист «${refName(project.playlists)}»`,
         stopAll: 'стоп всё',
@@ -112,6 +113,13 @@ export function App() {
             send({ type: 'startSequence', sequenceId: a.refId! });
           }
           break;
+        case 'sequenceGroup': {
+          const group = project.sequenceGroups.find((g) => g.id === a.refId);
+          const anyRunning = group?.sequenceIds.some((id) => playback.running.some((r) => r.sequenceId === id));
+          if (anyRunning) send({ type: 'stopSequenceGroup', groupId: a.refId! });
+          else send({ type: 'startSequenceGroup', groupId: a.refId! });
+          break;
+        }
         case 'show':
           if (playback.show?.showId === a.refId) send({ type: 'stopShow' });
           else send({ type: 'playShow', showId: a.refId!, positionMs: 0 });

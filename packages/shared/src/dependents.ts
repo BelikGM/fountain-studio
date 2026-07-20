@@ -7,7 +7,7 @@ import type { Project } from './project';
  * сущность нигде не используется, подтверждение можно не спрашивать.
  */
 
-type RefAction = 'scene' | 'sequence' | 'show' | 'playlist';
+type RefAction = 'scene' | 'sequence' | 'sequenceGroup' | 'show' | 'playlist';
 
 function actionDependents(project: Project, type: RefAction, id: string): string[] {
   const out: string[] = [];
@@ -42,8 +42,14 @@ export function sequenceDependents(project: Project, sequenceId: string): string
     ),
   ).length;
   if (shows > 0) out.push(`шоу (${shows})`);
+  const groups = project.sequenceGroups.filter((g) => g.sequenceIds.includes(sequenceId)).length;
+  if (groups > 0) out.push(`группы секвенсоров (${groups})`);
   out.push(...actionDependents(project, 'sequence', sequenceId));
   return out;
+}
+
+export function sequenceGroupDependents(project: Project, groupId: string): string[] {
+  return actionDependents(project, 'sequenceGroup', groupId);
 }
 
 export function showDependents(project: Project, showId: string): string[] {

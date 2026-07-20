@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react';
-import { sequenceDependents, uid, type Sequence, type SequenceStep } from '@fountain-studio/shared';
+import {
+  sequenceDependents,
+  sequenceGroupDependents,
+  uid,
+  type Sequence,
+  type SequenceGroup,
+  type SequenceStep,
+} from '@fountain-studio/shared';
 import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
 import { ListFilter } from '../components/ListFilter';
+import { PencilIcon, TrashIcon } from '../components/Icons';
 import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
 
@@ -10,6 +18,10 @@ export function SequencesView({ engine }: { engine: EngineConnection }) {
   const { project, playback, send, updateProject } = engine;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
+  // Группы секвенсоров (§27 доработки) — переключает контент справа на панель
+  // групп вместо редактора выбранного секвенсора, тот же принцип, что и
+  // остальные переключаемые панели этой сессии (Генератор, TrackEffects…).
+  const [groupsOpen, setGroupsOpen] = useState(false);
 
   const sequences = project?.sequences ?? [];
   const visibleSequences = sequences.filter((q) => q.name.toLowerCase().includes(filter.trim().toLowerCase()));
@@ -68,6 +80,13 @@ export function SequencesView({ engine }: { engine: EngineConnection }) {
           <button className="btn" onClick={removeSequence} disabled={!selected}>
             Удалить
           </button>
+          <button
+            className={groupsOpen ? 'btn btn-small active' : 'btn btn-small'}
+            title="Группы секвенсоров — синхронный/параллельный запуск нескольких вместе"
+            onClick={() => setGroupsOpen(!groupsOpen)}
+          >
+            Группы{project.sequenceGroups.length > 0 ? ` (${project.sequenceGroups.length})` : ''}
+          </button>
         </div>
         {sequences.length > 5 && <ListFilter value={filter} onChange={setFilter} />}
         <ul className="list">
@@ -95,7 +114,9 @@ export function SequencesView({ engine }: { engine: EngineConnection }) {
       </aside>
 
       <section className="content">
-        {selected === null ? (
+        {groupsOpen ? (
+          <SequenceGroupsPanel engine={engine} />
+        ) : selected === null ? (
           <div className="dim">Создайте секвенсор слева.</div>
         ) : (
           <SequenceEditor
@@ -107,6 +128,160 @@ export function SequencesView({ engine }: { engine: EngineConnection }) {
         )}
       </section>
     </main>
+  );
+}
+
+/**
+ * Группы секвенсоров (§27 доработки) — синхронный/параллельный запуск: старт
+ * группы вызывает startSequence на всех участниках в одном сообщении, движок
+ * стартует их в одном тике (см. Playback.startGroup) — по абсолютному часу,
+ * без риска разойтись по времени, в отличие от старой попытки в прежнем
+ * приложении.
+ */
+function SequenceGroupsPanel({ engine }: { engine: EngineConnection }) {
+  const { project, playback, send, updateProject } = engine;
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  if (!project) return null;
+  const groups = project.sequenceGroups;
+  const sequences = project.sequences;
+
+  const addGroup = (): void => {
+    const g: SequenceGroup = { id: uid(), name: `Группа ${groups.length + 1}`, sequenceIds: [] };
+    updateProject({ ...project, sequenceGroups: [...groups, g] });
+  };
+
+  const updateGroup = (g: SequenceGroup): void => {
+    updateProject({ ...project, sequenceGroups: groups.map((x) => (x.id === g.id ? g : x)) });
+  };
+
+  const removeGroup = (g: SequenceGroup): void => {
+    if (!confirmDelete('группы секвенсоров', g.name, sequenceGroupDependents(project, g.id))) return;
+    send({ type: 'stopSequenceGroup', groupId: g.id });
+    updateProject({ ...project, sequenceGroups: groups.filter((x) => x.id !== g.id) });
+  };
+
+  const toggleMember = (g: SequenceGroup, sequenceId: string): void => {
+    const has = g.sequenceIds.includes(sequenceId);
+    updateGroup({ ...g, sequenceIds: has ? g.sequenceIds.filter((id) => id !== sequenceId) : [...g.sequenceIds, sequenceId] });
+  };
+
+  const startRename = (g: SequenceGroup): void => {
+    setRenamingId(g.id);
+    setRenameDraft(g.name);
+  };
+  const commitRename = (g: SequenceGroup): void => {
+    const name = renameDraft.trim();
+    if (name && name !== g.name) updateGroup({ ...g, name });
+    setRenamingId(null);
+  };
+
+  const groupRunState = (g: SequenceGroup): { running: number; paused: number } => {
+    let running = 0;
+    let paused = 0;
+    for (const id of g.sequenceIds) {
+      const r = playback.running.find((x) => x.sequenceId === id);
+      if (r) (r.paused ? paused++ : running++);
+    }
+    return { running, paused };
+  };
+
+  return (
+    <div className="panel">
+      <div className="panel-title">Группы секвенсоров</div>
+      <p className="dim">
+        Секвенсоры одной группы запускаются/останавливаются вместе — например, вода и свет одним нажатием, вместо
+        нескольких клавиш подряд.
+      </p>
+      {sequences.length === 0 ? (
+        <p className="dim">Нет секвенсоров — создайте их слева.</p>
+      ) : (
+        <>
+          {groups.length === 0 && <p className="dim">Групп ещё нет.</p>}
+          {groups.map((g) => {
+            const { running, paused } = groupRunState(g);
+            const anyActive = running + paused > 0;
+            return (
+              <div key={g.id} className="panel" style={{ marginBottom: 8 }}>
+                <div className="form-row">
+                  {renamingId === g.id ? (
+                    <input
+                      className="input input-mini"
+                      autoFocus
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onBlur={() => commitRename(g)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') e.currentTarget.blur();
+                        else if (e.key === 'Escape') setRenamingId(null);
+                      }}
+                    />
+                  ) : (
+                    <span className="input-title">{g.name}</span>
+                  )}
+                  {anyActive && (
+                    <span className="badge badge-live">
+                      {running > 0 ? `играет (${running})` : ''}
+                      {running > 0 && paused > 0 ? ', ' : ''}
+                      {paused > 0 ? `пауза (${paused})` : ''}
+                    </span>
+                  )}
+                  <span className="spacer" />
+                  {!anyActive ? (
+                    <button
+                      className="btn active"
+                      disabled={g.sequenceIds.length === 0}
+                      onClick={() => send({ type: 'startSequenceGroup', groupId: g.id })}
+                    >
+                      ▶ Пуск
+                    </button>
+                  ) : (
+                    <>
+                      {paused === 0 ? (
+                        <button className="btn" onClick={() => send({ type: 'pauseSequenceGroup', groupId: g.id })}>
+                          ⏸ Пауза
+                        </button>
+                      ) : (
+                        <button
+                          className="btn active"
+                          onClick={() => send({ type: 'resumeSequenceGroup', groupId: g.id })}
+                        >
+                          ▶ Продолжить
+                        </button>
+                      )}
+                      <button className="btn" onClick={() => send({ type: 'stopSequenceGroup', groupId: g.id })}>
+                        ■ Стоп
+                      </button>
+                    </>
+                  )}
+                  <button className="icon-btn" title="Переименовать" onClick={() => startRename(g)}>
+                    <PencilIcon />
+                  </button>
+                  <button className="icon-btn icon-btn-danger" title="Удалить группу" onClick={() => removeGroup(g)}>
+                    <TrashIcon />
+                  </button>
+                </div>
+                <div className="utility-device-list">
+                  {sequences.map((q) => (
+                    <label key={q.id} className="field">
+                      <input
+                        type="checkbox"
+                        checked={g.sequenceIds.includes(q.id)}
+                        onChange={() => toggleMember(g, q.id)}
+                      />{' '}
+                      {q.name}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          <button className="btn" onClick={addGroup}>
+            + Группа
+          </button>
+        </>
+      )}
+    </div>
   );
 }
 

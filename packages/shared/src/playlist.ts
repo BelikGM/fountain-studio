@@ -36,6 +36,7 @@ export type ScheduleAction =
   | { type: 'playlist'; refId: string }
   | { type: 'show'; refId: string }
   | { type: 'sequence'; refId: string }
+  | { type: 'sequenceGroup'; refId: string }
   | { type: 'scene'; refId: string }
   /** Полный стоп воспроизведения (вечернее выключение фонтана). */
   | { type: 'stopAll' };
@@ -76,7 +77,13 @@ export function sanitizePlaylists(raw: unknown, showIds: Set<string>): Playlist[
 
 export function sanitizeSchedule(
   raw: unknown,
-  ids: { playlists: Set<string>; shows: Set<string>; sequences: Set<string>; scenes: Set<string> },
+  ids: {
+    playlists: Set<string>;
+    shows: Set<string>;
+    sequences: Set<string>;
+    sequenceGroups: Set<string>;
+    scenes: Set<string>;
+  },
 ): ScheduleEntry[] {
   if (!Array.isArray(raw)) return [];
   const out: ScheduleEntry[] = [];
@@ -89,6 +96,8 @@ export function sanitizeSchedule(
     else if (a.type === 'playlist' && ids.playlists.has(a.refId)) action = { type: 'playlist', refId: a.refId };
     else if (a.type === 'show' && ids.shows.has(a.refId)) action = { type: 'show', refId: a.refId };
     else if (a.type === 'sequence' && ids.sequences.has(a.refId)) action = { type: 'sequence', refId: a.refId };
+    else if (a.type === 'sequenceGroup' && ids.sequenceGroups.has(a.refId))
+      action = { type: 'sequenceGroup', refId: a.refId };
     else if (a.type === 'scene' && ids.scenes.has(a.refId)) action = { type: 'scene', refId: a.refId };
     if (!action) continue;
     out.push({

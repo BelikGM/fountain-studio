@@ -57,6 +57,8 @@ export function ScheduleView({ engine }: { engine: EngineConnection }) {
         return project.shows;
       case 'sequence':
         return project.sequences;
+      case 'sequenceGroup':
+        return project.sequenceGroups;
       case 'scene':
         return project.scenes;
       case 'stopAll':
@@ -148,6 +150,7 @@ export function ScheduleView({ engine }: { engine: EngineConnection }) {
                     <option value="playlist">Плейлист</option>
                     <option value="show">Шоу</option>
                     <option value="sequence">Секвенсор</option>
+                    <option value="sequenceGroup">Группа секвенсоров</option>
                     <option value="scene">Сцена</option>
                     <option value="stopAll">Стоп всё</option>
                   </select>

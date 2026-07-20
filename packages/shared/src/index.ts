@@ -11,6 +11,7 @@ export * from './playlist';
 export * from './project';
 export * from './remote';
 export * from './scenegen';
+export * from './sequencegroup';
 export * from './show';
 export * from './smoothing';
 export * from './utilitylight';

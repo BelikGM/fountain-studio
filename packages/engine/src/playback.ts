@@ -10,6 +10,7 @@ import {
   type PlaylistTransportState,
   type Project,
   type Sequence,
+  type SequenceGroup,
   type Show,
   type ShowTransportState,
 } from '@fountain-studio/shared';
@@ -229,6 +230,42 @@ export class Playback {
     const before = this.running.length;
     this.running = this.running.filter((x) => x.sequence.id !== sequenceId);
     if (this.running.length !== before) this.version++;
+  }
+
+  // ── Группы секвенсоров (§27 доработки) ──────────────────────────────────────
+  // «Сделать правильно» синхронный/параллельный запуск: просто вызываем
+  // start/stop/pause/resume на каждом участнике В ОДНОМ вызове (один и тот же
+  // nowMs). Наши секвенсоры считают elapsed от абсолютного nowMs, не копят
+  // дельты тик-к-тику — участники, стартовавшие в общий момент, физически не
+  // могут разойтись по времени. Никакой отдельной машины синхронизации не
+  // нужно, и разойтись они уже не смогут даже за часы работы.
+
+  private findGroup(groupId: string): SequenceGroup | null {
+    return this.project?.sequenceGroups.find((g) => g.id === groupId) ?? null;
+  }
+
+  startGroup(groupId: string, nowMs: number): void {
+    const group = this.findGroup(groupId);
+    if (!group) return;
+    for (const id of group.sequenceIds) this.start(id, nowMs);
+  }
+
+  stopGroup(groupId: string): void {
+    const group = this.findGroup(groupId);
+    if (!group) return;
+    for (const id of group.sequenceIds) this.stop(id);
+  }
+
+  pauseGroup(groupId: string, nowMs: number): void {
+    const group = this.findGroup(groupId);
+    if (!group) return;
+    for (const id of group.sequenceIds) this.pause(id, nowMs);
+  }
+
+  resumeGroup(groupId: string, nowMs: number): void {
+    const group = this.findGroup(groupId);
+    if (!group) return;
+    for (const id of group.sequenceIds) this.resume(id, nowMs);
   }
 
   stopAll(): void {

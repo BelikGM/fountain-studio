@@ -1833,6 +1833,63 @@ async function main(): Promise<void> {
     await waitFor('utilityLight сброшен к умолчанию', () => projectEcho?.utilityLight.enabled === false);
   }
 
+  console.log('— Группы секвенсоров: синхронный/параллельный запуск (§27 доработки, «сделать правильно») —');
+  {
+    send({
+      type: 'updateProject',
+      project: {
+        ...store.project,
+        sequenceGroups: [{ id: 'grp1', name: 'Тест-группа', sequenceIds: ['seq1', 'seqEffect'] }],
+      },
+    });
+    await waitFor('группа применена', () => (projectEcho?.sequenceGroups.length ?? 0) === 1);
+
+    send({ type: 'startSequenceGroup', groupId: 'grp1' });
+    await waitFor(
+      'оба участника группы стартовали',
+      () =>
+        playback.running.some((r) => r.sequenceId === 'seq1') &&
+        playback.running.some((r) => r.sequenceId === 'seqEffect'),
+      2000,
+    );
+    check(true, 'startSequenceGroup: оба секвенсора-участника запущены одним действием');
+
+    send({ type: 'pauseSequenceGroup', groupId: 'grp1' });
+    await waitFor(
+      'оба участника на паузе',
+      () =>
+        playback.running.find((r) => r.sequenceId === 'seq1')?.paused === true &&
+        playback.running.find((r) => r.sequenceId === 'seqEffect')?.paused === true,
+      2000,
+    );
+    check(true, 'pauseSequenceGroup: пауза применилась ко всем участникам сразу');
+
+    send({ type: 'resumeSequenceGroup', groupId: 'grp1' });
+    await waitFor(
+      'оба участника сняты с паузы',
+      () =>
+        playback.running.find((r) => r.sequenceId === 'seq1')?.paused === false &&
+        playback.running.find((r) => r.sequenceId === 'seqEffect')?.paused === false,
+      2000,
+    );
+    check(true, 'resumeSequenceGroup: снятие с паузы применилось ко всем участникам сразу');
+
+    send({ type: 'stopSequenceGroup', groupId: 'grp1' });
+    await waitFor(
+      'оба участника остановлены',
+      () =>
+        !playback.running.some((r) => r.sequenceId === 'seq1') &&
+        !playback.running.some((r) => r.sequenceId === 'seqEffect'),
+      2000,
+    );
+    check(true, 'stopSequenceGroup: остановка применилась ко всем участникам сразу');
+
+    send({ type: 'updateProject', project: { ...store.project, sequenceGroups: [] } });
+    await waitFor('тестовая группа убрана', () => (projectEcho?.sequenceGroups.length ?? 0) === 0);
+    send({ type: 'stopAllPlayback' });
+    await waitFor('всё остановлено после теста', () => playback.running.length === 0);
+  }
+
   console.log('— Насос на Modbus TCP (мок-ПЧ, карта регистров Elhart EMD-PUMP) —');
   const pumpStatus = () => modbusState?.pumps.find((p) => p.deviceId === 'pump2');
   send({ type: 'setChannel', universe: 1, channel: 20, value: 200 });

@@ -10,6 +10,7 @@ import {
   type MqttBinding,
   type OscBinding,
 } from './remote';
+import { sanitizeSequenceGroups, type SequenceGroup } from './sequencegroup';
 import { sanitizeShows, type Show } from './show';
 import { defaultUtilityLightConfig, sanitizeUtilityLightConfig, type UtilityLightConfig } from './utilitylight';
 import { defaultWindLimitConfig, sanitizeWindLimitConfig, type WindLimitConfig } from './windlimit';
@@ -261,6 +262,8 @@ export interface Project {
   devices: PatchedDevice[];
   scenes: Scene[];
   sequences: Sequence[];
+  /** Группы секвенсоров — синхронный/параллельный запуск нескольких вместе (§27 доработки). */
+  sequenceGroups: SequenceGroup[];
   shows: Show[];
   playlists: Playlist[];
   schedule: ScheduleEntry[];
@@ -343,6 +346,7 @@ export function emptyProject(name = 'Новый проект'): Project {
     devices: [],
     scenes: [],
     sequences: [],
+    sequenceGroups: [],
     shows: [],
     playlists: [],
     schedule: [],
@@ -460,6 +464,7 @@ export function sanitizeProject(raw: unknown): Project {
     devices: [],
     scenes: [],
     sequences: [],
+    sequenceGroups: [],
     shows: [],
     playlists: [],
     schedule: [],
@@ -552,6 +557,7 @@ export function sanitizeProject(raw: unknown): Project {
       });
     }
   }
+  project.sequenceGroups = sanitizeSequenceGroups(r.sequenceGroups, new Set(project.sequences.map((q) => q.id)));
   project.shows = sanitizeShows(
     r.shows,
     sceneIds,
@@ -559,15 +565,18 @@ export function sanitizeProject(raw: unknown): Project {
     deviceIds,
   );
   project.playlists = sanitizePlaylists(r.playlists, new Set(project.shows.map((s) => s.id)));
+  const sequenceGroupIds = new Set(project.sequenceGroups.map((g) => g.id));
   project.schedule = sanitizeSchedule(r.schedule, {
     playlists: new Set(project.playlists.map((p) => p.id)),
     shows: new Set(project.shows.map((s) => s.id)),
     sequences: new Set(project.sequences.map((q) => q.id)),
+    sequenceGroups: sequenceGroupIds,
     scenes: sceneIds,
   });
   const remoteIds = {
     scenes: sceneIds,
     sequences: new Set(project.sequences.map((q) => q.id)),
+    sequenceGroups: sequenceGroupIds,
     shows: new Set(project.shows.map((s) => s.id)),
     playlists: new Set(project.playlists.map((p) => p.id)),
   };

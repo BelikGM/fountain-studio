@@ -390,6 +390,22 @@ export class Engine {
     this.playback.stop(sequenceId);
   }
 
+  startSequenceGroup(groupId: string): void {
+    this.playback.startGroup(groupId, this.nowMs);
+  }
+
+  pauseSequenceGroup(groupId: string): void {
+    this.playback.pauseGroup(groupId, this.nowMs);
+  }
+
+  resumeSequenceGroup(groupId: string): void {
+    this.playback.resumeGroup(groupId, this.nowMs);
+  }
+
+  stopSequenceGroup(groupId: string): void {
+    this.playback.stopGroup(groupId);
+  }
+
   stopAllPlayback(): void {
     this.playback.stopAll();
   }

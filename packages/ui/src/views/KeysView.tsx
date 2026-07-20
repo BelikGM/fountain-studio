@@ -5,6 +5,7 @@ import type { EngineConnection } from '../useEngine';
 const ACTION_LABEL: Record<KeyAction['type'], string> = {
   scene: 'Сцена (вкл/выкл)',
   sequence: 'Секвенсор (пуск/стоп)',
+  sequenceGroup: 'Группа секвенсоров (пуск/стоп)',
   show: 'Шоу (пуск/стоп)',
   playlist: 'Плейлист (пуск/стоп)',
   stopAll: 'Стоп всё',
@@ -53,6 +54,8 @@ export function KeysView({ engine }: { engine: EngineConnection }) {
         return project.scenes;
       case 'sequence':
         return project.sequences;
+      case 'sequenceGroup':
+        return project.sequenceGroups;
       case 'show':
         return project.shows;
       case 'playlist':

@@ -176,6 +176,22 @@ export function startServer(
           engine.stopSequence(msg.sequenceId);
           broadcastPlayback();
           break;
+        case 'startSequenceGroup':
+          engine.startSequenceGroup(msg.groupId);
+          broadcastPlayback();
+          break;
+        case 'pauseSequenceGroup':
+          engine.pauseSequenceGroup(msg.groupId);
+          broadcastPlayback();
+          break;
+        case 'resumeSequenceGroup':
+          engine.resumeSequenceGroup(msg.groupId);
+          broadcastPlayback();
+          break;
+        case 'stopSequenceGroup':
+          engine.stopSequenceGroup(msg.groupId);
+          broadcastPlayback();
+          break;
         case 'stopAllPlayback':
           engine.stopAllPlayback();
           broadcastPlayback();
