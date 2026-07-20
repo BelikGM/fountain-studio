@@ -13,3 +13,4 @@ export * from './remote';
 export * from './scenegen';
 export * from './show';
 export * from './videoanalysis';
+export * from './wizard';

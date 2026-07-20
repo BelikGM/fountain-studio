@@ -32,6 +32,7 @@ import {
   mirrorScene,
   parseDxf,
   peakEvents,
+  planDeviceWizard,
   profileMap,
   radialWaveScene,
   radialWaveSequenceScenes,
@@ -1152,6 +1153,60 @@ async function main(): Promise<void> {
   );
   const cycNone = measureCyclePeriodMs(cycFrames.slice(0, 5));
   check(cycNone.periodMs === null, 'measureCyclePeriodMs: на 0.5 с записи периода честно нет');
+
+  console.log('— Мастер нового объекта: несколько строк, перелив по вселенным (§27 п.11) —');
+  {
+    const wizProject = emptyProject('Мастер-тест');
+    const basic = planDeviceWizard(wizProject, [1], [
+      { profileId: 'pump', count: 2, namePrefix: 'Насос', startUniverse: null, startAddress: null },
+      { profileId: 'rgb', count: 2, namePrefix: 'Свет', startUniverse: null, startAddress: null },
+    ]);
+    check(
+      basic.placements.length === 4 &&
+        basic.placements[0]!.universe === 1 &&
+        basic.placements[0]!.address === 1 &&
+        basic.placements[1]!.address === 2 &&
+        basic.placements[2]!.address === 3 && // rgb продолжает после насосов, не с адреса 1
+        basic.placements[3]!.address === 6 && // rgb размером 3 канала — второй светильник после первого (3..5)
+        basic.newUniverseIds.length === 0,
+      `wizard: две строки подряд без перекрытия, вторая продолжает адресацию первой (${basic.placements.map((p) => `${p.name}=U${p.universe}:${p.address}`).join(', ')})`,
+    );
+
+    const withOverride = planDeviceWizard(wizProject, [1], [
+      { profileId: 'pump', count: 1, namePrefix: 'Насос', startUniverse: null, startAddress: null },
+      { profileId: 'valve', count: 1, namePrefix: 'Клапан', startUniverse: 1, startAddress: 100 },
+    ]);
+    check(
+      withOverride.placements[1]!.universe === 1 && withOverride.placements[1]!.address === 100,
+      'wizard: явный старт строки игнорирует автопродолжение и прыгает на указанный адрес',
+    );
+
+    const overflow = planDeviceWizard(wizProject, [1], [
+      { profileId: 'pump', count: 5, namePrefix: 'П', startUniverse: 1, startAddress: 510 },
+    ]);
+    check(
+      overflow.placements.length === 5 &&
+        overflow.placements[2]!.universe === 1 &&
+        overflow.placements[2]!.address === 512 &&
+        overflow.placements[3]!.universe === 2 &&
+        overflow.placements[3]!.address === 1 &&
+        overflow.newUniverseIds.length === 1 &&
+        overflow.newUniverseIds[0] === 2,
+      `wizard: 5 приборов от адреса 510 — три помещаются в вселенную 1 (до 512), два переливаются в новую вселенную 2 (${overflow.placements.map((p) => `U${p.universe}:${p.address}`).join(', ')})`,
+    );
+
+    const occupiedProject: Project = {
+      ...wizProject,
+      devices: [{ id: 'existing', name: 'Насос существующий', profileId: 'pump', universe: 1, address: 1 }],
+    };
+    const respectsExisting = planDeviceWizard(occupiedProject, [1], [
+      { profileId: 'pump', count: 1, namePrefix: 'Насос', startUniverse: 1, startAddress: 1 },
+    ]);
+    check(
+      respectsExisting.placements[0]!.address === 2,
+      `wizard: адрес 1 уже занят существующим прибором патча — новый встал на 2 (получил ${respectsExisting.placements[0]!.address})`,
+    );
+  }
 
   console.log('— Мониторинг сети (мок-нода Art-Net/RDM) —');
   await waitFor(

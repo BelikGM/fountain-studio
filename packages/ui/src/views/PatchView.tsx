@@ -6,20 +6,24 @@ import {
   deviceRange,
   findPatchIssues,
   nextFreeAddress,
+  planDeviceWizard,
   profileMap,
   shiftDeviceAddresses,
   swapDeviceAddresses,
   uid,
   type ChannelRole,
   type ChannelTrim,
+  type ConfigUniverse,
   type DeviceKind,
   type DeviceProfile,
   type ModbusConnection,
   type ModbusPumpConfig,
   type PatchedDevice,
   type PumpModbusStatus,
+  type WizardRow,
 } from '@fountain-studio/shared';
 import { confirmDelete } from '../confirmDelete';
+import { requestTab } from '../navigate';
 import type { EngineConnection } from '../useEngine';
 
 const KIND_LABEL: Record<DeviceKind, string> = {
@@ -49,6 +53,7 @@ export function PatchView({ engine }: { engine: EngineConnection }) {
     <main className="view">
       <ProjectHeader engine={engine} />
       <AddDevices engine={engine} />
+      <DeviceWizard engine={engine} />
       <DevicesTable engine={engine} />
       <Profiles project={project} updateProject={updateProject} universesCount={universes.length} />
     </main>
@@ -192,6 +197,222 @@ function AddDevices({ engine }: { engine: EngineConnection }) {
         </button>
       </div>
       {error && <div className="error-text">{error}</div>}
+    </section>
+  );
+}
+
+interface WizardRowState {
+  key: string;
+  profileId: string;
+  count: number;
+  namePrefix: string;
+  customStart: boolean;
+  startUniverse: number;
+  startAddress: number;
+}
+
+/**
+ * Мастер нового объекта (§27 доработки, УХ п.11): несколько типов приборов
+ * одним заходом, с общим порядком адресации между строками. Не хватает
+ * вселенных под перелив — создаём их сами (шлём updateConfig с
+ * заглушкой Art-Net/127.0.0.1, как кнопка «+ Вселенная» в Настройках) и
+ * предупреждаем, что это на секунду остановит воспроизведение.
+ */
+function DeviceWizard({ engine }: { engine: EngineConnection }) {
+  const { project, universes, engineConfig, updateProject, send } = engine;
+  const profiles = allProfiles(project!);
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<WizardRowState[]>([]);
+  const [result, setResult] = useState<{ added: number; newUniverses: number } | null>(null);
+
+  const newRow = (): WizardRowState => ({
+    key: uid(),
+    profileId: profiles[0]?.id ?? 'pump',
+    count: 10,
+    namePrefix: '',
+    customStart: false,
+    startUniverse: universes[0]?.id ?? 1,
+    startAddress: 1,
+  });
+
+  const openWizard = (): void => {
+    setResult(null);
+    setRows(rows.length > 0 ? rows : [newRow()]);
+    setOpen(true);
+  };
+
+  const patchRow = (key: string, patch: Partial<WizardRowState>): void => {
+    setRows(rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  };
+
+  const place = (): void => {
+    if (!project || !engineConfig) return;
+    const wizardRows: WizardRow[] = rows
+      .filter((r) => r.count > 0)
+      .map((r) => {
+        const profile = profiles.find((p) => p.id === r.profileId);
+        return {
+          profileId: r.profileId,
+          count: r.count,
+          namePrefix: r.namePrefix.trim() !== '' ? r.namePrefix.trim() : KIND_LABEL[profile?.kind ?? 'other'],
+          startUniverse: r.customStart ? r.startUniverse : null,
+          startAddress: r.customStart ? r.startAddress : null,
+        };
+      });
+    if (wizardRows.length === 0) return;
+
+    const plan = planDeviceWizard(project, universes.map((u) => u.id), wizardRows);
+    if (plan.newUniverseIds.length > 0) {
+      const extra: ConfigUniverse[] = plan.newUniverseIds.map((id) => ({
+        id,
+        label: `Вселенная ${id}`,
+        outputs: [{ type: 'artnet', host: '127.0.0.1', universe: id - 1 }],
+      }));
+      send({ type: 'updateConfig', tickMs: engineConfig.tickMs, universes: [...engineConfig.universes, ...extra] });
+    }
+    const devices: PatchedDevice[] = plan.placements.map((p) => ({
+      id: uid(),
+      name: p.name,
+      profileId: p.profileId,
+      universe: p.universe,
+      address: p.address,
+    }));
+    updateProject({ ...project, devices: [...project.devices, ...devices] });
+    setResult({ added: devices.length, newUniverses: plan.newUniverseIds.length });
+    setRows([]);
+  };
+
+  if (!open) {
+    return (
+      <div className="form-row">
+        <button className="btn" onClick={openWizard}>
+          🧙 Мастер нового объекта
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <section className="panel">
+      <h2>Мастер нового объекта</h2>
+      <p className="dim">
+        Несколько типов приборов сразу, одной адресацией: каждая следующая строка продолжает с того
+        адреса, на котором остановилась предыдущая (в том числе переходя в следующую вселенную), если
+        не задан свой старт.
+      </p>
+
+      {result ? (
+        <div className="form-row">
+          <span className="ok-text">
+            ✔ добавлено приборов: {result.added}
+            {result.newUniverses > 0 && ` (создано новых вселенных: ${result.newUniverses})`}
+          </span>
+          <button className="btn" onClick={() => requestTab('layout')}>
+            → Перейти в 3D и расставить кольцом
+          </button>
+          <button className="btn btn-small" onClick={() => setOpen(false)}>
+            Закрыть
+          </button>
+        </div>
+      ) : (
+        <>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Профиль</th>
+                <th>Кол-во</th>
+                <th>Имя (префикс)</th>
+                <th>Свой старт</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const profile = profiles.find((p) => p.id === r.profileId);
+                return (
+                  <tr key={r.key}>
+                    <td>
+                      <select value={r.profileId} onChange={(e) => patchRow(r.key, { profileId: e.target.value })}>
+                        {profiles.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name} ({p.channels.length} адр.)
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <input
+                        className="input input-num"
+                        type="number"
+                        min={1}
+                        value={r.count}
+                        onChange={(e) => patchRow(r.key, { count: Math.max(1, Math.round(Number(e.target.value)) || 1) })}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        className="input"
+                        placeholder={KIND_LABEL[profile?.kind ?? 'other']}
+                        value={r.namePrefix}
+                        onChange={(e) => patchRow(r.key, { namePrefix: e.target.value })}
+                      />
+                    </td>
+                    <td>
+                      <label className="field">
+                        <input
+                          type="checkbox"
+                          checked={r.customStart}
+                          onChange={(e) => patchRow(r.key, { customStart: e.target.checked })}
+                        />
+                        {r.customStart && (
+                          <>
+                            {' U'}
+                            <select
+                              value={r.startUniverse}
+                              onChange={(e) => patchRow(r.key, { startUniverse: Number(e.target.value) })}
+                            >
+                              {universes.map((u) => (
+                                <option key={u.id} value={u.id}>
+                                  {u.id}
+                                </option>
+                              ))}
+                            </select>
+                            {' :'}
+                            <input
+                              className="input input-num"
+                              type="number"
+                              min={1}
+                              max={DMX_UNIVERSE_SIZE}
+                              value={r.startAddress}
+                              onChange={(e) => patchRow(r.key, { startAddress: Math.max(1, Number(e.target.value)) })}
+                            />
+                          </>
+                        )}
+                      </label>
+                    </td>
+                    <td>
+                      <button className="btn btn-small" onClick={() => setRows(rows.filter((x) => x.key !== r.key))}>
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <div className="form-row" style={{ marginTop: 10 }}>
+            <button className="btn btn-small" onClick={() => setRows([...rows, newRow()])}>
+              + Строка
+            </button>
+            <button className="btn active" disabled={rows.length === 0} onClick={place}>
+              Разместить
+            </button>
+            <button className="btn btn-small" onClick={() => setOpen(false)}>
+              Отмена
+            </button>
+          </div>
+        </>
+      )}
     </section>
   );
 }

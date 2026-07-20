@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { comboFromEvent, getCombo } from './hotkeys';
+import { registerTabNavigator } from './navigate';
 import { isOperatorLocked } from './operatorMode';
 import { useEngine } from './useEngine';
 import { KeysView } from './views/KeysView';
@@ -67,6 +68,11 @@ export function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem('fs-theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    registerTabNavigator((t) => setTab(t as Tab));
+    return () => registerTabNavigator(null);
+  }, []);
 
   // Глобальные клавиатурные привязки (вкладка «Клавиши»): работают из любой
   // вкладки, когда фокус не в поле ввода и клавишу не перехватил экран
