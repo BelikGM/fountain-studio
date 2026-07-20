@@ -9,7 +9,6 @@ import {
   ringPositions,
   uid,
   type Bowl,
-  type ChannelRole,
   type DxfDrawing,
   type DxfLayerRole,
   type FountainLayout,
@@ -22,6 +21,7 @@ import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipbo
 import { comboFromEvent, getCombo } from '../hotkeys';
 import type { EngineConnection } from '../useEngine';
 import { FountainScene, type SelectedElement } from '../three/FountainScene';
+import { buildDeviceIndex, createLiveHooks } from '../three/liveHooks';
 
 type Selected = { type: 'nozzle' | 'light' | 'bowl'; id: string } | null;
 
@@ -34,16 +34,7 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
   // кадры без пересоздания сцены.
   const framesRef = useRef(frames);
   framesRef.current = frames;
-  const deviceIndex = useMemo(() => {
-    const map = new Map<string, { universe: number; address: number; roles: ChannelRole[] }>();
-    if (!project) return map;
-    const profiles = profileMap(project);
-    for (const d of project.devices) {
-      const p = profiles.get(d.profileId);
-      if (p) map.set(d.id, { universe: d.universe, address: d.address, roles: p.channels.map((c) => c.role) });
-    }
-    return map;
-  }, [project]);
+  const deviceIndex = useMemo(() => (project ? buildDeviceIndex(project) : new Map()), [project]);
   const deviceIndexRef = useRef(deviceIndex);
   deviceIndexRef.current = deviceIndex;
 
@@ -69,62 +60,11 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
 
   useEffect(() => {
     if (!containerRef.current) return;
-    const chan = (idx: { universe: number; address: number }, offset: number): number =>
-      framesRef.current[idx.universe]?.[idx.address - 1 + offset] ?? 0;
     const scene = new FountainScene(containerRef.current, {
       onSelect: (sel) => hooksRef.current.onSelect(sel),
       onMove: () => {},
       onMoveEnd: (t, id, x, y) => hooksRef.current.onMoveEnd(t, id, x, y),
-      live: {
-        nozzleFlow: (n) => {
-          const map = deviceIndexRef.current;
-          let flow = 0;
-          let cut = false;
-          let bound = false;
-          const pump = n.pumpDeviceId ? map.get(n.pumpDeviceId) : undefined;
-          if (pump) {
-            bound = true;
-            const ci = Math.max(0, pump.roles.indexOf('intensity'));
-            flow = chan(pump, ci) / 255;
-          }
-          const valve = n.valveDeviceId ? map.get(n.valveDeviceId) : undefined;
-          if (valve) {
-            const ci = Math.max(0, valve.roles.indexOf('open'));
-            const open = chan(valve, ci) >= 128;
-            if (!bound) flow = open ? 1 : 0;
-            else if (!open) flow = 0;
-            if (!open) cut = true;
-            bound = true;
-          }
-          return { flow: bound ? flow : 0, cut };
-        },
-        pump2Level: (n) => {
-          const map = deviceIndexRef.current;
-          const pump2 = n.pump2DeviceId ? map.get(n.pump2DeviceId) : undefined;
-          if (!pump2) return 0;
-          const ci = Math.max(0, pump2.roles.indexOf('intensity'));
-          return chan(pump2, ci) / 255;
-        },
-        lightColor: (deviceId) => {
-          if (!deviceId) return null;
-          const d = deviceIndexRef.current.get(deviceId);
-          if (!d) return null;
-          const ri = d.roles.indexOf('red');
-          const gi = d.roles.indexOf('green');
-          const bi = d.roles.indexOf('blue');
-          const wi = d.roles.indexOf('white');
-          if (ri >= 0 && gi >= 0 && bi >= 0) {
-            const w = wi >= 0 ? (chan(d, wi) / 255) * 0.9 : 0;
-            return [
-              Math.min(1, chan(d, ri) / 255 + w),
-              Math.min(1, chan(d, gi) / 255 + w),
-              Math.min(1, chan(d, bi) / 255 + w),
-            ];
-          }
-          const v = chan(d, Math.max(0, d.roles.indexOf('intensity'))) / 255;
-          return [v, v, v * 0.95];
-        },
-      },
+      live: createLiveHooks(deviceIndexRef, framesRef),
     });
     sceneRef.current = scene;
     return () => {

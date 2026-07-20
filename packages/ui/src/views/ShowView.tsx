@@ -35,6 +35,7 @@ import { confirmDelete } from '../confirmDelete';
 import { comboFromEvent, getCombo } from '../hotkeys';
 import type { EngineConnection } from '../useEngine';
 import { extractVideoFrameSamples } from '../videoFrames';
+import { ShowVideoRender } from './ShowVideoRender';
 
 const HEAD_W = 216;
 const RULER_H = 28;
@@ -691,6 +692,9 @@ function ShowEditor({
   const [autoStatus, setAutoStatus] = useState<string | null>(null);
   const [videoStatus, setVideoStatus] = useState<string | null>(null);
   const [videoBusy, setVideoBusy] = useState(false);
+  // Рендер шоу в видеофайл (§27 доработки, УХ п.17в) — отдельный оверлей,
+  // открывается по кнопке ниже.
+  const [videoRenderOpen, setVideoRenderOpen] = useState(false);
 
   const autoStage = (): void => {
     if (!buffer || !project) return;
@@ -1109,6 +1113,17 @@ function ShowEditor({
             }}
           />
         </label>
+        <button
+          className="btn"
+          onClick={() => {
+            if (playing) pause();
+            setVideoRenderOpen(true);
+          }}
+          disabled={durMs <= 0}
+          title="Записать 3D-сцену на время шоу в видеофайл — показать заказчику программу до выезда на объект"
+        >
+          🎥 Рендер в видео
+        </button>
         <span className="spacer" />
         {blocksTracks.length > 0 && (
           <select
@@ -1455,6 +1470,10 @@ function ShowEditor({
             );
           })()}
       </div>
+
+      {videoRenderOpen && (
+        <ShowVideoRender show={show} buffer={buffer} engine={engine} onClose={() => setVideoRenderOpen(false)} />
+      )}
     </>
   );
 }

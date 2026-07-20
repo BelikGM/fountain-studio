@@ -881,6 +881,36 @@ select {
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Модальный оверлей (рендер шоу в видео) ─────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+.modal {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+}
+.video-render-canvas {
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  background: #0b0e13;
+}
+
 /* ── Расписание ──────────────────────────────────────────── */
 .days { display: flex; gap: 2px; }
 .row-disabled td { opacity: 0.45; }
