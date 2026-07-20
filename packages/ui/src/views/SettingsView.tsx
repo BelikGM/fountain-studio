@@ -10,6 +10,13 @@ import {
   useHotkey,
   type HotkeyId,
 } from '../hotkeys';
+import {
+  checkOperatorPassword,
+  clearOperatorPassword,
+  hasOperatorPassword,
+  lockOperator,
+  setOperatorPassword,
+} from '../operatorMode';
 import type { EngineConnection } from '../useEngine';
 
 /**
@@ -104,6 +111,139 @@ function HotkeysPanel() {
           ))}
         </tbody>
       </table>
+    </section>
+  );
+}
+
+/**
+ * Режим оператора (§27 доработки, УХ п.8): упрощённый экран для дежурного
+ * персонала, все вкладки редактора скрыты за паролем. Настройка — здесь;
+ * сама блокировка переживает перезапуск приложения (снимается только паролем
+ * на экране оператора), поэтому «Заблокировать» перезагружает страницу —
+ * так App.tsx заново прочитает состояние с нуля, без протаскивания коллбэков
+ * между вкладками.
+ */
+function OperatorPanel() {
+  const [hasPw, setHasPw] = useState(hasOperatorPassword());
+  const [mode, setMode] = useState<'idle' | 'set' | 'change'>('idle');
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState('');
+
+  const reset = (): void => {
+    setMode('idle');
+    setCurrent('');
+    setNext('');
+    setConfirm('');
+    setError('');
+  };
+
+  const submitNew = async (): Promise<void> => {
+    if (mode === 'change' && !(await checkOperatorPassword(current))) {
+      setError('Текущий пароль неверен');
+      return;
+    }
+    if (next.length < 4) {
+      setError('Минимум 4 символа');
+      return;
+    }
+    if (next !== confirm) {
+      setError('Пароли не совпадают');
+      return;
+    }
+    await setOperatorPassword(next);
+    setHasPw(true);
+    reset();
+  };
+
+  const disable = async (): Promise<void> => {
+    if (!(await checkOperatorPassword(current))) {
+      setError('Пароль неверен');
+      return;
+    }
+    clearOperatorPassword();
+    setHasPw(false);
+    reset();
+  };
+
+  return (
+    <section className="panel">
+      <h2>Режим оператора</h2>
+      <p className="dim">
+        Упрощённый экран для дежурного персонала/планшета: только запуск плейлистов и сцен, стоп,
+        пауза, BLACKOUT — без доступа к редактированию. Пароль хранится на этом компьютере (не в
+        проекте). Блокировка переживает перезапуск приложения и снимается только паролем — храните
+        его в надёжном месте, сброса «забыли пароль» нет.
+      </p>
+
+      {!hasPw && mode === 'idle' && (
+        <button className="btn" onClick={() => setMode('set')}>
+          Установить пароль
+        </button>
+      )}
+
+      {hasPw && mode === 'idle' && (
+        <div className="form-row">
+          <span className="ok-text">✔ пароль установлен</span>
+          <button
+            className="btn btn-warn"
+            onClick={() => {
+              lockOperator();
+              window.location.reload();
+            }}
+          >
+            🔒 Заблокировать интерфейс сейчас
+          </button>
+          <button className="btn btn-small" onClick={() => setMode('change')}>
+            Сменить пароль
+          </button>
+        </div>
+      )}
+
+      {(mode === 'set' || mode === 'change') && (
+        <div className="form-row">
+          {mode === 'change' && (
+            <label className="field">
+              Текущий пароль:{' '}
+              <input className="input" type="password" value={current} onChange={(e) => setCurrent(e.target.value)} />
+            </label>
+          )}
+          <label className="field">
+            Новый пароль:{' '}
+            <input className="input" type="password" value={next} onChange={(e) => setNext(e.target.value)} />
+          </label>
+          <label className="field">
+            Повтор:{' '}
+            <input className="input" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+          </label>
+          <button className="btn active" onClick={() => void submitNew()}>
+            Сохранить
+          </button>
+          <button className="btn btn-small" onClick={reset}>
+            Отмена
+          </button>
+          {error && <span className="error-text">{error}</span>}
+        </div>
+      )}
+
+      {hasPw && mode === 'idle' && (
+        <details style={{ marginTop: 10 }}>
+          <summary className="dim" style={{ cursor: 'pointer' }}>
+            Отключить режим оператора
+          </summary>
+          <div className="form-row" style={{ marginTop: 8 }}>
+            <label className="field">
+              Пароль:{' '}
+              <input className="input" type="password" value={current} onChange={(e) => setCurrent(e.target.value)} />
+            </label>
+            <button className="btn btn-danger" onClick={() => void disable()}>
+              Отключить и удалить пароль
+            </button>
+            {error && <span className="error-text">{error}</span>}
+          </div>
+        </details>
+      )}
     </section>
   );
 }
@@ -447,6 +587,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
 
       <BackupPanel engine={engine} />
       <HotkeysPanel />
+      <OperatorPanel />
     </main>
   );
 }

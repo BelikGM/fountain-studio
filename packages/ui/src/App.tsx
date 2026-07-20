@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { comboFromEvent, getCombo } from './hotkeys';
+import { isOperatorLocked } from './operatorMode';
 import { useEngine } from './useEngine';
 import { KeysView } from './views/KeysView';
 import { ConsoleView } from './views/ConsoleView';
 import { LayoutView } from './views/LayoutView';
+import { OperatorScreen } from './views/OperatorScreen';
 import { PatchView } from './views/PatchView';
 import { ScenesView } from './views/ScenesView';
 import { SequencesView } from './views/SequencesView';
@@ -54,6 +56,9 @@ export function App() {
     return () => window.clearTimeout(t);
   }, [savedAtMs]);
   const [tab, setTab] = useState<Tab>('console');
+  // Режим оператора (§27 доработки, УХ п.8): состояние в localStorage,
+  // переживает перезапуск приложения — снимается только паролем.
+  const [locked, setLocked] = useState(() => isOperatorLocked());
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
     localStorage.getItem('fs-theme') === 'light' ? 'light' : 'dark',
   );
@@ -116,6 +121,7 @@ export function App() {
   // конфликтов нет. Внутри полей ввода не перехватываем — там работает
   // штатный undo браузера.
   useEffect(() => {
+    if (locked) return; // нечего отменять/сохранять на экране оператора
     const onKey = (e: KeyboardEvent): void => {
       if (!e.ctrlKey || e.repeat) return;
       const tag = (e.target as HTMLElement).tagName;
@@ -134,7 +140,11 @@ export function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [undo, redo, send]);
+  }, [locked, undo, redo, send]);
+
+  if (locked) {
+    return <OperatorScreen engine={engine} onUnlock={() => setLocked(false)} />;
+  }
 
   return (
     <div className="app">

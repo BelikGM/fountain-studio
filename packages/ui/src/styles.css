@@ -230,6 +230,36 @@ body {
 }
 .btn-warn:hover { background: var(--warn); color: #1a1204; }
 
+/* Экран оператора (§27 доработки, УХ п.8) — крупные кнопки под палец/планшет. */
+.operator-screen {
+  min-height: 100vh;
+  padding: 20px 24px 40px;
+  background: var(--bg);
+  color: var(--fg);
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.operator-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.operator-title { font-size: 15px; font-weight: 600; color: var(--fg-dim); }
+.operator-unlock { display: flex; align-items: center; gap: 8px; }
+.operator-transport { display: flex; gap: 14px; flex-wrap: wrap; }
+.operator-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+.btn-big {
+  font-size: 17px;
+  padding: 22px 18px;
+  border-radius: 10px;
+}
+
 /* Активное «Выкл» тест-генератора — красным, в тон BLACKOUT (не синим). */
 .btn-off-active {
   background: var(--danger);
