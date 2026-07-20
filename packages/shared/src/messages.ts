@@ -57,6 +57,8 @@ export interface PlaybackState {
   running: RunningSequenceInfo[];
   show: ShowTransportState | null;
   playlist: PlaylistTransportState | null;
+  /** Пауза всего (§27 доработки, УХ п.1): картина заморожена, таймеры не идут, в 0 не гасим. */
+  pausedAll: boolean;
 }
 
 /** Art-Net нода, найденная опросом ArtPoll (§12 п.3: мониторинг из тех. помещения). */
@@ -163,6 +165,10 @@ export type ClientMessage =
   | { type: 'setChannel'; universe: number; channel: number; value: number }
   | { type: 'setChannels'; universe: number; start: number; values: number[] }
   | { type: 'blackout' }
+  // Пауза всего: заморозить текущую картину (не гасить) и остановить все таймеры
+  // воспроизведения до resumeAll. Отдельно от blackout — см. Console/ConsoleView.
+  | { type: 'pauseAll' }
+  | { type: 'resumeAll' }
   | { type: 'testPattern'; mode: TestPatternMode }
   // Проект: полная замена (редактор шлёт после каждого изменения, движок сохраняет на диск).
   | { type: 'updateProject'; project: Project }

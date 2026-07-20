@@ -5,7 +5,7 @@
  * Действия-переключатели: повторное нажатие останавливает то, что запустило.
  */
 
-export type KeyActionType = 'scene' | 'sequence' | 'show' | 'playlist' | 'stopAll' | 'blackout';
+export type KeyActionType = 'scene' | 'sequence' | 'show' | 'playlist' | 'stopAll' | 'blackout' | 'pauseAll';
 
 export interface KeyAction {
   type: KeyActionType;
@@ -33,7 +33,7 @@ export function sanitizeKeys(
     const a = k.action;
     if (!a) continue;
     let action: KeyAction | null = null;
-    if (a.type === 'stopAll' || a.type === 'blackout') action = { type: a.type };
+    if (a.type === 'stopAll' || a.type === 'blackout' || a.type === 'pauseAll') action = { type: a.type };
     else if (a.type === 'scene' && a.refId !== undefined && ids.scenes.has(a.refId)) action = { type: 'scene', refId: a.refId };
     else if (a.type === 'sequence' && a.refId !== undefined && ids.sequences.has(a.refId)) action = { type: 'sequence', refId: a.refId };
     else if (a.type === 'show' && a.refId !== undefined && ids.shows.has(a.refId)) action = { type: 'show', refId: a.refId };

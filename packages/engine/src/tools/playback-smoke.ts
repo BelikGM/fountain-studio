@@ -501,7 +501,7 @@ const demo: Project = {
 };
 
 let frame = new Uint8Array(512);
-let playback: PlaybackState = { activeSceneId: null, running: [], show: null, playlist: null };
+let playback: PlaybackState = { activeSceneId: null, running: [], show: null, playlist: null, pausedAll: false };
 let projectEcho: Project | null = null;
 let audioMsg: { name: string; dataBase64: string } | null = null;
 let networkState: NetworkState | null = null;
@@ -616,6 +616,24 @@ async function main(): Promise<void> {
   send({ type: 'stopAllPlayback' });
   await waitFor('общий стоп', () => playback.running.length === 0 && ch(1) === 0 && ch(10) === 0);
   check(true, 'общий стоп — все каналы в ноль');
+
+  console.log('— Пауза всего (§27 доработки: заморозка картины, не гашение) —');
+  send({ type: 'startSequence', sequenceId: 'seq1' });
+  await waitFor('шаг 1 играет', () => ch(1) === 200 && ch(2) === 255);
+  send({ type: 'pauseAll' });
+  await waitFor('pausedAll отражён в состоянии', () => playback.pausedAll === true);
+  const frozenVal = ch(1);
+  await sleep(900); // дольше holdMs шага (600 мс) — без паузы секвенсор успел бы перейти на шаг 2
+  check(
+    ch(1) === frozenVal && playback.running[0]?.stepIndex === 0,
+    `пауза всего держит картину (насос ${frozenVal}) и не даёт секвенсору продвинуться, хотя реальное время прошло`,
+  );
+  send({ type: 'resumeAll' });
+  await waitFor('pausedAll снят', () => playback.pausedAll === false);
+  await waitFor('секвенсор продолжил после снятия паузы', () => playback.running[0]?.stepIndex === 1, 2000);
+  check(true, 'после resumeAll секвенсор продолжил с той же точки, а не скакнул вперёд');
+  send({ type: 'stopAllPlayback' });
+  await waitFor('стоп после теста паузы', () => playback.running.length === 0 && ch(1) === 0);
 
   console.log('— Шоу: перемотка на паузе (стейтлес-рендер таймлайна) —');
   send({ type: 'playShow', showId: 'show1', positionMs: 0 });

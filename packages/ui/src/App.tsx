@@ -93,6 +93,9 @@ export function App() {
         case 'blackout':
           send({ type: 'blackout' });
           break;
+        case 'pauseAll':
+          send({ type: playback.pausedAll ? 'resumeAll' : 'pauseAll' });
+          break;
       }
     };
     window.addEventListener('keydown', onKey);

@@ -44,6 +44,17 @@ export class Engine {
   private framesSent = 0;
   /** Часы движка: время последнего тика (n * tickMs), мс. */
   private nowMs = 0;
+  /**
+   * Пауза всего (§27 доработки, УХ п.1): в отличие от blackout не гасит каналы,
+   * а замораживает картину и таймеры. Реализация — не продвигать nowMs, пока
+   * пауза активна: playback.tick(nowMs) с неизменным nowMs не меняет позиции
+   * шагов/огибающих, HTP-слияние и тест-паттерн (тоже от nowMs) замирают сами,
+   * без отдельной логики заморозки внутри Playback. pauseOffsetMs накапливает
+   * «упущенное» время тикера, чтобы после resumeAll часы продолжили с того же
+   * места, а не скачком вперёд на длительность паузы.
+   */
+  private paused = false;
+  private pauseOffsetMs = 0;
   /** Калибровка каналов из патча: universeId → (адрес-1 → min/max). */
   private trims = new Map<number, Map<number, ChannelTrim>>();
   /** Устройства с modbus-конфигом: индекс вселенной в this.universes + адрес-1. */
@@ -105,6 +116,8 @@ export class Engine {
     this.playback.setUniverses(this.universes.map((u) => u.id));
     this.pattern = 'off';
     this.nowMs = 0;
+    this.paused = false;
+    this.pauseOffsetMs = 0;
     this.ticker = new Ticker(tickMs, this.config.timing.spinMs, (n) => this.tick(n));
     this.ticker.start();
     console.log(
@@ -113,7 +126,8 @@ export class Engine {
   }
 
   private tick(n: number): void {
-    this.nowMs = n * this.config.timing.tickMs;
+    if (this.paused) this.pauseOffsetMs += this.config.timing.tickMs;
+    this.nowMs = n * this.config.timing.tickMs - this.pauseOffsetMs;
     const tSec = this.nowMs / 1000;
     this.playback.tick(this.nowMs);
     for (let i = 0; i < this.universes.length; i++) {
@@ -166,8 +180,17 @@ export class Engine {
 
   blackout(): void {
     this.pattern = 'off';
+    this.paused = false;
     this.playback.stopAll();
     for (const u of this.universes) u.manual.fill(0);
+  }
+
+  pauseAll(): void {
+    this.paused = true;
+  }
+
+  resumeAll(): void {
+    this.paused = false;
   }
 
   // ── Проект и транспорт воспроизведения ────────────────────────────────────
@@ -263,7 +286,7 @@ export class Engine {
   }
 
   playbackState(): PlaybackState {
-    return this.playback.state(this.nowMs);
+    return this.playback.state(this.nowMs, this.paused);
   }
 
   setTestPattern(mode: TestPatternMode): void {

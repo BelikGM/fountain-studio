@@ -106,6 +106,14 @@ export function startServer(
           engine.blackout();
           broadcastPlayback();
           break;
+        case 'pauseAll':
+          engine.pauseAll();
+          broadcastPlayback();
+          break;
+        case 'resumeAll':
+          engine.resumeAll();
+          broadcastPlayback();
+          break;
         case 'testPattern':
           engine.setTestPattern(msg.mode);
           break;

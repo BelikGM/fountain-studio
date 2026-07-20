@@ -9,6 +9,7 @@ const ACTION_LABEL: Record<KeyAction['type'], string> = {
   playlist: 'Плейлист (пуск/стоп)',
   stopAll: 'Стоп всё',
   blackout: 'BLACKOUT',
+  pauseAll: 'Пауза всего (вкл/выкл)',
 };
 
 /** Человекочитаемое имя физической клавиши из KeyboardEvent.code. */
@@ -68,7 +69,7 @@ export function KeysView({ engine }: { engine: EngineConnection }) {
   };
 
   const setAction = (b: KeyBinding, type: KeyAction['type']): void => {
-    if (type === 'stopAll' || type === 'blackout') {
+    if (type === 'stopAll' || type === 'blackout' || type === 'pauseAll') {
       update(project.keys.map((k) => (k.id === b.id ? { ...k, action: { type } } : k)));
     } else {
       const first = refOptions(type)[0];
@@ -116,7 +117,7 @@ export function KeysView({ engine }: { engine: EngineConnection }) {
                   </select>
                 </td>
                 <td>
-                  {b.action.type !== 'stopAll' && b.action.type !== 'blackout' && (
+                  {b.action.type !== 'stopAll' && b.action.type !== 'blackout' && b.action.type !== 'pauseAll' && (
                     <select
                       value={b.action.refId ?? ''}
                       onChange={(e) =>

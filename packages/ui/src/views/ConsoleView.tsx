@@ -47,6 +47,13 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
     send({ type: 'blackout' });
   };
 
+  // Пауза — в отличие от BLACKOUT не гасит в 0, а замораживает текущую картину
+  // (свет и воду) и таймеры воспроизведения; повторное нажатие продолжает с
+  // того же места. Без подтверждения — действие безопасно обратимо.
+  const togglePause = (): void => {
+    send({ type: playback.pausedAll ? 'resumeAll' : 'pauseAll' });
+  };
+
   // При первом hello выбираем первую вселенную.
   useEffect(() => {
     if (universes.length > 0 && (universeId === null || !universes.some((u) => u.id === universeId))) {
@@ -159,6 +166,17 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
         </div>
 
         <div className="group">
+          <button
+            className={playback.pausedAll ? 'btn active' : 'btn btn-warn'}
+            title={
+              playback.pausedAll
+                ? 'Продолжить: снять паузу и вернуть воспроизведение с той же точки'
+                : 'Пауза: заморозить текущую картину света и воды как есть, без гашения в 0. Таймеры шоу/секвенсоров останавливаются до повторного нажатия'
+            }
+            onClick={togglePause}
+          >
+            {playback.pausedAll ? '▶ Продолжить' : '⏸ Пауза'}
+          </button>
           <button
             className="btn btn-danger"
             title="Аварийный стоп: гасит ВСЕ каналы всех вселенных и останавливает всё воспроизведение. Если сейчас что-то играет — сначала спросит подтверждение"

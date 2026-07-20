@@ -80,6 +80,7 @@ export function useEngine(): EngineConnection {
     running: [],
     show: null,
     playlist: null,
+    pausedAll: false,
   });
   const wsRef = useRef<WebSocket | null>(null);
   /** Сколько наших правок ещё «в полёте» — их эхо от движка не применяем, чтобы не сбивать ввод. */

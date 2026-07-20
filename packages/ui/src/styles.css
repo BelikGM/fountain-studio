@@ -16,6 +16,8 @@
   --ok-bg: #1e3a24;
   --ok-border: #2c5232;
   --warn: #e6b34a;
+  --warn-bg: #3a2e14;
+  --warn-text: #ffd699;
   --border: #30343e;
 }
 
@@ -37,6 +39,8 @@
   --ok-bg: #d9f2de;
   --ok-border: #9ed8ab;
   --warn: #9a6d00;
+  --warn-bg: #fbeed3;
+  --warn-text: #7a5400;
   --border: #cfd6e0;
 }
 
@@ -217,6 +221,14 @@ body {
   font-weight: 600;
 }
 .btn-danger:hover { background: var(--danger); color: #fff; }
+
+.btn-warn {
+  background: var(--warn-bg);
+  border-color: var(--warn);
+  color: var(--warn-text);
+  font-weight: 600;
+}
+.btn-warn:hover { background: var(--warn); color: #1a1204; }
 
 /* Активное «Выкл» тест-генератора — красным, в тон BLACKOUT (не синим). */
 .btn-off-active {

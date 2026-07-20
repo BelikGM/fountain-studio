@@ -339,7 +339,7 @@ export class Playback {
     return { playlistId: rt.playlist.id, itemIndex: rt.itemIndex, inGap: rt.gapUntilMs !== null };
   }
 
-  state(nowMs: number): PlaybackState {
+  state(nowMs: number, pausedAll: boolean): PlaybackState {
     return {
       activeSceneId: this.activeSceneId,
       running: this.running.map((r) => ({
@@ -349,6 +349,7 @@ export class Playback {
       })),
       show: this.showState(nowMs),
       playlist: this.playlistState(),
+      pausedAll,
     };
   }
 
