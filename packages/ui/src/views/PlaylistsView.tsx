@@ -28,7 +28,13 @@ export function PlaylistsView({ engine }: { engine: EngineConnection }) {
   if (!project) return <main className="view">Ожидание проекта от движка…</main>;
 
   const addPlaylist = (): void => {
-    const p: Playlist = { id: uid(), name: `Плейлист ${project.playlists.length + 1}`, mode: 'loop', items: [] };
+    const p: Playlist = {
+      id: uid(),
+      name: `Плейлист ${project.playlists.length + 1}`,
+      mode: 'loop',
+      onStart: 'restart',
+      items: [],
+    };
     updateProject({ ...project, playlists: [...project.playlists, p] });
     setSelectedId(p.id);
   };
@@ -151,6 +157,14 @@ function PlaylistEditor({
         >
           <option value="loop">По кругу</option>
           <option value="once">Один раз</option>
+        </select>
+        <select
+          value={playlist.onStart}
+          title="Поведение при запуске: с начала или с места прошлой остановки"
+          onChange={(e) => onChange({ ...playlist, onStart: e.target.value as Playlist['onStart'] })}
+        >
+          <option value="restart">Старт: сначала</option>
+          <option value="resume">Старт: с места остановки</option>
         </select>
         <span className="dim">общая длительность: {(totalMs / 60000).toFixed(1)} мин</span>
       </div>

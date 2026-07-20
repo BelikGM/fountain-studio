@@ -74,6 +74,13 @@ export class Playback {
   private running: RunningSeq[] = [];
   private showRt: ShowRuntime | null = null;
   private playlistRt: PlaylistRuntime | null = null;
+  /**
+   * Поведение старта плейлиста «resume» (§27 доработки) — playlistId →
+   * последний itemIndex, на котором плейлист был остановлен. Только в
+   * памяти движка (как и остальное состояние воспроизведения) — после
+   * перезапуска движка плейлист снова начнёт сначала.
+   */
+  private lastPlaylistIndex = new Map<string, number>();
   private readonly merged = new Map<number, Uint8Array>();
   /**
    * Эффект плавности треков шоу (§27 доработки, УХ п.16): состояние фильтра на
@@ -147,6 +154,12 @@ export class Playback {
         this.version++;
       } else {
         this.showRt.show = fresh;
+      }
+    }
+    {
+      const playlistIds = new Set(project.playlists.map((p) => p.id));
+      for (const id of this.lastPlaylistIndex.keys()) {
+        if (!playlistIds.has(id)) this.lastPlaylistIndex.delete(id);
       }
     }
     if (this.playlistRt !== null) {
@@ -224,7 +237,10 @@ export class Playback {
     this.running = [];
     this.activeSceneId = null;
     this.showRt = null;
-    if (this.playlistRt !== null) this.onShowAudio?.(null);
+    if (this.playlistRt !== null) {
+      this.lastPlaylistIndex.set(this.playlistRt.playlist.id, this.playlistRt.itemIndex);
+      this.onShowAudio?.(null);
+    }
     this.playlistRt = null;
     this.version++;
   }
@@ -234,7 +250,9 @@ export class Playback {
   playPlaylist(playlistId: string, itemIndex: number | undefined, nowMs: number): void {
     const playlist = this.project?.playlists.find((p) => p.id === playlistId);
     if (!playlist || playlist.items.length === 0) return;
-    const idx = Math.min(Math.max(0, itemIndex ?? 0), playlist.items.length - 1);
+    // «resume» — продолжить с места прошлой остановки, если явный itemIndex не задан.
+    const fallback = playlist.onStart === 'resume' ? (this.lastPlaylistIndex.get(playlistId) ?? 0) : 0;
+    const idx = Math.min(Math.max(0, itemIndex ?? fallback), playlist.items.length - 1);
     this.playlistRt = { playlist, itemIndex: idx, gapUntilMs: null };
     this.startPlaylistItem(nowMs);
   }
@@ -249,6 +267,7 @@ export class Playback {
 
   stopPlaylist(): void {
     if (this.playlistRt === null) return;
+    this.lastPlaylistIndex.set(this.playlistRt.playlist.id, this.playlistRt.itemIndex);
     this.playlistRt = null;
     this.showRt = null;
     this.version++;
@@ -281,7 +300,11 @@ export class Playback {
     if (!rt || rt.gapUntilMs === null || nowMs < rt.gapUntilMs) return;
     const last = rt.itemIndex + 1 >= rt.playlist.items.length;
     if (last && rt.playlist.mode !== 'loop') {
+      // Плейлист доигран целиком (не прерван) — «resume» в следующий раз
+      // должен начинать сначала, а не намертво повторять последний пункт.
+      const playlistId = rt.playlist.id;
       this.stopPlaylist();
+      this.lastPlaylistIndex.set(playlistId, 0);
     } else {
       rt.itemIndex = (rt.itemIndex + 1) % rt.playlist.items.length;
       this.startPlaylistItem(nowMs);
@@ -291,6 +314,7 @@ export class Playback {
   /** Ручное управление шоу из редактора перехватывает воспроизведение у плейлиста. */
   private releasePlaylist(): void {
     if (this.playlistRt === null) return;
+    this.lastPlaylistIndex.set(this.playlistRt.playlist.id, this.playlistRt.itemIndex);
     this.playlistRt = null;
     this.version++;
     this.onShowAudio?.(null);

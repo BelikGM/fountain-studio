@@ -15,10 +15,20 @@ export interface PlaylistItem {
 
 export type PlaylistMode = 'once' | 'loop';
 
+/**
+ * Поведение при запуске плейлиста (§27 доработки, по примеру прежнего
+ * приложения) — 'restart' (умолчание) начинает с первого пункта, 'resume'
+ * продолжает с пункта, на котором плейлист был остановлен в прошлый раз
+ * (движок помнит это в памяти, не в проекте — как и остальное состояние
+ * воспроизведения; после перезапуска движка снова начнёт сначала).
+ */
+export type PlaylistStartMode = 'restart' | 'resume';
+
 export interface Playlist {
   id: string;
   name: string;
   mode: PlaylistMode;
+  onStart: PlaylistStartMode;
   items: PlaylistItem[];
 }
 
@@ -52,6 +62,7 @@ export function sanitizePlaylists(raw: unknown, showIds: Set<string>): Playlist[
       id: p.id,
       name: typeof p.name === 'string' ? p.name : 'Плейлист',
       mode: p.mode === 'loop' ? 'loop' : 'once',
+      onStart: p.onStart === 'resume' ? 'resume' : 'restart',
       items: (Array.isArray(p.items) ? p.items : [])
         .filter((it) => it && showIds.has(it.showId))
         .map((it) => ({

@@ -627,6 +627,7 @@ const demo: Project = {
       id: 'pl1',
       name: 'Вечерняя программа',
       mode: 'once',
+      onStart: 'restart',
       items: [
         { showId: 'showP1', gapMs: 300 },
         { showId: 'showP2', gapMs: 0 },
@@ -900,6 +901,32 @@ async function main(): Promise<void> {
   check(true, 'pauseShow из редактора снял плейлист, шоу осталось на паузе');
   send({ type: 'stopShow' });
   await waitFor('шоу остановлено', () => playback.show === null && ch(1) === 0);
+
+  console.log('— Плейлист: старт «с места остановки» (§27 доработки, по примеру прежнего приложения) —');
+  {
+    send({ type: 'updateProject', project: { ...store.project, playlists: store.project.playlists.map((p) => (p.id === 'pl1' ? { ...p, onStart: 'resume' } : p)) } });
+    await waitFor('onStart=resume применён', () => projectEcho?.playlists.find((p) => p.id === 'pl1')?.onStart === 'resume');
+
+    send({ type: 'playPlaylist', playlistId: 'pl1' });
+    await waitFor('элемент 1 играет (первый запуск — с начала)', () => playback.playlist?.itemIndex === 0 && ch(1) === 200);
+    await waitFor('элемент 2 играет', () => playback.playlist?.itemIndex === 1 && ch(1) === 60 && ch(11) === 128, 2000);
+    send({ type: 'stopPlaylist' }); // прерываем на элементе 2 (itemIndex=1)
+    await waitFor('плейлист остановлен на элементе 2', () => playback.playlist === null && ch(1) === 0);
+
+    send({ type: 'playPlaylist', playlistId: 'pl1' }); // без явного itemIndex — должен сразу продолжить с элемента 2
+    await waitFor('resume сразу вернул на элемент 2, минуя элемент 1', () => playback.playlist?.itemIndex === 1 && ch(11) === 128, 2000);
+    check(true, 'onStart=resume: повторный запуск без явного itemIndex продолжил с последнего пункта (1), а не с начала');
+    await waitFor('плейлист доигран целиком', () => playback.playlist === null && playback.show === null, 2000);
+
+    send({ type: 'playPlaylist', playlistId: 'pl1' }); // доигран естественно — resume должен начать заново
+    await waitFor('после естественного завершения resume начал сначала (элемент 0)', () => playback.playlist?.itemIndex === 0 && ch(1) === 200, 2000);
+    check(true, 'onStart=resume: плейлист, доигранный до конца (не прерванный), в следующий раз стартует с начала');
+    send({ type: 'stopPlaylist' });
+    await waitFor('плейлист снова остановлен', () => playback.playlist === null && ch(1) === 0);
+
+    send({ type: 'updateProject', project: { ...store.project, playlists: store.project.playlists.map((p) => (p.id === 'pl1' ? { ...p, onStart: 'restart' } : p)) } });
+    await waitFor('onStart возвращён в restart', () => projectEcho?.playlists.find((p) => p.id === 'pl1')?.onStart === 'restart');
+  }
 
   console.log('— Расписание по системному времени —');
   const scheduler = new Scheduler(engine, () => store.project.schedule);
