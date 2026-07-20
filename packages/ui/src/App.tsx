@@ -199,16 +199,40 @@ export function App() {
             <span title="Сколько DMX-кадров движок отправил на оборудование с момента запуска (все вселенные вместе)">
               кадров {stats.framesSent.toLocaleString('ru-RU')}
             </span>
-            <span title="Что сейчас исполняет движок: сцена, секвенсоры, шоу или плейлист. «Остановлено» — движок ничего не играет, каналы держат ручные значения пульта">
-              {playback.activeSceneId !== null ||
-              playback.running.length > 0 ||
-              playback.show !== null ||
-              playback.playlist !== null
+            {(() => {
+              const active =
+                playback.activeSceneId !== null ||
+                playback.running.length > 0 ||
+                playback.show !== null ||
+                playback.playlist !== null;
+              const text = active
                 ? `воспроизведение: ${playback.running.length} секв.${playback.activeSceneId !== null ? ' + сцена' : ''}${
                     playback.show !== null ? ` + шоу (${playback.show.playing ? 'играет' : 'пауза'})` : ''
                   }${playback.playlist !== null ? ` + плейлист №${playback.playlist.itemIndex + 1}` : ''}`
-                : 'воспроизведение остановлено'}
-            </span>
+                : 'воспроизведение остановлено';
+              // Приоритет перехода — от самого «внешнего» уровня автоматизации к
+              // самому конкретному: плейлист уже включает в себя шоу и т.д.
+              const target: Tab | null = playback.playlist
+                ? 'playlists'
+                : playback.show
+                  ? 'show'
+                  : playback.running.length > 0
+                    ? 'sequences'
+                    : playback.activeSceneId !== null
+                      ? 'scenes'
+                      : null;
+              return target ? (
+                <button
+                  className="statusbar-link"
+                  title="Что сейчас исполняет движок — клик переносит на вкладку с этим воспроизведением"
+                  onClick={() => setTab(target)}
+                >
+                  {text}
+                </button>
+              ) : (
+                <span title="«Остановлено» — движок ничего не играет, каналы держат ручные значения пульта">{text}</span>
+              );
+            })()}
           </>
         ) : (
           <span>ожидание статистики…</span>

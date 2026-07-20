@@ -314,6 +314,19 @@ select {
   white-space: nowrap;
 }
 
+/* Клик по «воспроизведение: …» — переход на вкладку с этим воспроизведением. */
+.statusbar-link {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  cursor: pointer;
+}
+.statusbar-link:hover { text-decoration: underline; }
+
 /* ── Вкладки ─────────────────────────────────────────────── */
 .tabs {
   display: flex;
