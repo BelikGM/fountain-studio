@@ -153,6 +153,69 @@ export function envelopeValue(points: EnvelopePoint[], tMs: number): number {
   return last.value;
 }
 
+/**
+ * Прореживание живой записи огибающей (§27 доработки, УХ п.17б) — алгоритм
+ * Рамера–Дугласа–Пекера по отклонению значения от прямой между концами
+ * сегмента: точка остаётся, только если без неё кривая заметно исказится
+ * (>toleranceValue). Не трогает первую/последнюю точку — иначе огибающая
+ * «сжимается» по краям (envelopeValue() отдаёт 0 за пределами первой/последней).
+ */
+export function decimateEnvelope(points: EnvelopePoint[], toleranceValue: number): EnvelopePoint[] {
+  if (points.length <= 2 || toleranceValue <= 0) return points.map((p) => ({ ...p }));
+  const keep = new Array<boolean>(points.length).fill(false);
+  keep[0] = true;
+  keep[points.length - 1] = true;
+
+  const rdp = (lo: number, hi: number): void => {
+    if (hi - lo < 2) return;
+    const a = points[lo]!;
+    const b = points[hi]!;
+    const dt = b.tMs - a.tMs;
+    let maxDist = -1;
+    let maxIdx = -1;
+    for (let i = lo + 1; i < hi; i++) {
+      const p = points[i]!;
+      const expected = dt === 0 ? a.value : a.value + ((b.value - a.value) * (p.tMs - a.tMs)) / dt;
+      const dist = Math.abs(p.value - expected);
+      if (dist > maxDist) {
+        maxDist = dist;
+        maxIdx = i;
+      }
+    }
+    if (maxDist > toleranceValue) {
+      keep[maxIdx] = true;
+      rdp(lo, maxIdx);
+      rdp(maxIdx, hi);
+    }
+  };
+  rdp(0, points.length - 1);
+  return points.filter((_, i) => keep[i]).map((p) => ({ ...p }));
+}
+
+/**
+ * Сглаживание значений огибающей — скользящее среднее по временному окну
+ * (не по числу точек: живая запись пишет точки неравномерно), с треугольным
+ * весом — ближние точки сильнее влияют на результат. Точки по времени не
+ * двигаются, меняется только value — так дрожь руки на записи фейдера
+ * превращается в плавную кривую, а не в резкие изломы между точками.
+ */
+export function smoothEnvelopeValues(points: EnvelopePoint[], windowMs: number): EnvelopePoint[] {
+  if (points.length <= 2 || windowMs <= 0) return points.map((p) => ({ ...p }));
+  const half = windowMs / 2;
+  return points.map((p) => {
+    let sum = 0;
+    let weight = 0;
+    for (const q of points) {
+      const d = Math.abs(q.tMs - p.tMs);
+      if (d > half) continue;
+      const w = 1 - d / half;
+      sum += q.value * w;
+      weight += w;
+    }
+    return { tMs: p.tMs, value: Math.max(0, Math.min(255, Math.round(weight > 0 ? sum / weight : p.value))) };
+  });
+}
+
 /** Множитель фейдов блока (0..1) в локальном времени блока. */
 export function blockFadeGain(block: ShowBlock, localMs: number): number {
   let gain = 1;

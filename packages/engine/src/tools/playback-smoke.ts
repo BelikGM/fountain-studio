@@ -18,6 +18,7 @@ import {
   bandEnvelopePoints,
   breathingSequenceScenes,
   cascadeSequenceScenes,
+  decimateEnvelope,
   editedToSourceMs,
   emptyProject,
   encodeOscMessage,
@@ -44,6 +45,7 @@ import {
   sanitizeProject,
   shiftDeviceAddresses,
   silenceRanges,
+  smoothEnvelopeValues,
   sourceToEditedMs,
   spectralCentroidEnvelope,
   swapDeviceAddresses,
@@ -1091,6 +1093,58 @@ async function main(): Promise<void> {
     check(
       salute1.every((s) => Object.values(s.values).filter((v) => v[0] === 255).length === 1),
       'saluteSequenceScenes: burstSize=1 — на каждом шаге вспыхивает ровно один актёр',
+    );
+  }
+
+  console.log('— Огибающая: прореживание и сглаживание живой записи (§27 доработки, УХ п.17б) —');
+  {
+    // Три точки ровно на прямой y=x/2 — среднюю точку RDP должен выбросить
+    // (расстояние до прямой между концами ровно 0).
+    const collinear = [
+      { tMs: 0, value: 0 },
+      { tMs: 100, value: 50 },
+      { tMs: 200, value: 100 },
+    ];
+    const decCollinear = decimateEnvelope(collinear, 1);
+    check(
+      decCollinear.length === 2 && decCollinear[0]!.tMs === 0 && decCollinear[1]!.tMs === 200,
+      `decimateEnvelope: три точки на прямой → средняя выброшена, остались концы (осталось ${decCollinear.length})`,
+    );
+
+    // Треугольник — средняя точка реальный пик, должна остаться.
+    const spike = [
+      { tMs: 0, value: 0 },
+      { tMs: 100, value: 50 },
+      { tMs: 200, value: 0 },
+    ];
+    const decSpike = decimateEnvelope(spike, 1);
+    check(
+      decSpike.length === 3,
+      `decimateEnvelope: настоящий пик не выбрасывается, даже с малым допуском (осталось ${decSpike.length})`,
+    );
+
+    // Одиночный всплеск на ровном фоне: треугольное окно 300 мс (±150 мс) —
+    // значения на t=100 и t=200 посчитаны вручную (см. комментарий выше по коду).
+    const noisy = [
+      { tMs: 0, value: 0 },
+      { tMs: 100, value: 0 },
+      { tMs: 200, value: 100 },
+      { tMs: 300, value: 0 },
+      { tMs: 400, value: 0 },
+    ];
+    const smoothed = smoothEnvelopeValues(noisy, 300);
+    check(
+      smoothed.length === 5 && smoothed[1]!.value === 20 && smoothed[2]!.value === 60,
+      `smoothEnvelopeValues: всплеск 0-0-100-0-0 при окне 300мс → 20/60 на соседях/пике (получено ${smoothed[1]!.value}/${smoothed[2]!.value})`,
+    );
+    check(
+      smoothed.every((p, i) => p.tMs === noisy[i]!.tMs),
+      'smoothEnvelopeValues: время точек не сдвигается, меняется только value',
+    );
+    const identity = smoothEnvelopeValues(noisy, 0);
+    check(
+      JSON.stringify(identity) === JSON.stringify(noisy),
+      'smoothEnvelopeValues: окно 0 — точки не меняются (тождественное преобразование)',
     );
   }
 

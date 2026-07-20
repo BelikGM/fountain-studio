@@ -6,6 +6,7 @@ import {
   colorChangeEvents,
   colorChannelEnvelopePoints,
   cutsTotalMs,
+  decimateEnvelope,
   editedToSourceMs,
   energyEnvelope,
   estimateTempo,
@@ -15,11 +16,13 @@ import {
   peakEvents,
   profileMap,
   showDependents,
+  smoothEnvelopeValues,
   sourceToEditedMs,
   uid,
   type BlocksTrack,
   type CutRange,
   type DeviceProfile,
+  type EnvelopePoint,
   type EnvelopeTrack,
   type Show,
   type ShowBlock,
@@ -67,6 +70,7 @@ export function ShowView({ engine }: { engine: EngineConnection }) {
   const { project, playback, send, updateProject } = engine;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showFilter, setShowFilter] = useState('');
+  const [templateId, setTemplateId] = useState('');
 
   const shows = project?.shows ?? [];
   const visibleShows = shows.filter((s) => s.name.toLowerCase().includes(showFilter.trim().toLowerCase()));
@@ -89,6 +93,30 @@ export function ShowView({ engine }: { engine: EngineConnection }) {
       durationMs: 60_000,
       cuts: [],
       tracks: [],
+    };
+    updateProject({ ...project, shows: [...project.shows, show] });
+    setSelectedId(show.id);
+  };
+
+  // Шаблон шоу (§27 доработки, УХ п.17а): та же структура дорожек (имена,
+  // виды, опережение, привязки огибающих к устройству/каналу), но без
+  // содержимого — пустые blocks/points и без своего аудиофайла, под новую
+  // песню. Зоны эффекта плавности тоже не копируем: они привязаны к
+  // конкретным моментам конкретного трека, в новой песне будут не к месту.
+  const createFromTemplate = (): void => {
+    const template = shows.find((s) => s.id === templateId);
+    if (!template) return;
+    const show: Show = {
+      id: uid(),
+      name: `${template.name} (по шаблону)`,
+      audioFile: null,
+      durationMs: template.durationMs,
+      cuts: [],
+      tracks: template.tracks.map((t) =>
+        t.kind === 'blocks'
+          ? { ...t, id: uid(), blocks: [], effects: [] }
+          : { ...t, id: uid(), points: [] },
+      ),
     };
     updateProject({ ...project, shows: [...project.shows, show] });
     setSelectedId(show.id);
@@ -128,6 +156,21 @@ export function ShowView({ engine }: { engine: EngineConnection }) {
             Удалить
           </button>
         </div>
+        {shows.length > 0 && (
+          <div className="sidebar-actions" title="Новое шоу с той же структурой дорожек (имена, виды, привязки огибающих), но без содержимого и своего аудио — задел под новую песню">
+            <select className="input-mini" value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
+              <option value="">по шаблону…</option>
+              {shows.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+            <button className="btn btn-small" onClick={createFromTemplate} disabled={!templateId}>
+              Создать
+            </button>
+          </div>
+        )}
         {shows.length > 5 && <ListFilter value={showFilter} onChange={setShowFilter} />}
         <ul className="list">
           {visibleShows.map((s) => (
@@ -210,6 +253,9 @@ function ShowEditor({
   // Панель зон эффекта плавности дорожки (§27 доработки, УХ п.16) — открыта на
   // одной дорожке за раз, id null — все закрыты.
   const [effectsOpenId, setEffectsOpenId] = useState<string | null>(null);
+  // Панель прореживания/сглаживания живой записи огибающей (§27 доработки,
+  // УХ п.17б) — тот же принцип «одна открыта за раз», что и у зон эффекта.
+  const [smoothOpenId, setSmoothOpenId] = useState<string | null>(null);
   // Сетка долей (§27 доработки, УХ п.14): те же estimateTempo/beatsMs, что и
   // «⚡ Автопостановка» уже используют для темпа — просто теперь ещё и на
   // экран, и как основа прилипания блоков. Считаем от decoded-буфера, доли
@@ -1223,6 +1269,15 @@ function ShowEditor({
                       🎚{track.effects.length > 0 ? ` ${track.effects.length}` : ''}
                     </button>
                   )}
+                  {track.kind === 'envelope' && track.points.length > 2 && (
+                    <button
+                      className={smoothOpenId === track.id ? 'btn btn-small active' : 'btn btn-small'}
+                      title="Прореживание и сглаживание записанной вживую огибающей"
+                      onClick={() => setSmoothOpenId(smoothOpenId === track.id ? null : track.id)}
+                    >
+                      ∿
+                    </button>
+                  )}
                   <button className="btn btn-small" disabled={ti === 0} onClick={() => moveTrack(ti, -1)}>
                     ↑
                   </button>
@@ -1381,6 +1436,21 @@ function ShowEditor({
                 track={track}
                 durationMs={show.durationMs}
                 onChange={(effects) => updateTrack({ ...track, effects })}
+              />
+            );
+          })()}
+
+        {smoothOpenId &&
+          (() => {
+            const track = show.tracks.find((t) => t.id === smoothOpenId);
+            if (!track || track.kind !== 'envelope') return null;
+            return (
+              <EnvelopeSmoothPanel
+                track={track}
+                onApply={(points) => {
+                  updateTrack({ ...track, points });
+                  setSmoothOpenId(null);
+                }}
               />
             );
           })()}
@@ -1844,6 +1914,69 @@ function TrackEffectsPanel({
       <button className="btn btn-small" onClick={addZone}>
         + Зона
       </button>
+    </div>
+  );
+}
+
+/**
+ * Прореживание/сглаживание живой записи огибающей (§27 доработки, УХ п.17б).
+ * Оба ползунка считаются на лету (превью числа точек до применения), правка
+ * дорожки происходит одним «Применить» — черновик не сохраняется, пока не
+ * подтверждён.
+ */
+function EnvelopeSmoothPanel({
+  track,
+  onApply,
+}: {
+  track: EnvelopeTrack;
+  onApply: (points: EnvelopePoint[]) => void;
+}) {
+  const [windowMs, setWindowMs] = useState(150);
+  const [tolerance, setTolerance] = useState(4);
+  const preview = useMemo(
+    () => decimateEnvelope(smoothEnvelopeValues(track.points, windowMs), tolerance),
+    [track.points, windowMs, tolerance],
+  );
+  return (
+    <div className="panel">
+      <div className="panel-title">Сглаживание «{track.name}»</div>
+      <p className="dim">Убирает дрожь и лишние точки живой записи. Точки по времени не двигаются.</p>
+      <div className="form-row">
+        <label>
+          плавность, мс:{' '}
+          <input
+            type="range"
+            min={0}
+            max={1000}
+            step={10}
+            value={windowMs}
+            onChange={(e) => setWindowMs(Number(e.target.value))}
+          />{' '}
+          {windowMs}
+        </label>
+      </div>
+      <div className="form-row">
+        <label>
+          допуск прореживания:{' '}
+          <input
+            type="range"
+            min={0}
+            max={30}
+            step={1}
+            value={tolerance}
+            onChange={(e) => setTolerance(Number(e.target.value))}
+          />{' '}
+          {tolerance}
+        </label>
+      </div>
+      <div className="form-row">
+        <span className="dim">
+          было {track.points.length} точек → станет {preview.length}
+        </span>
+        <button className="btn" onClick={() => onApply(preview)}>
+          Применить
+        </button>
+      </div>
     </div>
   );
 }
