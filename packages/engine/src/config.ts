@@ -41,6 +41,8 @@ export interface EngineConfig {
     ffplayPath: string;
   };
   universes: UniverseConfig[];
+  /** Авто-бэкапы проекта (§27 доработки, УХ п.5) — именованные снимки по расписанию. */
+  backup: { enabled: boolean; intervalMin: number };
   /** OSC-пульт (TouchOSC и т.п.): слушаем адрес/действие из project.oscBindings. Выключено по умолчанию. */
   osc?: { enabled: boolean; port: number };
   /** MQTT: телеметрия/удалённые команды через брокер. Выключено по умолчанию. */
@@ -61,6 +63,7 @@ const DEFAULTS: EngineConfig = {
   timing: { tickMs: 50, spinMs: 10, uiFrameMs: 100 },
   audio: { player: 'auto', ffplayPath: 'ffplay' },
   universes: [],
+  backup: { enabled: true, intervalMin: 10 },
 };
 
 /** Ищет fountain.config.json вверх от cwd; путь можно задать через --config. */
@@ -79,6 +82,7 @@ export function loadConfig(argv: string[]): EngineConfig & { configFile: string 
     timing: { ...DEFAULTS.timing, ...raw.timing },
     audio: { ...DEFAULTS.audio, ...raw.audio },
     universes: raw.universes ?? [],
+    backup: { ...DEFAULTS.backup, ...raw.backup },
     configFile: file,
     ...(raw.osc ? { osc: raw.osc } : {}),
     ...(raw.mqtt ? { mqtt: raw.mqtt } : {}),

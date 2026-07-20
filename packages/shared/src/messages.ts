@@ -137,6 +137,18 @@ export interface ModbusState {
 }
 
 /**
+ * Периодический именованный снимок fountain.project.json (§27 доработки, УХ п.5) —
+ * отдельно от непрерывного живого автосохранения: защита от «сам всё сломал»,
+ * а не от потери процесса.
+ */
+export interface BackupInfo {
+  /** Имя файла в папке backups/ рядом с проектом, содержит метку времени. */
+  file: string;
+  atMs: number;
+  sizeBytes: number;
+}
+
+/**
  * Конфигурация DMX-выхода вселенной — редактируемая часть fountain.config.json
  * (вкладка «Настройки»). Зеркало OutputConfig движка.
  */
@@ -205,7 +217,13 @@ export type ClientMessage =
   // Настройки движка (вкладка «Настройки»): вселенные и шаг тика. Движок
   // применяет на лету (воспроизведение останавливается) и сохраняет в
   // fountain.config.json.
-  | { type: 'updateConfig'; tickMs: number; universes: ConfigUniverse[] };
+  | { type: 'updateConfig'; tickMs: number; universes: ConfigUniverse[] }
+  // Авто-бэкапы проекта (§27 доработки, УХ п.5) — отдельно от updateConfig: смена
+  // интервала не трогает воспроизведение.
+  | { type: 'updateBackupConfig'; enabled: boolean; intervalMin: number }
+  | { type: 'listBackups' }
+  | { type: 'takeBackupNow' }
+  | { type: 'restoreBackup'; file: string };
 
 /** Движок → UI */
 export type ServerMessage =
@@ -231,4 +249,8 @@ export type ServerMessage =
   | { type: 'rdmResponse'; uid: string; ok: true; action: 'deviceInfo'; deviceInfo: RdmDeviceInfoPayload }
   | { type: 'rdmResponse'; uid: string; ok: true; action: 'labels'; manufacturer: string; model: string; softwareVersion: string }
   | { type: 'rdmResponse'; uid: string; ok: true; action: 'getIdentify' | 'setIdentify'; identify: boolean }
-  | { type: 'rdmResponse'; uid: string; ok: true; action: 'getAddress' | 'setAddress'; address: number };
+  | { type: 'rdmResponse'; uid: string; ok: true; action: 'getAddress' | 'setAddress'; address: number }
+  /** Настройка авто-бэкапов (шлётся при подключении и после updateBackupConfig). */
+  | { type: 'backupConfig'; enabled: boolean; intervalMin: number }
+  /** Список снимков (шлётся при подключении, после listBackups и после снятия нового снимка). */
+  | { type: 'backupList'; backups: BackupInfo[] };

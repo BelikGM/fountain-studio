@@ -1,6 +1,119 @@
 import { useEffect, useState } from 'react';
-import type { ConfigUniverse } from '@fountain-studio/shared';
+import type { BackupInfo, ConfigUniverse } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
+
+function fmtBackupTime(atMs: number): string {
+  return new Date(atMs).toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function fmtSize(bytes: number): string {
+  return bytes < 1024 ? `${bytes} Б` : `${(bytes / 1024).toFixed(1)} КБ`;
+}
+
+/**
+ * Авто-бэкапы проекта (§27 доработки, УХ п.5): именованные снимки по расписанию,
+ * отдельно от непрерывного живого автосохранения (то всегда включено и невидимо).
+ * Смена интервала применяется сразу, без кнопки «Применить» и без остановки
+ * воспроизведения — в отличие от вселенных/тика выше на этой же вкладке.
+ */
+function BackupPanel({ engine }: { engine: EngineConnection }) {
+  const { backupConfig, backups, send } = engine;
+
+  useEffect(() => {
+    send({ type: 'listBackups' });
+  }, [send]);
+
+  if (!backupConfig) {
+    return (
+      <section className="panel">
+        <h2>Авто-бэкапы</h2>
+        <p className="dim">Ожидание настройки от движка…</p>
+      </section>
+    );
+  }
+
+  const restore = (b: BackupInfo): void => {
+    const ok = window.confirm(
+      `Снимок от ${fmtBackupTime(b.atMs)} заменит собой ТЕКУЩИЙ проект целиком — всё, что сделано ` +
+        'после этого снимка, будет потеряно (если это тоже не заскриптовано в другом снимке).\n\n' +
+        'Восстановить?',
+    );
+    if (!ok) return;
+    send({ type: 'restoreBackup', file: b.file });
+  };
+
+  return (
+    <section className="panel">
+      <h2>Авто-бэкапы</h2>
+      <p className="dim">
+        Именованные снимки проекта по расписанию — защита от «сам всё сломал в редакторе», отдельно
+        от постоянного автосохранения (оно и так всегда включено, беречь есть что). Хранятся
+        последние 20 штук.
+      </p>
+      <div className="form-row">
+        <label className="field">
+          <input
+            type="checkbox"
+            checked={backupConfig.enabled}
+            onChange={(e) => send({ type: 'updateBackupConfig', enabled: e.target.checked, intervalMin: backupConfig.intervalMin })}
+          />{' '}
+          Включено
+        </label>
+        <label className="field">
+          Интервал, мин:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={1}
+            max={30}
+            disabled={!backupConfig.enabled}
+            value={backupConfig.intervalMin}
+            onChange={(e) => {
+              const intervalMin = Math.max(1, Math.min(30, Math.round(Number(e.target.value)) || 10));
+              send({ type: 'updateBackupConfig', enabled: backupConfig.enabled, intervalMin });
+            }}
+          />
+        </label>
+        <button className="btn btn-small" onClick={() => send({ type: 'takeBackupNow' })}>
+          Сделать снимок сейчас
+        </button>
+      </div>
+
+      {backups.length === 0 ? (
+        <p className="dim">Снимков ещё нет.</p>
+      ) : (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Когда</th>
+              <th>Размер</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {backups.map((b) => (
+              <tr key={b.file}>
+                <td>{fmtBackupTime(b.atMs)}</td>
+                <td className="dim">{fmtSize(b.sizeBytes)}</td>
+                <td>
+                  <button className="btn btn-small" onClick={() => restore(b)}>
+                    Восстановить
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
 
 /**
  * Настройки движка: вселенные (DMX-линии) и шаг тика — редактирование
@@ -225,6 +338,8 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
           <span className="warn">воспроизведение при применении будет остановлено</span>
         )}
       </div>
+
+      <BackupPanel engine={engine} />
     </main>
   );
 }

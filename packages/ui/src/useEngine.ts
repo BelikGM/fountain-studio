@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
+  BackupInfo,
   ClientMessage,
   ConfigUniverse,
   EngineStats,
@@ -40,6 +41,10 @@ export interface EngineConnection {
   remote: RemoteStatus | null;
   /** Редактируемая конфигурация движка: вселенные и тик (вкладка «Настройки»). */
   engineConfig: EngineConfigState | null;
+  /** Настройка авто-бэкапов проекта (null — движок ещё не прислал). */
+  backupConfig: { enabled: boolean; intervalMin: number } | null;
+  /** Список снимков, новые сверху. */
+  backups: BackupInfo[];
   send: (msg: ClientMessage) => void;
   /** Применяет правку проекта локально и отправляет движку. */
   updateProject: (project: Project) => void;
@@ -75,6 +80,8 @@ export function useEngine(): EngineConnection {
   const [modbus, setModbus] = useState<ModbusState | null>(null);
   const [remote, setRemote] = useState<RemoteStatus | null>(null);
   const [engineConfig, setEngineConfig] = useState<EngineConfigState | null>(null);
+  const [backupConfig, setBackupConfig] = useState<{ enabled: boolean; intervalMin: number } | null>(null);
+  const [backups, setBackups] = useState<BackupInfo[]>([]);
   const [playback, setPlayback] = useState<PlaybackState>({
     activeSceneId: null,
     running: [],
@@ -180,6 +187,12 @@ export function useEngine(): EngineConnection {
             for (const resolve of waiters) resolve(msg);
             break;
           }
+          case 'backupConfig':
+            setBackupConfig({ enabled: msg.enabled, intervalMin: msg.intervalMin });
+            break;
+          case 'backupList':
+            setBackups(msg.backups);
+            break;
         }
       };
     };
@@ -276,6 +289,8 @@ export function useEngine(): EngineConnection {
     modbus,
     remote,
     engineConfig,
+    backupConfig,
+    backups,
     send,
     updateProject,
     requestAudio,

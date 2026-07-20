@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { AudioStore } from './audio';
 import { AudioPlayer } from './audioplayer';
+import { BackupStore } from './backups';
 import { loadConfig } from './config';
 import { DmxCapture } from './dmxcapture';
 import { Engine } from './engine';
@@ -16,6 +17,11 @@ const engine = new Engine(config);
 const projectDir = path.dirname(config.configFile);
 const store = new ProjectStore(path.join(projectDir, 'fountain.project.json'));
 const audio = new AudioStore(path.join(projectDir, 'audio'));
+const backups = new BackupStore(
+  path.join(projectDir, 'fountain.project.json'),
+  () => JSON.stringify(store.project, null, 2),
+  config.backup,
+);
 
 // Автономный звук: плейлист сменил шоу — движок сам включает/глушит плеер.
 const player = new AudioPlayer(config.audio, path.join(projectDir, 'audio'));
@@ -54,7 +60,7 @@ const mqtt = config.mqtt?.enabled
   : undefined;
 mqtt?.startTelemetry();
 
-startServer(engine, store, audio, net, capture, osc, mqtt);
+startServer(engine, store, audio, backups, net, capture, osc, mqtt);
 
 // Расписание по системному времени ПК — работает, пока запущен движок.
 const scheduler = new Scheduler(engine, () => store.project.schedule);
@@ -74,6 +80,7 @@ process.on('SIGINT', () => {
   player.stop();
   osc?.stop();
   mqtt?.stop();
+  backups.stop();
   store.flush();
   engine.stop();
   process.exit(0);

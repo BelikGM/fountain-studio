@@ -57,6 +57,7 @@ import {
   type ServerMessage,
 } from '@fountain-studio/shared';
 import { AudioStore } from '../audio';
+import { BackupStore } from '../backups';
 import dgram from 'node:dgram';
 import { createServer as createTcpServer, createConnection as createTcpConnection } from 'node:net';
 import { emaStep } from '../clock';
@@ -334,8 +335,13 @@ const engine = new Engine({
   timing: { tickMs: 50, spinMs: 10, uiFrameMs: 40 },
   audio: { player: 'none', ffplayPath: 'ffplay' },
   universes: [{ id: 1, label: 'Тест', outputs: [{ type: 'artnet', host: '127.0.0.1', universe: 0 }] }],
+  backup: { enabled: false, intervalMin: 10 }, // таймер выключен — снимки берём вручную в тесте
 });
 const store = new ProjectStore(projectFile);
+const backups = new BackupStore(projectFile, () => JSON.stringify(store.project, null, 2), {
+  enabled: false,
+  intervalMin: 10,
+});
 engine.setProject(store.project);
 engine.start();
 const net = new NetworkMonitor({
@@ -359,7 +365,16 @@ const mqtt = new MqttController(
   () => store.project.mqttBindings,
 );
 
-const wss = startServer(engine, store, new AudioStore(path.join(tmpDir, 'audio')), net, dmxCapture, osc, mqtt);
+const wss = startServer(
+  engine,
+  store,
+  new AudioStore(path.join(tmpDir, 'audio')),
+  backups,
+  net,
+  dmxCapture,
+  osc,
+  mqtt,
+);
 
 // Демо-проект: насос (адрес 1), клапан (2), RGB (10–12).
 const demo: Project = {
@@ -509,6 +524,8 @@ let modbusState: ModbusState | null = null;
 let dmxCaptureMsg: Extract<ServerMessage, { type: 'dmxCapture' }> | null = null;
 let dmxCycleMsg: Extract<ServerMessage, { type: 'dmxCycle' }> | null = null;
 let remoteStatusMsg: Extract<ServerMessage, { type: 'remoteStatus' }> | null = null;
+let backupConfigMsg: Extract<ServerMessage, { type: 'backupConfig' }> | null = null;
+let backupListMsg: Extract<ServerMessage, { type: 'backupList' }> | null = null;
 let sawStep1 = false;
 let sawFadeMidpoint = false;
 
@@ -548,6 +565,10 @@ ws.on('message', (raw) => {
     dmxCycleMsg = msg;
   } else if (msg.type === 'remoteStatus') {
     remoteStatusMsg = msg;
+  } else if (msg.type === 'backupConfig') {
+    backupConfigMsg = msg;
+  } else if (msg.type === 'backupList') {
+    backupListMsg = msg;
   }
 });
 
@@ -1267,6 +1288,27 @@ async function main(): Promise<void> {
   await waitFor('ответ getAudio', () => audioMsg !== null);
   check(audioMsg!.name === 'тест.mp3' && audioMsg!.dataBase64 === audioData, 'аудиофайл сохранён и отдан байт в байт');
 
+  console.log('— Авто-бэкапы проекта (§27 доработки, УХ п.5) —');
+  send({ type: 'listBackups' });
+  await waitFor('исходный список бэкапов получен', () => backupListMsg !== null);
+  check(backupConfigMsg !== null && backupConfigMsg.enabled === false, 'бэкапы выключены по умолчанию в тестовой конфигурации');
+  send({ type: 'updateBackupConfig', enabled: true, intervalMin: 7 });
+  await waitFor(
+    'настройка бэкапов применена',
+    () => backupConfigMsg?.enabled === true && backupConfigMsg.intervalMin === 7,
+  );
+  const nameBeforeSnapshot = store.project.name;
+  backups.snapshot(); // не ждём реальный интервал — снимок вручную, как по таймеру
+  send({ type: 'listBackups' });
+  await waitFor('снимок появился в списке', () => (backupListMsg?.backups.length ?? 0) >= 1);
+  const snapshotFile = backupListMsg!.backups[0]!.file;
+  check(true, `снимок сохранён и виден в списке (${snapshotFile})`);
+  send({ type: 'updateProject', project: { ...store.project, name: 'Испорчено по ошибке' } });
+  await waitFor('проект испорчен для теста восстановления', () => projectEcho?.name === 'Испорчено по ошибке');
+  send({ type: 'restoreBackup', file: snapshotFile });
+  await waitFor('проект восстановлен из снимка', () => projectEcho?.name === nameBeforeSnapshot);
+  check(true, 'restoreBackup вернул проект к состоянию на момент снимка (имя проекта совпало)');
+
   console.log('— Сохранение проекта —');
   await sleep(700); // дебаунс записи 500 мс
   const saved = JSON.parse(fs.readFileSync(projectFile, 'utf8')) as Project;
@@ -1296,6 +1338,7 @@ main()
     mockNode.close();
     vfdServer.close();
     mqttServer.close();
+    backups.stop();
     engine.stop();
     fs.rmSync(tmpDir, { recursive: true, force: true });
     process.exit(failures.length === 0 ? 0 : 1);

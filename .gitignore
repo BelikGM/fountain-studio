@@ -11,6 +11,7 @@ Thumbs.db
 fountain.project.json
 fountain.project.json.broken
 audio/
+backups/
 
 # Артефакты сборки настольного приложения (packages/app)
 packages/app/engine.cjs

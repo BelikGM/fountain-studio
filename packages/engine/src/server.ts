@@ -8,6 +8,7 @@ import {
   type ServerMessage,
 } from '@fountain-studio/shared';
 import type { AudioStore } from './audio';
+import type { BackupStore } from './backups';
 import type { DmxCapture } from './dmxcapture';
 import type { Engine } from './engine';
 import type { MqttController } from './mqttcontroller';
@@ -38,6 +39,7 @@ export function startServer(
   engine: Engine,
   store: ProjectStore,
   audio: AudioStore,
+  backups?: BackupStore,
   net?: NetworkMonitor,
   capture?: DmxCapture,
   osc?: OscServer,
@@ -72,6 +74,14 @@ export function startServer(
   });
   const broadcastRemoteStatus = (): void => broadcast(remoteStatus());
   if (mqtt) mqtt.onChange = broadcastRemoteStatus;
+  const backupConfigMessage = (): Extract<ServerMessage, { type: 'backupConfig' }> => ({
+    type: 'backupConfig',
+    ...(backups?.config() ?? { enabled: false, intervalMin: 10 }),
+  });
+  const backupListMessage = (): Extract<ServerMessage, { type: 'backupList' }> => ({
+    type: 'backupList',
+    backups: backups?.list() ?? [],
+  });
 
   wss.on('connection', (ws) => {
     const hello: ServerMessage = {
@@ -86,6 +96,8 @@ export function startServer(
     ws.send(JSON.stringify({ type: 'playback', state: engine.playbackState() } satisfies ServerMessage));
     if (net) ws.send(JSON.stringify({ type: 'network', state: net.state() } satisfies ServerMessage));
     ws.send(JSON.stringify({ type: 'modbus', state: engine.modbusState() } satisfies ServerMessage));
+    ws.send(JSON.stringify(backupConfigMessage()));
+    ws.send(JSON.stringify(backupListMessage()));
     ws.send(JSON.stringify(remoteStatus()));
 
     ws.on('message', (raw) => {
@@ -264,6 +276,36 @@ export function startServer(
           ws.send(JSON.stringify({ type: 'audio', name: msg.name, dataBase64: data ?? '' } satisfies ServerMessage));
           break;
         }
+        case 'updateBackupConfig': {
+          if (!backups) break;
+          backups.setConfig(msg.enabled, msg.intervalMin);
+          const cfg = backups.config();
+          persistBackupConfig(engine, cfg.enabled, cfg.intervalMin);
+          broadcast(backupConfigMessage());
+          break;
+        }
+        case 'listBackups':
+          ws.send(JSON.stringify(backupListMessage()));
+          break;
+        case 'takeBackupNow':
+          if (!backups) break;
+          backups.snapshot();
+          broadcast(backupListMessage());
+          break;
+        case 'restoreBackup': {
+          if (!backups) break;
+          try {
+            const project = sanitizeProject(backups.read(msg.file));
+            store.update(project);
+            engine.setProject(project);
+            broadcast({ type: 'project', project });
+            broadcastPlayback();
+            console.log(`[server] проект восстановлен из бэкапа ${msg.file}`);
+          } catch (err) {
+            console.error('[server] не удалось восстановить бэкап:', err);
+          }
+          break;
+        }
       }
     });
   });
@@ -321,6 +363,18 @@ function persistConfig(engine: Engine, tickMs: number, universes: ConfigUniverse
     console.log(`[server] настройки сохранены в ${file}`);
   } catch (err) {
     console.error('[server] не удалось сохранить fountain.config.json:', err);
+  }
+}
+
+function persistBackupConfig(engine: Engine, enabled: boolean, intervalMin: number): void {
+  const file = (engine.config as { configFile?: string }).configFile;
+  if (!file) return;
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+    raw.backup = { enabled, intervalMin };
+    fs.writeFileSync(file, JSON.stringify(raw, null, 2) + '\n');
+  } catch (err) {
+    console.error('[server] не удалось сохранить настройку бэкапов:', err);
   }
 }
 
