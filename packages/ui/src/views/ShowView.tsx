@@ -50,6 +50,17 @@ function fmtTime(ms: number): string {
   return `${m}:${s.toFixed(1).padStart(4, '0')}`;
 }
 
+/** Даунмикс в моно — вход для estimateTempo/энергии (та им работает с одним каналом). */
+function toMono(buffer: AudioBuffer): Float32Array {
+  const mono = new Float32Array(buffer.length);
+  const nCh = buffer.numberOfChannels;
+  for (let c = 0; c < nCh; c++) {
+    const d = buffer.getChannelData(c);
+    for (let i = 0; i < d.length; i++) mono[i]! += d[i]! / nCh;
+  }
+  return mono;
+}
+
 /** Шоу: таймлайн с музыкой, дорожки блоков (сцены/секвенсоры) и огибающих каналов. */
 export function ShowView({ engine }: { engine: EngineConnection }) {
   const { project, playback, send, updateProject } = engine;
@@ -195,6 +206,32 @@ function ShowEditor({
   const [sel, setSel] = useState<CutRange | null>(null);
   const [selBlock, setSelBlock] = useState<{ trackId: string; blockId: string } | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
+  // Сетка долей (§27 доработки, УХ п.14): те же estimateTempo/beatsMs, что и
+  // «⚡ Автопостановка» уже используют для темпа — просто теперь ещё и на
+  // экран, и как основа прилипания блоков. Считаем от decoded-буфера, доли
+  // внутри вырезок выбрасываем, остальные переводим в смонтированное время.
+  const [beatsMs, setBeatsMs] = useState<number[]>([]);
+  const [bpm, setBpm] = useState(0);
+  const [snapToBeat, setSnapToBeat] = useState(false);
+
+  useEffect(() => {
+    if (!buffer) {
+      setBeatsMs([]);
+      setBpm(0);
+      return;
+    }
+    const tempo = estimateTempo(toMono(buffer), buffer.sampleRate, {});
+    setBpm(tempo.bpm);
+    const cuts = show.cuts;
+    const inCut = (srcMs: number): boolean => cuts.some((c) => srcMs >= c.startMs && srcMs < c.endMs);
+    setBeatsMs(
+      tempo.beatsMs
+        .filter((t) => !inCut(t))
+        .map((t) => Math.round(sourceToEditedMs(cuts, t)))
+        .filter((t) => t <= show.durationMs),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buffer, show.cuts, show.durationMs]);
   const [pointDrag, setPointDrag] = useState<PointDrag | null>(null);
 
   const ctxRef = useRef<AudioContext | null>(null);
@@ -606,14 +643,7 @@ function ShowEditor({
 
   const autoStage = (): void => {
     if (!buffer || !project) return;
-    // Downmix в моно.
-    const ch0 = buffer.getChannelData(0);
-    const mono = new Float32Array(ch0.length);
-    const nCh = buffer.numberOfChannels;
-    for (let c = 0; c < nCh; c++) {
-      const d = buffer.getChannelData(c);
-      for (let i = 0; i < d.length; i++) mono[i]! += d[i]! / nCh;
-    }
+    const mono = toMono(buffer);
     const sr = buffer.sampleRate;
 
     const tempo = estimateTempo(mono, sr, {});
@@ -859,7 +889,24 @@ function ShowEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drag !== null, scale]);
 
-  const snap = (ms: number): number => Math.round(ms / 100) * 100;
+  // Прилипание к долям (§27 доработки, УХ п.14) — вместо шага 100 мс блок
+  // тянется к ближайшей доле сетки, посчитанной из estimateTempo. Нет сетки
+  // (нет аудио/темп не распознан) — тихо остаёмся на обычном шаге 100 мс.
+  const snap = (ms: number): number => {
+    if (snapToBeat && beatsMs.length > 0) {
+      let nearest = beatsMs[0]!;
+      let best = Math.abs(ms - nearest);
+      for (const b of beatsMs) {
+        const d = Math.abs(ms - b);
+        if (d < best) {
+          best = d;
+          nearest = b;
+        }
+      }
+      return nearest;
+    }
+    return Math.round(ms / 100) * 100;
+  };
   const adjustedBlock = (b: ShowBlock, d: DragState): ShowBlock =>
     d.kind === 'move'
       ? { ...b, startMs: Math.max(0, snap(d.origStartMs + d.dMs)) }
@@ -990,6 +1037,12 @@ function ShowEditor({
         >
           ⚡ Автопостановка
         </button>
+        {bpm > 0 && (
+          <label className="field" title="Темп определён автоматически по аудиодорожке (та же оценка, что у «Автопостановки»)">
+            <input type="checkbox" checked={snapToBeat} onChange={(e) => setSnapToBeat(e.target.checked)} /> прилипание к
+            долям ({bpm} BPM)
+          </label>
+        )}
         <label className={videoBusy ? 'btn' : 'btn'} title="Извлечь яркость/цвет из видеоролика → черновые дорожки (§4). Не ИИ — эвристика по кадрам.">
           {videoBusy ? '🎬 Читаю…' : '🎬 Из видео'}
           <input
@@ -1043,7 +1096,7 @@ function ShowEditor({
         <div className="tl-inner" style={{ width: HEAD_W + laneW }}>
           <div className="tl-row" style={{ height: RULER_H }}>
             <div className="tl-head tl-head-ruler" />
-            <Ruler laneW={laneW} scale={scale} durMs={durMs} onSeek={seek} />
+            <Ruler laneW={laneW} scale={scale} durMs={durMs} onSeek={seek} beatsMs={snapToBeat ? beatsMs : []} />
           </div>
 
           <div className="tl-row" style={{ height: AUDIO_H }}>
@@ -1313,11 +1366,14 @@ function Ruler({
   scale,
   durMs,
   onSeek,
+  beatsMs = [],
 }: {
   laneW: number;
   scale: number;
   durMs: number;
   onSeek: (ms: number) => void;
+  /** Сетка долей (§27 доработки, УХ п.14) — пусто, если прилипание выключено/темп не определён. */
+  beatsMs?: number[];
 }) {
   const steps = [0.1, 0.5, 1, 2, 5, 10, 30, 60];
   const minor = steps.find((s) => s * scale >= 9) ?? 60;
@@ -1353,6 +1409,9 @@ function Ruler({
         <div key={i} className={t.label !== null ? 'tick tick-major' : 'tick'} style={{ left: t.x }}>
           {t.label !== null && <span className="tick-label">{t.label}</span>}
         </div>
+      ))}
+      {beatsMs.map((t, i) => (
+        <div key={`b${i}`} className="tick-beat" style={{ left: t * (scale / 1000) }} />
       ))}
       <span className="dim ruler-hint">масштаб: {major} с</span>
     </div>
