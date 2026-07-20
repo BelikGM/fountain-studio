@@ -1,3 +1,5 @@
+import type { TrackEffect } from './smoothing';
+
 /**
  * Модель шоу: звуковая дорожка + дорожки управления на общем таймлайне.
  *
@@ -47,6 +49,12 @@ interface ShowTrackBase {
 export interface BlocksTrack extends ShowTrackBase {
   kind: 'blocks';
   blocks: ShowBlock[];
+  /**
+   * Зоны эффекта плавности (§27 доработки, УХ п.16) — временные промежутки
+   * дорожки, где выходной сигнал сглаживается (Rate/Decay) вместо обычного
+   * мгновенного применения (Quick). Вне зон — как сейчас, без изменений.
+   */
+  effects: TrackEffect[];
 }
 
 /** Огибающая: значение одного канала устройства, рисуется мышью по точкам. */
@@ -192,6 +200,7 @@ export function sanitizeShows(raw: unknown, sceneIds: Set<string>, sequenceIds: 
             .sort((a, b) => a.tMs - b.tMs),
         });
       } else {
+        const rawEffects = Array.isArray((t as BlocksTrack).effects) ? (t as BlocksTrack).effects : [];
         show.tracks.push({
           ...base,
           kind: 'blocks',
@@ -210,6 +219,24 @@ export function sanitizeShows(raw: unknown, sceneIds: Set<string>, sequenceIds: 
               durationMs: Number.isFinite(b.durationMs) ? Math.max(100, Math.round(b.durationMs)) : 1000,
               fadeInMs: Number.isFinite(b.fadeInMs) ? Math.max(0, Math.round(b.fadeInMs)) : 0,
               fadeOutMs: Number.isFinite(b.fadeOutMs) ? Math.max(0, Math.round(b.fadeOutMs)) : 0,
+            }))
+            .sort((a, b) => a.startMs - b.startMs),
+          effects: rawEffects
+            .filter(
+              (e) =>
+                e &&
+                typeof e.id === 'string' &&
+                (e.mode === 'rate' || e.mode === 'decay') &&
+                Number.isFinite(e.startMs) &&
+                Number.isFinite(e.endMs) &&
+                e.endMs > e.startMs,
+            )
+            .map((e) => ({
+              id: e.id,
+              mode: e.mode,
+              startMs: Math.max(0, Math.round(e.startMs)),
+              endMs: Math.round(e.endMs),
+              strength: Number.isFinite(e.strength) ? Math.max(1, Math.min(100, Math.round(e.strength))) : 50,
             }))
             .sort((a, b) => a.startMs - b.startMs),
         });

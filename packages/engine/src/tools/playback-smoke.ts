@@ -419,6 +419,18 @@ const demo: Project = {
         { sceneId: 'sceneB', holdMs: 600, fadeMs: 400 },
       ],
     },
+    {
+      // §27 доработки, УХ п.16: эффект на весь секвенсор — отдельно от fadeMs
+      // шага (тот 0, чтобы не путать со сглаживанием, которое проверяем).
+      id: 'seqEffect',
+      name: 'Секвенсор с эффектом',
+      mode: 'once',
+      steps: [
+        { sceneId: 'sceneA', holdMs: 150, fadeMs: 0 },
+        { sceneId: 'sceneB', holdMs: 5000, fadeMs: 0 },
+      ],
+      effect: { mode: 'rate', strength: 10 },
+    },
   ],
   shows: [
     {
@@ -439,6 +451,7 @@ const demo: Project = {
             { id: 'b1', type: 'scene', refId: 'sceneA', startMs: 500, durationMs: 1500, fadeInMs: 0, fadeOutMs: 0 },
             { id: 'b2', type: 'sequence', refId: 'seq1', startMs: 2500, durationMs: 1200, fadeInMs: 0, fadeOutMs: 0 },
           ],
+          effects: [],
         },
         {
           id: 'trkEnv',
@@ -484,6 +497,7 @@ const demo: Project = {
           offsetMs: 0,
           muted: false,
           blocks: [{ id: 'p1b', type: 'scene', refId: 'sceneA', startMs: 0, durationMs: 600, fadeInMs: 0, fadeOutMs: 0 }],
+          effects: [],
         },
       ],
     },
@@ -501,6 +515,31 @@ const demo: Project = {
           offsetMs: 0,
           muted: false,
           blocks: [{ id: 'p2b', type: 'scene', refId: 'sceneB', startMs: 0, durationMs: 500, fadeInMs: 0, fadeOutMs: 0 }],
+          effects: [],
+        },
+      ],
+    },
+    {
+      // §27 доработки, УХ п.16: зона эффекта на дорожке — сцена A → сцена B
+      // впритык (фейд блока 0, чтобы не путать с сглаживанием) внутри одной
+      // зоны rate/10 на всю дорожку.
+      id: 'showEffect',
+      name: 'Шоу с эффектом дорожки',
+      audioFile: null,
+      durationMs: 5200,
+      cuts: [],
+      tracks: [
+        {
+          id: 'trkEffect',
+          name: 'Эффект дорожки',
+          kind: 'blocks',
+          offsetMs: 0,
+          muted: false,
+          blocks: [
+            { id: 'te1', type: 'scene', refId: 'sceneA', startMs: 0, durationMs: 200, fadeInMs: 0, fadeOutMs: 0 },
+            { id: 'te2', type: 'scene', refId: 'sceneB', startMs: 200, durationMs: 5000, fadeInMs: 0, fadeOutMs: 0 },
+          ],
+          effects: [{ id: 'fx1', mode: 'rate', strength: 10, startMs: 0, endMs: 5200 }],
         },
       ],
     },
@@ -660,6 +699,36 @@ async function main(): Promise<void> {
   check(true, 'после resumeAll секвенсор продолжил с той же точки, а не скакнул вперёд');
   send({ type: 'stopAllPlayback' });
   await waitFor('стоп после теста паузы', () => playback.running.length === 0 && ch(1) === 0);
+
+  console.log('— Эффект плавности секвенсора: Rate (§27 доработки, УХ п.16) —');
+  send({ type: 'startSequence', sequenceId: 'seqEffect' });
+  await waitFor('шаг 1 (сцена A, насос 200) отработал мгновенно — это ещё не зона перехода', () => ch(1) === 200, 500);
+  // В 150 мс секвенсор переходит на шаг 2 (сцена B, насос 60, fadeMs=0) —
+  // без эффекта канал прыгнул бы мгновенно; с rate/10 (tau=200мс) должен ещё
+  // не долететь через ~60–150 мс после перехода.
+  await waitFor(
+    'после перехода на шаг 2 насос ещё в процессе плавного схождения к 60, не прыгнул мгновенно',
+    () => ch(1) > 60 && ch(1) < 200,
+    600,
+  );
+  check(true, `rate-эффект секвенсора: промежуточное значение поймано (${ch(1)})`);
+  await waitFor('через ~1.5 с (7+ постоянных времени) значение сошлось к целевому 60', () => Math.abs(ch(1) - 60) <= 3, 2000);
+  check(true, `rate-эффект секвенсора: сошлось к цели (${ch(1)})`);
+  send({ type: 'stopAllPlayback' });
+  await waitFor('стоп после теста эффекта секвенсора', () => playback.running.length === 0 && ch(1) === 0);
+
+  console.log('— Эффект плавности дорожки шоу: Rate в зоне, вне зоны — как раньше (§27 доработки, УХ п.16) —');
+  send({ type: 'playShow', showId: 'showEffect', positionMs: 0 });
+  await waitFor(
+    'на границе блоков A→B (t≈200-260мс) насос ещё не долетел до 60 — сглаживается зоной эффекта дорожки',
+    () => ch(1) > 60 && ch(1) < 200,
+    600,
+  );
+  check(true, `трек-эффект: промежуточное значение поймано (${ch(1)})`);
+  await waitFor('через ~1.5 с сошлось к целевому 60', () => Math.abs(ch(1) - 60) <= 3, 2000);
+  check(true, `трек-эффект: сошлось к цели (${ch(1)})`);
+  send({ type: 'stopShow' });
+  await waitFor('стоп после теста эффекта дорожки', () => ch(1) === 0);
 
   console.log('— Шоу: перемотка на паузе (стейтлес-рендер таймлайна) —');
   send({ type: 'playShow', showId: 'show1', positionMs: 0 });
@@ -1426,8 +1495,8 @@ async function main(): Promise<void> {
   const saved = JSON.parse(fs.readFileSync(projectFile, 'utf8')) as Project;
   check(
     saved.devices.length === 4 &&
-      saved.sequences.length === 1 &&
-      saved.shows.length === 3 &&
+      saved.sequences.length === 2 &&
+      saved.shows.length === 4 &&
       saved.playlists.length === 1 &&
       saved.devices.find((d) => d.id === 'pump1')?.trim?.[0]?.min === 50,
     'fountain.project.json записан на диск (шоу, плейлисты, калибровка)',

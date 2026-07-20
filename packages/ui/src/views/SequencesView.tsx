@@ -178,6 +178,45 @@ function SequenceEditor({
         <span className="dim">длительность цикла: {(totalMs / 1000).toFixed(1)} с</span>
       </div>
 
+      <div className="form-row">
+        <span className="dim" title="Отдельно от «Фейд, мс» шага — тот один фиксированный переход, это постоянный фильтр на весь выход секвенсора">
+          Эффект плавности:
+        </span>
+        <select
+          value={sequence.effect?.mode ?? 'quick'}
+          onChange={(e) => {
+            const mode = e.target.value as 'quick' | 'rate' | 'decay';
+            onChange(
+              mode === 'quick'
+                ? { ...sequence, effect: undefined }
+                : { ...sequence, effect: { mode, strength: sequence.effect?.strength ?? 50 } },
+            );
+          }}
+        >
+          <option value="quick">Quick (без сглаживания)</option>
+          <option value="rate">Rate (плавно в обе стороны)</option>
+          <option value="decay">Decay (плавно только на спад)</option>
+        </select>
+        {sequence.effect && (
+          <label className="field">
+            Сила:{' '}
+            <input
+              className="input input-num"
+              type="number"
+              min={1}
+              max={100}
+              value={sequence.effect.strength}
+              onChange={(e) =>
+                onChange({
+                  ...sequence,
+                  effect: { mode: sequence.effect!.mode, strength: Math.max(1, Math.min(100, Number(e.target.value))) },
+                })
+              }
+            />
+          </label>
+        )}
+      </div>
+
       <div className="form-row transport">
         {!running && (
           <button

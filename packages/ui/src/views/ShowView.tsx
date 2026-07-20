@@ -24,6 +24,7 @@ import {
   type Show,
   type ShowBlock,
   type ShowTrack,
+  type TrackEffect,
 } from '@fountain-studio/shared';
 import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
 import { ListFilter } from '../components/ListFilter';
@@ -206,6 +207,9 @@ function ShowEditor({
   const [sel, setSel] = useState<CutRange | null>(null);
   const [selBlock, setSelBlock] = useState<{ trackId: string; blockId: string } | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
+  // Панель зон эффекта плавности дорожки (§27 доработки, УХ п.16) — открыта на
+  // одной дорожке за раз, id null — все закрыты.
+  const [effectsOpenId, setEffectsOpenId] = useState<string | null>(null);
   // Сетка долей (§27 доработки, УХ п.14): те же estimateTempo/beatsMs, что и
   // «⚡ Автопостановка» уже используют для темпа — просто теперь ещё и на
   // экран, и как основа прилипания блоков. Считаем от decoded-буфера, доли
@@ -616,6 +620,7 @@ function ShowEditor({
       offsetMs: 0,
       muted: false,
       blocks: [],
+      effects: [],
     };
     onChange({ ...show, tracks: [...show.tracks, track] });
   };
@@ -737,6 +742,7 @@ function ShowEditor({
           offsetMs: 0,
           muted: false,
           blocks,
+          effects: [],
         };
         newTracks.push(burstTrack);
         summary.push(`${blocks.length} залпов «${scene.name}» на всплесках`);
@@ -824,7 +830,7 @@ function ShowEditor({
         }
         if (blocks.length > 0) {
           newTracks.push({
-            id: uid(), name: `Склейки видео → «${scene.name}»`, kind: 'blocks', offsetMs: 0, muted: false, blocks,
+            id: uid(), name: `Склейки видео → «${scene.name}»`, kind: 'blocks', offsetMs: 0, muted: false, blocks, effects: [],
           });
           summary.push(`${blocks.length} вспышек «${scene.name}» на монтажных склейках`);
         }
@@ -1206,6 +1212,17 @@ function ShowEditor({
                   >
                     M
                   </button>
+                  {track.kind === 'blocks' && (
+                    <button
+                      className={
+                        track.effects.length > 0 || effectsOpenId === track.id ? 'btn btn-small active' : 'btn btn-small'
+                      }
+                      title="Зоны эффекта плавности (Quick/Rate/Decay) на этой дорожке"
+                      onClick={() => setEffectsOpenId(effectsOpenId === track.id ? null : track.id)}
+                    >
+                      🎚{track.effects.length > 0 ? ` ${track.effects.length}` : ''}
+                    </button>
+                  )}
                   <button className="btn btn-small" disabled={ti === 0} onClick={() => moveTrack(ti, -1)}>
                     ↑
                   </button>
@@ -1354,6 +1371,19 @@ function ShowEditor({
             }}
           />
         )}
+
+        {effectsOpenId &&
+          (() => {
+            const track = show.tracks.find((t) => t.id === effectsOpenId);
+            if (!track || track.kind !== 'blocks') return null;
+            return (
+              <TrackEffectsPanel
+                track={track}
+                durationMs={show.durationMs}
+                onChange={(effects) => updateTrack({ ...track, effects })}
+              />
+            );
+          })()}
       </div>
     </>
   );
@@ -1735,6 +1765,84 @@ function BlockPanel({
       </label>
       <button className="btn btn-danger" onClick={onRemove}>
         Удалить блок
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Зоны эффекта плавности дорожки (§27 доработки, УХ п.16): промежуток времени
+ * (числами) + режим + сила. Вне зон дорожка ведёт себя как раньше (Quick).
+ */
+function TrackEffectsPanel({
+  track,
+  durationMs,
+  onChange,
+}: {
+  track: BlocksTrack;
+  durationMs: number;
+  onChange: (effects: TrackEffect[]) => void;
+}) {
+  const patch = (id: string, p: Partial<TrackEffect>): void =>
+    onChange(track.effects.map((e) => (e.id === id ? { ...e, ...p } : e)));
+  const addZone = (): void => {
+    const start = 0;
+    const end = Math.min(durationMs, Math.max(500, Math.round(durationMs * 0.2)));
+    onChange([...track.effects, { id: uid(), mode: 'rate', strength: 50, startMs: start, endMs: end }]);
+  };
+  return (
+    <div className="panel">
+      <div className="panel-title">Эффект плавности на «{track.name}»</div>
+      <p className="dim">
+        Вне зон — как обычно (Quick). Внутри зоны выход дорожки сглаживается вместо мгновенного применения.
+      </p>
+      {track.effects.length === 0 && <p className="dim">Зон ещё нет.</p>}
+      {track.effects.map((e) => (
+        <div className="form-row" key={e.id}>
+          <select value={e.mode} onChange={(ev) => patch(e.id, { mode: ev.target.value as 'rate' | 'decay' })}>
+            <option value="rate">Rate (обе стороны)</option>
+            <option value="decay">Decay (только спад)</option>
+          </select>
+          <label>
+            сила:{' '}
+            <input
+              className="input input-num"
+              type="number"
+              min={1}
+              max={100}
+              value={e.strength}
+              onChange={(ev) => patch(e.id, { strength: Math.max(1, Math.min(100, Number(ev.target.value))) })}
+            />
+          </label>
+          <label>
+            с, с:{' '}
+            <input
+              className="input input-num"
+              type="number"
+              step={0.1}
+              min={0}
+              value={(e.startMs / 1000).toFixed(1)}
+              onChange={(ev) => patch(e.id, { startMs: Math.max(0, Number(ev.target.value) * 1000) })}
+            />
+          </label>
+          <label>
+            по, с:{' '}
+            <input
+              className="input input-num"
+              type="number"
+              step={0.1}
+              min={0}
+              value={(e.endMs / 1000).toFixed(1)}
+              onChange={(ev) => patch(e.id, { endMs: Math.max(e.startMs + 100, Number(ev.target.value) * 1000) })}
+            />
+          </label>
+          <button className="btn btn-small" onClick={() => onChange(track.effects.filter((x) => x.id !== e.id))}>
+            ✕
+          </button>
+        </div>
+      ))}
+      <button className="btn btn-small" onClick={addZone}>
+        + Зона
       </button>
     </div>
   );

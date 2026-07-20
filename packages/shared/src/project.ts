@@ -202,6 +202,14 @@ export interface Sequence {
   name: string;
   mode: SequenceMode;
   steps: SequenceStep[];
+  /**
+   * Эффект плавности на весь секвенсор (§27 доработки, УХ п.16) — отдельно
+   * от fadeMs шага (тот — фиксированный переход между двумя конкретными
+   * шагами; это — постоянный фильтр на весь выходной поток секвенсора,
+   * например «на свет плавность нужна, а на воду нет» — у них разные
+   * секвенсоры). Нет поля — Quick (как сейчас, без изменений).
+   */
+  effect?: { mode: 'rate' | 'decay'; strength: number };
 }
 
 export interface Project {
@@ -462,6 +470,10 @@ export function sanitizeProject(raw: unknown): Project {
     // (шоу санируются ниже, когда известны id сцен и секвенсоров)
     for (const q of r.sequences as Sequence[]) {
       if (!q || typeof q.id !== 'string') continue;
+      const effect =
+        q.effect && (q.effect.mode === 'rate' || q.effect.mode === 'decay') && Number.isFinite(q.effect.strength)
+          ? { mode: q.effect.mode, strength: Math.max(1, Math.min(100, Math.round(q.effect.strength))) }
+          : undefined;
       project.sequences.push({
         id: q.id,
         name: typeof q.name === 'string' ? q.name : q.id,
@@ -473,6 +485,7 @@ export function sanitizeProject(raw: unknown): Project {
             holdMs: Number.isFinite(st.holdMs) ? Math.max(50, Math.round(st.holdMs)) : 1000,
             fadeMs: Number.isFinite(st.fadeMs) ? Math.max(0, Math.round(st.fadeMs)) : 0,
           })),
+        ...(effect ? { effect } : {}),
       });
     }
   }

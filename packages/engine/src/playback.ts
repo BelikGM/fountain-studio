@@ -1,8 +1,10 @@
 import {
   DMX_UNIVERSE_SIZE,
+  activeEffectAt,
   blockFadeGain,
   envelopeValue,
   profileMap,
+  smoothStep,
   type PlaybackState,
   type Playlist,
   type PlaylistTransportState,
@@ -27,6 +29,13 @@ interface RunningSeq {
   fadeFrom: Map<number, Float32Array>;
   /** Текущие уровни секвенсора (его вклад в слой воспроизведения). */
   levels: Map<number, Float32Array>;
+  /**
+   * Эффект плавности секвенсора (§27 доработки, УХ п.16): сглаженная версия
+   * levels, которую реально видит выход — отдельно от levels (та остаётся
+   * «сырой» целью для fadeFrom следующего шага). null — ещё не тикали ни разу.
+   */
+  smoothed: Map<number, Float32Array>;
+  lastTickMs: number | null;
 }
 
 interface ShowRuntime {
@@ -66,6 +75,14 @@ export class Playback {
   private showRt: ShowRuntime | null = null;
   private playlistRt: PlaylistRuntime | null = null;
   private readonly merged = new Map<number, Uint8Array>();
+  /**
+   * Эффект плавности треков шоу (§27 доработки, УХ п.16): состояние фильтра на
+   * трек, ключ — id дорожки. lastTt — таймлайн-время (не часы движка) прошлого
+   * тика: скраб/перемотка обычно дают скачок tt — обнаруживаем это по разнице
+   * и сбрасываем фильтр (сразу честное значение), а не тянем плавность через
+   * разрыв (тот самый принцип «стейтлес-рендер» для перемотки, см. renderShow).
+   */
+  private trackSmoothed = new Map<string, { lastTt: number; levels: Map<number, Float32Array> }>();
   /** Растёт при любом изменении состояния (транспорт, автопереход шага) — сигнал серверу разослать состояние. */
   version = 0;
   /**
@@ -173,6 +190,8 @@ export class Playback {
       pausedElapsedMs: 0,
       fadeFrom: new Map(),
       levels: new Map(),
+      smoothed: new Map(),
+      lastTickMs: null,
     });
     this.version++;
   }
@@ -377,6 +396,13 @@ export class Playback {
       const target = this.compiled.get(step.sceneId);
       const elapsed = r.paused ? r.pausedElapsedMs : nowMs - r.stepStartMs;
       const t = step.fadeMs > 0 ? Math.min(1, Math.max(0, elapsed / step.fadeMs)) : 1;
+      // Эффект плавности секвенсора (§27 доработки, УХ п.16): sequence.effect
+      // сглаживает то, что реально идёт на выход, отдельно от «сырого» levels
+      // (тот остаётся честным fadeFrom-снимком для следующего шага).
+      const mode = r.sequence.effect?.mode ?? 'quick';
+      const strength = r.sequence.effect?.strength ?? 50;
+      const dtMs = r.lastTickMs === null ? 0 : nowMs - r.lastTickMs;
+      r.lastTickMs = nowMs;
       for (const universe of this.universeIds) {
         const levels = getOrCreate(r.levels, universe);
         const from = r.fadeFrom.get(universe);
@@ -386,9 +412,12 @@ export class Playback {
           const b = targetBuf?.[i] ?? 0;
           levels[i] = a + (b - a) * t;
         }
+        const smoothed = getOrCreate(r.smoothed, universe);
         const out = this.merged.get(universe)!;
         for (let i = 0; i < DMX_UNIVERSE_SIZE; i++) {
-          const v = levels[i]!;
+          const raw = levels[i]!;
+          const v = mode === 'quick' || dtMs === 0 ? raw : smoothStep(smoothed[i]!, raw, mode, strength, dtMs);
+          smoothed[i] = v;
           if (v > out[i]!) out[i] = Math.round(v);
         }
       }
@@ -440,26 +469,67 @@ export class Playback {
         if (!out || addr < 0 || addr >= DMX_UNIVERSE_SIZE) continue;
         if (v > out[addr]!) out[addr] = v;
       } else {
-        for (const block of track.blocks) {
-          const local = tt - block.startMs;
-          if (local < 0 || local >= block.durationMs) continue;
-          const gain = blockFadeGain(block, local);
-          if (gain <= 0) continue;
-          if (block.type === 'scene') {
-            const scene = this.compiled.get(block.refId);
-            if (scene) this.mergeScaled(scene, gain);
-          } else {
-            const seq = this.project.sequences.find((q) => q.id === block.refId);
-            if (seq && seq.steps.length > 0) this.mergeSequenceAt(seq, local, gain);
+        const zone = activeEffectAt(track.effects, tt);
+        if (!zone) {
+          // Как обычно — прямой мердж по HTP в общий буфер, без сглаживания.
+          for (const block of track.blocks) {
+            const local = tt - block.startMs;
+            if (local < 0 || local >= block.durationMs) continue;
+            const gain = blockFadeGain(block, local);
+            if (gain <= 0) continue;
+            if (block.type === 'scene') {
+              const scene = this.compiled.get(block.refId);
+              if (scene) this.mergeScaled(scene, gain, this.merged);
+            } else {
+              const seq = this.project.sequences.find((q) => q.id === block.refId);
+              if (seq && seq.steps.length > 0) this.mergeSequenceAt(seq, local, gain, this.merged);
+            }
+          }
+        } else {
+          // В зоне эффекта: вклад ЭТОЙ дорожки считаем отдельно (свой scratch,
+          // HTP внутри дорожки, если блоки перекрылись), сглаживаем, и только
+          // потом мерджим сглаженный результат в общий буфер.
+          const scratch = new Map<number, Uint8Array>();
+          for (const id of this.universeIds) scratch.set(id, new Uint8Array(DMX_UNIVERSE_SIZE));
+          for (const block of track.blocks) {
+            const local = tt - block.startMs;
+            if (local < 0 || local >= block.durationMs) continue;
+            const gain = blockFadeGain(block, local);
+            if (gain <= 0) continue;
+            if (block.type === 'scene') {
+              const scene = this.compiled.get(block.refId);
+              if (scene) this.mergeScaled(scene, gain, scratch);
+            } else {
+              const seq = this.project.sequences.find((q) => q.id === block.refId);
+              if (seq && seq.steps.length > 0) this.mergeSequenceAt(seq, local, gain, scratch);
+            }
+          }
+          let st = this.trackSmoothed.get(track.id);
+          const jump = !st || Math.abs(tt - st.lastTt) > 250;
+          if (!st) {
+            st = { lastTt: tt, levels: new Map() };
+            this.trackSmoothed.set(track.id, st);
+          }
+          const dtMs = jump ? 0 : tt - st.lastTt;
+          st.lastTt = tt;
+          for (const universe of this.universeIds) {
+            const raw = scratch.get(universe)!;
+            const levels = getOrCreate(st.levels, universe);
+            const out = this.merged.get(universe)!;
+            for (let i = 0; i < DMX_UNIVERSE_SIZE; i++) {
+              const v = jump || dtMs === 0 ? raw[i]! : smoothStep(levels[i]!, raw[i]!, zone.mode, zone.strength, dtMs);
+              levels[i] = v;
+              if (v > out[i]!) out[i] = Math.round(v);
+            }
           }
         }
       }
     }
   }
 
-  private mergeScaled(scene: CompiledScene, gain: number): void {
+  private mergeScaled(scene: CompiledScene, gain: number, target: Map<number, Uint8Array>): void {
     for (const [universe, buf] of scene) {
-      const out = this.merged.get(universe);
+      const out = target.get(universe);
       if (!out) continue;
       for (let i = 0; i < DMX_UNIVERSE_SIZE; i++) {
         const v = Math.round(buf[i]! * gain);
@@ -469,7 +539,7 @@ export class Playback {
   }
 
   /** Секвенсор внутри блока шоу: elapsedMs однозначно даёт шаг и фазу фейда. */
-  private mergeSequenceAt(seq: Sequence, elapsedMs: number, gain: number): void {
+  private mergeSequenceAt(seq: Sequence, elapsedMs: number, gain: number, target: Map<number, Uint8Array>): void {
     const total = seq.steps.reduce((s, st) => s + st.holdMs, 0);
     if (total <= 0) return;
     let e: number;
@@ -498,7 +568,7 @@ export class Playback {
     const prevIdx = idx > 0 ? idx - 1 : firstPass ? -1 : seq.steps.length - 1;
     const prev = prevIdx >= 0 ? this.compiled.get(seq.steps[prevIdx]!.sceneId) : undefined;
     for (const universe of this.universeIds) {
-      const out = this.merged.get(universe)!;
+      const out = target.get(universe)!;
       const a = prev?.get(universe);
       const b = cur?.get(universe);
       if (!a && !b) continue;
