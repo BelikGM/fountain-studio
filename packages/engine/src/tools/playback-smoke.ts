@@ -64,6 +64,7 @@ import {
   type ClientMessage,
   type ServerMessage,
 } from '@fountain-studio/shared';
+import { wireAlarmNotifications } from '../alarms';
 import { AudioStore } from '../audio';
 import { BackupStore } from '../backups';
 import dgram from 'node:dgram';
@@ -338,6 +339,51 @@ function encodeMqttPublish(topic: string, payload: string): Buffer {
   return Buffer.concat([Buffer.from([0x30, ...remLen]), variableAndPayload]);
 }
 
+/**
+ * Разбирает поток кадров MQTT, отдаёт PUBLISH (тип 3) как {topic, payload};
+ * прочие типы (CONNACK, SUBACK, PINGRESP…) молча пропускает. Возвращает
+ * остаток буфера (неполный кадр в конце).
+ */
+function decodeMqttFrames(buf: Buffer, onPublish: (topic: string, payload: string) => void): Buffer {
+  for (;;) {
+    if (buf.length < 2) return buf;
+    const type = buf[0]! >> 4;
+    let multiplier = 1;
+    let remLen = 0;
+    let idx = 1;
+    let byte: number;
+    do {
+      if (idx >= buf.length) return buf;
+      byte = buf[idx]!;
+      remLen += (byte & 0x7f) * multiplier;
+      multiplier *= 128;
+      idx++;
+    } while ((byte & 0x80) !== 0);
+    const total = idx + remLen;
+    if (buf.length < total) return buf;
+    const body = buf.subarray(idx, total);
+    buf = buf.subarray(total);
+    if (type === 3) {
+      const topicLen = body.readUInt16BE(0);
+      const topic = body.subarray(2, 2 + topicLen).toString('utf8');
+      const payload = body.subarray(2 + topicLen).toString('utf8');
+      onPublish(topic, payload);
+    }
+  }
+}
+
+/** «Внешний подписчик» на мок-брокере — ловит всё, что движок публикует (уведомления об авариях). */
+const mqttAlarms: { topic: string; payload: string }[] = [];
+const mqttSub = createTcpConnection({ host: '127.0.0.1', port: MOCK_MQTT_PORT }, () => {
+  mqttSub.write(Buffer.from([0x10, 0x00])); // минимальный CONNECT — мок проверяет только тип кадра
+});
+let mqttSubBuf: Buffer = Buffer.alloc(0);
+mqttSub.on('data', (chunk: Buffer) => {
+  mqttSubBuf = decodeMqttFrames(Buffer.concat([mqttSubBuf, chunk]), (topic, payload) => {
+    if (topic.startsWith('test/alarms')) mqttAlarms.push({ topic, payload });
+  });
+});
+
 const engine = new Engine({
   server: { port: PORT },
   timing: { tickMs: 50, spinMs: 10, uiFrameMs: 40 },
@@ -372,6 +418,9 @@ const mqtt = new MqttController(
   { host: '127.0.0.1', port: MOCK_MQTT_PORT, topicPrefix: 'test' },
   () => store.project.mqttBindings,
 );
+// Та же обёртка, что index.ts включает в проде при активном MQTT — проверяем
+// реальную функцию, не переписанную для теста копию.
+wireAlarmNotifications(mqtt);
 
 const wss = startServer(
   engine,
@@ -1598,6 +1647,30 @@ async function main(): Promise<void> {
       last.source === 'key' && last.message.includes('KeyA'),
       'eventLog: clientEvent от редактора (клавиша) попал в общий журнал',
     );
+
+    // Уведомления об авариях (§27 доработки, §3 п.4): та же обёртка, что
+    // index.ts включает в проде — публикует warn/error-события в MQTT.
+    check(
+      mqttAlarms.some((m) => {
+        const p = JSON.parse(m.payload) as { source: string; level: string; message: string };
+        return p.source === 'modbus' && p.level === 'error' && p.message.includes('код аварии 7');
+      }),
+      'уведомления об авариях: авария насоса опубликована в MQTT test/alarms',
+    );
+    check(
+      mqttAlarms.some((m) => {
+        const p = JSON.parse(m.payload) as { source: string; level: string; message: string };
+        return p.source === 'net' && p.level === 'warn' && p.message.includes('ПОТЕРЯНА');
+      }),
+      'уведомления об авариях: потеря ноды опубликована в MQTT test/alarms',
+    );
+    check(
+      !mqttAlarms.some((m) => {
+        const p = JSON.parse(m.payload) as { level: string };
+        return p.level === 'info';
+      }),
+      'уведомления об авариях: info-события (не аварии) в MQTT не публикуются',
+    );
   }
 
   console.log('— Сохранение проекта —');
@@ -1628,6 +1701,7 @@ main()
     mqtt.stop();
     mockNode.close();
     vfdServer.close();
+    mqttSub.destroy();
     mqttServer.close();
     backups.stop();
     engine.stop();

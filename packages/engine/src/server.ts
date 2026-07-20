@@ -86,7 +86,7 @@ export function startServer(
   });
   // Журнал событий (§27 доработки, §3 п.1): новое событие — сразу всем
   // подключённым клиентам (не только тому, кто его вызвал).
-  eventLog.onEvent = (event) => broadcast({ type: 'logEvent', event });
+  eventLog.subscribe((event) => broadcast({ type: 'logEvent', event }));
   const autostartMessage = (error?: string): Extract<ServerMessage, { type: 'autostartState' }> => {
     const supported = isAutostartSupported();
     const reason = error ?? (supported ? undefined : (unsupportedReason() ?? undefined));

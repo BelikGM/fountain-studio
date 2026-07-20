@@ -3,6 +3,7 @@ import { AudioStore } from './audio';
 import { AudioPlayer } from './audioplayer';
 import { BackupStore } from './backups';
 import { loadConfig } from './config';
+import { wireAlarmNotifications } from './alarms';
 import { DmxCapture } from './dmxcapture';
 import { Engine } from './engine';
 import { MqttController } from './mqttcontroller';
@@ -59,6 +60,7 @@ const mqtt = config.mqtt?.enabled
   ? new MqttController(engine, config.mqtt, () => store.project.mqttBindings)
   : undefined;
 mqtt?.startTelemetry();
+if (mqtt) wireAlarmNotifications(mqtt);
 
 startServer(engine, store, audio, backups, net, capture, osc, mqtt);
 

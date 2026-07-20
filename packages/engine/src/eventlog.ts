@@ -13,7 +13,8 @@ const MAX_EVENTS = 500;
 class EventLogStore {
   private events: LogEvent[] = [];
   private nextId = 1;
-  onEvent?: (e: LogEvent) => void;
+  /** Несколько независимых подписчиков (сервер — рассылка по WS, уведомления — публикация в MQTT и т.п.). */
+  private listeners = new Set<(e: LogEvent) => void>();
 
   log(source: string, message: string, level: LogEvent['level'] = 'info'): LogEvent {
     const prefix = `[${source}]`;
@@ -23,8 +24,14 @@ class EventLogStore {
     const event: LogEvent = { id: this.nextId++, tsMs: Date.now(), source, level, message };
     this.events.push(event);
     if (this.events.length > MAX_EVENTS) this.events.shift();
-    this.onEvent?.(event);
+    for (const listener of this.listeners) listener(event);
     return event;
+  }
+
+  /** Возвращает функцию отписки. */
+  subscribe(listener: (e: LogEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   list(): LogEvent[] {
