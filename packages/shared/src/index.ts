@@ -13,6 +13,7 @@ export * from './remote';
 export * from './scenegen';
 export * from './show';
 export * from './smoothing';
+export * from './utilitylight';
 export * from './videoanalysis';
 export * from './windlimit';
 export * from './wizard';

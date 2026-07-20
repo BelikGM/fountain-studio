@@ -11,6 +11,7 @@ import {
   type OscBinding,
 } from './remote';
 import { sanitizeShows, type Show } from './show';
+import { defaultUtilityLightConfig, sanitizeUtilityLightConfig, type UtilityLightConfig } from './utilitylight';
 import { defaultWindLimitConfig, sanitizeWindLimitConfig, type WindLimitConfig } from './windlimit';
 
 /**
@@ -279,6 +280,8 @@ export interface Project {
    * не подставляется (см. Playback.tick).
    */
   idleSceneId: string | null;
+  /** Служебное освещение по времени суток, независимо от расписания шоу (§27 доработки, «Switches»). */
+  utilityLight: UtilityLightConfig;
   /** 3D-схема фонтана (вкладка «3D»). */
   layout: FountainLayout;
 }
@@ -349,6 +352,7 @@ export function emptyProject(name = 'Новый проект'): Project {
     dmxTriggers: [],
     windLimit: defaultWindLimitConfig(),
     idleSceneId: null,
+    utilityLight: defaultUtilityLightConfig(),
     layout: emptyLayout(),
   };
 }
@@ -465,6 +469,7 @@ export function sanitizeProject(raw: unknown): Project {
     dmxTriggers: [],
     windLimit: defaultWindLimitConfig(),
     idleSceneId: null,
+    utilityLight: defaultUtilityLightConfig(),
     layout: emptyLayout(),
   };
   if (Array.isArray(r.profiles)) {
@@ -573,6 +578,7 @@ export function sanitizeProject(raw: unknown): Project {
   project.windLimit = sanitizeWindLimitConfig(r.windLimit);
   project.idleSceneId =
     typeof r.idleSceneId === 'string' && project.scenes.some((s) => s.id === r.idleSceneId) ? r.idleSceneId : null;
+  project.utilityLight = sanitizeUtilityLightConfig(r.utilityLight, deviceIds);
   project.layout = sanitizeLayout(r.layout, deviceIds);
   return project;
 }

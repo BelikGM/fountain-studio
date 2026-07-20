@@ -2,7 +2,9 @@ import {
   DMX_UNIVERSE_SIZE,
   clampDmx,
   computeWindLimitPercent,
+  defaultUtilityLightConfig,
   defaultWindLimitConfig,
+  isUtilityLightOn,
   profileMap,
   type ChannelTrim,
   type EngineStats,
@@ -11,6 +13,7 @@ import {
   type Project,
   type TestPatternMode,
   type UniverseInfo,
+  type UtilityLightConfig,
   type WindLimitConfig,
 } from '@fountain-studio/shared';
 import { Ticker } from './clock';
@@ -76,6 +79,14 @@ export class Engine {
    * тике, переопределяя любое другое значение клапана.
    */
   private valveFollowsPump = new Map<number, { valveIdx: number; pumpIdx: number }[]>();
+  /**
+   * Служебное освещение по времени суток (§27 доработки, «Switches») —
+   * universeId → индексы адресов (адрес-1) ВСЕХ каналов выбранных приборов.
+   * Форсирует 255 в окне on-off (или всегда, если always) и 0 вне его —
+   * независимо от сцен/шоу, последний шаг тика.
+   */
+  private utilityChannels = new Map<number, Set<number>>();
+  private utilityLightConfig: UtilityLightConfig = defaultUtilityLightConfig();
   private windLimitConfig: WindLimitConfig = defaultWindLimitConfig();
   /** Текущее показание скорости ветра, м/с — null, пока никто не ввёл/не прислал. */
   private windSpeed: number | null = null;
@@ -185,6 +196,15 @@ export class Engine {
         const follows = this.valveFollowsPump.get(u.id);
         if (follows) {
           for (const f of follows) u.out[f.valveIdx] = u.out[f.pumpIdx]! > 0 ? 255 : 0;
+        }
+        // Служебное освещение по времени (§27 доработки, «Switches») —
+        // безусловный оверрайд поверх сцен/шоу, не зависит от воспроизведения.
+        if (this.utilityLightConfig.enabled) {
+          const idx = this.utilityChannels.get(u.id);
+          if (idx) {
+            const on = isUtilityLightOn(this.utilityLightConfig, new Date());
+            for (const i of idx) u.out[i] = on ? 255 : 0;
+          }
         }
       } else {
         fillTestPattern(this.pattern, tSec, i, u.out);
@@ -301,6 +321,23 @@ export class Engine {
         this.valveFollowsPump.set(pump.universe, list);
       }
       list.push({ valveIdx, pumpIdx });
+    }
+
+    this.utilityLightConfig = project.utilityLight;
+    this.utilityChannels.clear();
+    for (const id of project.utilityLight.deviceIds) {
+      const d = deviceById.get(id);
+      const profile = d && profiles.get(d.profileId);
+      if (!d || !profile) continue;
+      let set = this.utilityChannels.get(d.universe);
+      if (!set) {
+        set = new Set();
+        this.utilityChannels.set(d.universe, set);
+      }
+      for (let k = 0; k < profile.channels.length; k++) {
+        const idx = d.address - 1 + k;
+        if (idx >= 0 && idx < DMX_UNIVERSE_SIZE) set.add(idx);
+      }
     }
   }
 

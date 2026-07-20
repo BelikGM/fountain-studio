@@ -516,6 +516,84 @@ function IdleScenePanel({ engine }: { engine: EngineConnection }) {
 }
 
 /**
+ * Служебное освещение (§27 доработки, по примеру прежнего приложения —
+ * «Switches») — простое вкл/выкл по времени суток для выбранных приборов
+ * (периметральная подсветка и т.п.), независимо от расписания шоу/плейлистов.
+ */
+function UtilityLightPanel({ engine }: { engine: EngineConnection }) {
+  const { project, updateProject } = engine;
+  if (!project) return null;
+  const cfg = project.utilityLight;
+  const update = (patch: Partial<typeof cfg>): void =>
+    updateProject({ ...project, utilityLight: { ...cfg, ...patch } });
+  const toggleDevice = (id: string): void => {
+    const has = cfg.deviceIds.includes(id);
+    update({ deviceIds: has ? cfg.deviceIds.filter((x) => x !== id) : [...cfg.deviceIds, id] });
+  };
+  return (
+    <section className="panel">
+      <h2>Служебное освещение</h2>
+      <p className="dim">
+        Простое вкл/выкл по времени суток для выбранных приборов (например, периметральная подсветка) —
+        независимо от расписания шоу/плейлистов. Перекрывает сцены/шоу на этих каналах, пока включено.
+      </p>
+      <div className="form-row">
+        <label className="field">
+          <input type="checkbox" checked={cfg.enabled} onChange={(e) => update({ enabled: e.target.checked })} />{' '}
+          Включено
+        </label>
+        <label className="field" title="Ручной оверрайд — не доверять расписанию, держать включённым всегда">
+          <input
+            type="checkbox"
+            checked={cfg.always}
+            disabled={!cfg.enabled}
+            onChange={(e) => update({ always: e.target.checked })}
+          />{' '}
+          Всегда включено
+        </label>
+        <label className="field">
+          Вкл:{' '}
+          <input
+            className="input"
+            type="time"
+            value={cfg.onTime}
+            disabled={!cfg.enabled || cfg.always}
+            onChange={(e) => update({ onTime: e.target.value })}
+          />
+        </label>
+        <label className="field">
+          Выкл:{' '}
+          <input
+            className="input"
+            type="time"
+            value={cfg.offTime}
+            disabled={!cfg.enabled || cfg.always}
+            onChange={(e) => update({ offTime: e.target.value })}
+          />
+        </label>
+      </div>
+      {project.devices.length === 0 ? (
+        <p className="dim">Нет приборов в патче.</p>
+      ) : (
+        <div className="utility-device-list">
+          {project.devices.map((d) => (
+            <label key={d.id} className="field">
+              <input
+                type="checkbox"
+                checked={cfg.deviceIds.includes(d.id)}
+                disabled={!cfg.enabled}
+                onChange={() => toggleDevice(d.id)}
+              />{' '}
+              {d.name}
+            </label>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
  * Настройки движка: вселенные (DMX-линии) и шаг тика — редактирование
  * fountain.config.json из интерфейса, без текстового редактора. Движок
  * применяет на лету (воспроизведение при этом останавливается) и сохраняет
@@ -743,6 +821,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
       <AutostartPanel engine={engine} />
       <WindLimitPanel engine={engine} />
       <IdleScenePanel engine={engine} />
+      <UtilityLightPanel engine={engine} />
       <HotkeysPanel />
       <OperatorPanel />
     </main>

@@ -54,6 +54,8 @@ import {
   colorChangeEvents,
   colorChannelEnvelopePoints,
   computeWindLimitPercent,
+  defaultUtilityLightConfig,
+  isUtilityLightOn,
   sampleFrameStats,
   type VideoFrameSample,
   type LogEvent,
@@ -1780,6 +1782,55 @@ async function main(): Promise<void> {
     send({ type: 'setChannel', universe: 1, channel: 1, value: 0 });
     send({ type: 'setChannel', universe: 1, channel: 2, value: 0 });
     await waitFor('каналы сброшены после теста', () => ch(1) === 0 && ch(2) === 0);
+  }
+
+  console.log('— Служебное освещение по времени («Switches», §27 доработки) —');
+  {
+    const win = { enabled: true, deviceIds: [], always: false, onTime: '10:00', offTime: '14:00' };
+    check(
+      isUtilityLightOn(win, new Date(2026, 0, 1, 12, 0)) === true,
+      'isUtilityLightOn: 12:00 внутри окна 10:00–14:00 — включено',
+    );
+    check(
+      isUtilityLightOn(win, new Date(2026, 0, 1, 9, 0)) === false,
+      'isUtilityLightOn: 09:00 до окна — выключено',
+    );
+    check(
+      isUtilityLightOn(win, new Date(2026, 0, 1, 14, 0)) === false,
+      'isUtilityLightOn: 14:00 — конец окна не включён (полуоткрытый интервал)',
+    );
+    const wrap = { ...win, onTime: '22:00', offTime: '06:00' };
+    check(
+      isUtilityLightOn(wrap, new Date(2026, 0, 1, 23, 0)) === true &&
+        isUtilityLightOn(wrap, new Date(2026, 0, 1, 3, 0)) === true,
+      'isUtilityLightOn: окно через полночь (22:00–06:00) — 23:00 и 03:00 внутри',
+    );
+    check(
+      isUtilityLightOn(wrap, new Date(2026, 0, 1, 12, 0)) === false,
+      'isUtilityLightOn: окно через полночь — полдень снаружи',
+    );
+    check(
+      isUtilityLightOn({ ...win, always: true }, new Date(2026, 0, 1, 3, 0)) === true,
+      'isUtilityLightOn: always=true — включено в любое время, окно не проверяется',
+    );
+
+    // Живая проверка на движке: always=true — независимо от текущего времени суток теста.
+    send({
+      type: 'updateProject',
+      project: { ...store.project, utilityLight: { enabled: true, deviceIds: ['rgb1'], always: true, onTime: '00:00', offTime: '00:00' } },
+    });
+    await waitFor('утилитарный свет форсирует rgb1 на 255', () => ch(10) === 255 && ch(11) === 255 && ch(12) === 255, 2000);
+    check(true, 'utilityLight always=true: rgb1 форсирован на максимум без сцены/ручного управления');
+
+    send({
+      type: 'updateProject',
+      project: { ...store.project, utilityLight: { enabled: false, deviceIds: ['rgb1'], always: true, onTime: '00:00', offTime: '00:00' } },
+    });
+    await waitFor('выключение utilityLight снимает форсирование', () => ch(10) === 0 && ch(11) === 0 && ch(12) === 0, 2000);
+    check(true, 'utilityLight enabled=false: форсирование снято, канал вернулся в 0');
+
+    send({ type: 'updateProject', project: { ...store.project, utilityLight: defaultUtilityLightConfig() } });
+    await waitFor('utilityLight сброшен к умолчанию', () => projectEcho?.utilityLight.enabled === false);
   }
 
   console.log('— Насос на Modbus TCP (мок-ПЧ, карта регистров Elhart EMD-PUMP) —');
