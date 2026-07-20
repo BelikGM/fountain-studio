@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { uid, type Sequence, type SequenceStep } from '@fountain-studio/shared';
+import { sequenceDependents, uid, type Sequence, type SequenceStep } from '@fountain-studio/shared';
+import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
 
 /** Секвенсоры: последовательности сцен с длительностью и фейдом, транспорт запуска. */
@@ -39,6 +40,7 @@ export function SequencesView({ engine }: { engine: EngineConnection }) {
 
   const removeSequence = (): void => {
     if (!selected) return;
+    if (!confirmDelete('секвенсора', selected.name, sequenceDependents(project, selected.id))) return;
     send({ type: 'stopSequence', sequenceId: selected.id });
     updateProject({ ...project, sequences: project.sequences.filter((q) => q.id !== selected.id) });
   };

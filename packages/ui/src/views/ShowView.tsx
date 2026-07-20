@@ -14,6 +14,7 @@ import {
   mergeCuts,
   peakEvents,
   profileMap,
+  showDependents,
   sourceToEditedMs,
   uid,
   type BlocksTrack,
@@ -24,6 +25,7 @@ import {
   type ShowBlock,
   type ShowTrack,
 } from '@fountain-studio/shared';
+import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
 import { extractVideoFrameSamples } from '../videoFrames';
 
@@ -90,6 +92,7 @@ export function ShowView({ engine }: { engine: EngineConnection }) {
 
   const removeShow = (): void => {
     if (!selected) return;
+    if (!confirmDelete('шоу', selected.name, showDependents(project, selected.id))) return;
     if (playback.show?.showId === selected.id) send({ type: 'stopShow' });
     updateProject({ ...project, shows: project.shows.filter((s) => s.id !== selected.id) });
   };

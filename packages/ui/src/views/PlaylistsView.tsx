@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { uid, type Playlist } from '@fountain-studio/shared';
+import { playlistDependents, uid, type Playlist } from '@fountain-studio/shared';
+import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
 
 /**
@@ -30,6 +31,7 @@ export function PlaylistsView({ engine }: { engine: EngineConnection }) {
 
   const removePlaylist = (): void => {
     if (!selected) return;
+    if (!confirmDelete('плейлиста', selected.name, playlistDependents(project, selected.id))) return;
     if (playback.playlist?.playlistId === selected.id) send({ type: 'stopPlaylist' });
     updateProject({ ...project, playlists: project.playlists.filter((p) => p.id !== selected.id) });
   };

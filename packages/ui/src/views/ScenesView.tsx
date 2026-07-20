@@ -7,6 +7,7 @@ import {
   profileMap,
   radialWaveScene,
   radialWaveSequenceScenes,
+  sceneDependents,
   uid,
   type ActorRole,
   type DeviceProfile,
@@ -16,6 +17,7 @@ import {
   type Sequence,
   type WaveSceneOptions,
 } from '@fountain-studio/shared';
+import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
 
 const PAGE_SIZE = 32;
@@ -58,6 +60,7 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
 
   const removeScene = (): void => {
     if (!selected) return;
+    if (!confirmDelete('сцены', selected.name, sceneDependents(project, selected.id))) return;
     updateProject({
       ...project,
       scenes: project.scenes.filter((s) => s.id !== selected.id),

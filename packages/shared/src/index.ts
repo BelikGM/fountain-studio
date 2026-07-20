@@ -1,4 +1,5 @@
 export * from './audioanalysis';
+export * from './dependents';
 export * from './dmx';
 export * from './dmxcycle';
 export * from './dxf';

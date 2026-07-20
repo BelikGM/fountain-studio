@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import {
   DMX_UNIVERSE_SIZE,
   allProfiles,
+  deviceDependents,
   deviceRange,
   findPatchIssues,
   nextFreeAddress,
@@ -18,6 +19,7 @@ import {
   type PatchedDevice,
   type PumpModbusStatus,
 } from '@fountain-studio/shared';
+import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
 
 const KIND_LABEL: Record<DeviceKind, string> = {
@@ -230,6 +232,8 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
   };
 
   const removeDevice = (id: string): void => {
+    const device = project!.devices.find((d) => d.id === id);
+    if (device && !confirmDelete('прибора', device.name, deviceDependents(project!, id))) return;
     const scenes = project!.scenes.map((s) => {
       if (!(id in s.values)) return s;
       const values = { ...s.values };
