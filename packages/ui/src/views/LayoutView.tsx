@@ -383,36 +383,38 @@ function AddTools({
         <button className="btn btn-small" onClick={addBowl}>+ Чаша</button>
       </div>
       <h3>Кольцо форсунок</h3>
-      <label className="field">
-        Штук:{' '}
-        <input
-          className="input input-num"
-          type="number"
-          min={2}
-          max={128}
-          value={ringCount}
-          onChange={(e) => setRingCount(Math.max(2, Math.min(128, Math.round(Number(e.target.value) || 2))))}
-        />
-      </label>
-      <label className="field">
-        Радиус, м:{' '}
-        <input
-          className="input input-num"
-          type="number"
-          step={0.5}
-          min={0.5}
-          value={ringRadius}
-          onChange={(e) => setRingRadius(Math.max(0.1, Number(e.target.value) || 3))}
-        />
-      </label>
-      <label className="field">
-        Тип:{' '}
-        <select className="input" value={ringKind} onChange={(e) => setRingKind(e.target.value as NozzleKind)}>
-          {NOZZLE_KINDS.map((k) => (
-            <option key={k.id} value={k.id}>{k.label}</option>
-          ))}
-        </select>
-      </label>
+      <div className="field-grid">
+        <label className="field">
+          Штук:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={2}
+            max={128}
+            value={ringCount}
+            onChange={(e) => setRingCount(Math.max(2, Math.min(128, Math.round(Number(e.target.value) || 2))))}
+          />
+        </label>
+        <label className="field">
+          Радиус, м:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            step={0.5}
+            min={0.5}
+            value={ringRadius}
+            onChange={(e) => setRingRadius(Math.max(0.1, Number(e.target.value) || 3))}
+          />
+        </label>
+        <label className="field">
+          Тип:{' '}
+          <select className="input" value={ringKind} onChange={(e) => setRingKind(e.target.value as NozzleKind)}>
+            {NOZZLE_KINDS.map((k) => (
+              <option key={k.id} value={k.id}>{k.label}</option>
+            ))}
+          </select>
+        </label>
+      </div>
       <button className="btn btn-small" onClick={addRing}>Расставить кольцо</button>
     </section>
   );
@@ -695,42 +697,44 @@ function NozzleProps({
   return (
     <section className="panel">
       <h2>Форсунка</h2>
-      <label className="field">
-        Имя: <input className="input" value={nozzle.name} onChange={(e) => patch({ name: e.target.value })} />
-      </label>
-      <label className="field">
-        Тип:{' '}
-        <select
-          className="input"
-          value={nozzle.kind}
-          onChange={(e) => {
-            const kind = e.target.value as NozzleKind;
-            patch({ kind, ...nozzleDefaults(kind) });
-          }}
-        >
-          {NOZZLE_KINDS.map((k) => (
-            <option key={k.id} value={k.id}>{k.label}</option>
-          ))}
-        </select>
-      </label>
-      <NumField label="X, м" value={nozzle.x} onChange={(x) => patch({ x })} />
-      <NumField label="Y, м" value={nozzle.y} onChange={(y) => patch({ y })} />
-      <NumField label="Высота сопла, м" value={nozzle.z} onChange={(z) => patch({ z })} />
-      <NumField label="Наклон, °" value={nozzle.tiltDeg} step={1} onChange={(v) => patch({ tiltDeg: Math.max(0, Math.min(85, v)) })} />
-      <NumField label="Азимут, °" value={nozzle.headingDeg} step={5} onChange={(v) => patch({ headingDeg: ((v % 360) + 360) % 360 })} />
-      <NumField label="Высота струи, м" value={nozzle.maxHeightM} step={0.5} onChange={(v) => patch({ maxHeightM: Math.max(0.1, v) })} />
-      <NumField label="Разгон, мс" value={nozzle.riseMs} step={100} onChange={(v) => patch({ riseMs: Math.max(0, Math.round(v)) })} />
-      <NumField label="Спад, мс" value={nozzle.fallMs} step={100} onChange={(v) => patch({ fallMs: Math.max(0, Math.round(v)) })} />
-      <h3>Привязка</h3>
-      <label className="field">
-        Насос: <DeviceSelect project={project} kind="pump" value={nozzle.pumpDeviceId} onChange={(id) => patch({ pumpDeviceId: id })} />
-      </label>
-      <label className="field">
-        Клапан: <DeviceSelect project={project} kind="valve" value={nozzle.valveDeviceId} onChange={(id) => patch({ valveDeviceId: id })} />
-      </label>
-      <label className="field">
-        Подсветка: <DeviceSelect project={project} kind="lamp" value={nozzle.lightDeviceId} onChange={(id) => patch({ lightDeviceId: id })} />
-      </label>
+      <div className="field-grid">
+        <label className="field">
+          Имя: <input className="input" value={nozzle.name} onChange={(e) => patch({ name: e.target.value })} />
+        </label>
+        <label className="field">
+          Тип:{' '}
+          <select
+            className="input"
+            value={nozzle.kind}
+            onChange={(e) => {
+              const kind = e.target.value as NozzleKind;
+              patch({ kind, ...nozzleDefaults(kind) });
+            }}
+          >
+            {NOZZLE_KINDS.map((k) => (
+              <option key={k.id} value={k.id}>{k.label}</option>
+            ))}
+          </select>
+        </label>
+        <NumField label="X, м" value={nozzle.x} onChange={(x) => patch({ x })} />
+        <NumField label="Y, м" value={nozzle.y} onChange={(y) => patch({ y })} />
+        <NumField label="Высота сопла, м" value={nozzle.z} onChange={(z) => patch({ z })} />
+        <NumField label="Наклон, °" value={nozzle.tiltDeg} step={1} onChange={(v) => patch({ tiltDeg: Math.max(0, Math.min(85, v)) })} />
+        <NumField label="Азимут, °" value={nozzle.headingDeg} step={5} onChange={(v) => patch({ headingDeg: ((v % 360) + 360) % 360 })} />
+        <NumField label="Высота струи, м" value={nozzle.maxHeightM} step={0.5} onChange={(v) => patch({ maxHeightM: Math.max(0.1, v) })} />
+        <NumField label="Разгон, мс" value={nozzle.riseMs} step={100} onChange={(v) => patch({ riseMs: Math.max(0, Math.round(v)) })} />
+        <NumField label="Спад, мс" value={nozzle.fallMs} step={100} onChange={(v) => patch({ fallMs: Math.max(0, Math.round(v)) })} />
+        <h3>Привязка</h3>
+        <label className="field">
+          Насос: <DeviceSelect project={project} kind="pump" value={nozzle.pumpDeviceId} onChange={(id) => patch({ pumpDeviceId: id })} />
+        </label>
+        <label className="field">
+          Клапан: <DeviceSelect project={project} kind="valve" value={nozzle.valveDeviceId} onChange={(id) => patch({ valveDeviceId: id })} />
+        </label>
+        <label className="field">
+          Подсветка: <DeviceSelect project={project} kind="lamp" value={nozzle.lightDeviceId} onChange={(id) => patch({ lightDeviceId: id })} />
+        </label>
+      </div>
       <div className="sidebar-actions">
         <button className="btn btn-small" onClick={duplicate}>Дублировать</button>
         <button className="btn btn-small btn-danger" onClick={remove}>Удалить</button>
@@ -757,15 +761,17 @@ function LightProps({
   return (
     <section className="panel">
       <h2>Прожектор</h2>
-      <label className="field">
-        Имя: <input className="input" value={light.name} onChange={(e) => patch({ name: e.target.value })} />
-      </label>
-      <NumField label="X, м" value={light.x} onChange={(x) => patch({ x })} />
-      <NumField label="Y, м" value={light.y} onChange={(y) => patch({ y })} />
-      <NumField label="Z, м" value={light.z} onChange={(z) => patch({ z })} />
-      <label className="field">
-        Устройство: <DeviceSelect project={project} kind="lamp" value={light.deviceId} onChange={(id) => patch({ deviceId: id })} />
-      </label>
+      <div className="field-grid">
+        <label className="field">
+          Имя: <input className="input" value={light.name} onChange={(e) => patch({ name: e.target.value })} />
+        </label>
+        <NumField label="X, м" value={light.x} onChange={(x) => patch({ x })} />
+        <NumField label="Y, м" value={light.y} onChange={(y) => patch({ y })} />
+        <NumField label="Z, м" value={light.z} onChange={(z) => patch({ z })} />
+        <label className="field">
+          Устройство: <DeviceSelect project={project} kind="lamp" value={light.deviceId} onChange={(id) => patch({ deviceId: id })} />
+        </label>
+      </div>
       <div className="sidebar-actions">
         <button
           className="btn btn-small"
@@ -808,27 +814,29 @@ function BowlProps({
   return (
     <section className="panel">
       <h2>Чаша</h2>
-      <label className="field">
-        Имя: <input className="input" value={bowl.name} onChange={(e) => patch({ name: e.target.value })} />
-      </label>
-      <label className="field">
-        Форма:{' '}
-        <select className="input" value={bowl.shape} onChange={(e) => patch({ shape: e.target.value as Bowl['shape'] })}>
-          <option value="circle">Круглая</option>
-          <option value="rect">Прямоугольная</option>
-        </select>
-      </label>
-      <NumField label="X, м" value={bowl.x} onChange={(x) => patch({ x })} />
-      <NumField label="Y, м" value={bowl.y} onChange={(y) => patch({ y })} />
-      {bowl.shape === 'circle' ? (
-        <NumField label="Радиус, м" value={bowl.radius} step={0.5} onChange={(v) => patch({ radius: Math.max(0.1, v) })} />
-      ) : (
-        <>
-          <NumField label="Ширина (X), м" value={bowl.width} step={0.5} onChange={(v) => patch({ width: Math.max(0.1, v) })} />
-          <NumField label="Длина (Y), м" value={bowl.length} step={0.5} onChange={(v) => patch({ length: Math.max(0.1, v) })} />
-        </>
-      )}
-      <NumField label="Борт, м" value={bowl.height} step={0.1} onChange={(v) => patch({ height: Math.max(0, v) })} />
+      <div className="field-grid">
+        <label className="field">
+          Имя: <input className="input" value={bowl.name} onChange={(e) => patch({ name: e.target.value })} />
+        </label>
+        <label className="field">
+          Форма:{' '}
+          <select className="input" value={bowl.shape} onChange={(e) => patch({ shape: e.target.value as Bowl['shape'] })}>
+            <option value="circle">Круглая</option>
+            <option value="rect">Прямоугольная</option>
+          </select>
+        </label>
+        <NumField label="X, м" value={bowl.x} onChange={(x) => patch({ x })} />
+        <NumField label="Y, м" value={bowl.y} onChange={(y) => patch({ y })} />
+        {bowl.shape === 'circle' ? (
+          <NumField label="Радиус, м" value={bowl.radius} step={0.5} onChange={(v) => patch({ radius: Math.max(0.1, v) })} />
+        ) : (
+          <>
+            <NumField label="Ширина (X), м" value={bowl.width} step={0.5} onChange={(v) => patch({ width: Math.max(0.1, v) })} />
+            <NumField label="Длина (Y), м" value={bowl.length} step={0.5} onChange={(v) => patch({ length: Math.max(0.1, v) })} />
+          </>
+        )}
+        <NumField label="Борт, м" value={bowl.height} step={0.1} onChange={(v) => patch({ height: Math.max(0, v) })} />
+      </div>
       <div className="sidebar-actions">
         <button
           className="btn btn-small"

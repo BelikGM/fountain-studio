@@ -454,6 +454,26 @@ select {
   font-size: 13px;
 }
 
+/*
+ * Панели свойств на вкладке 3D (форсунка/прожектор/чаша/кольцо): подписи
+ * разной длины иначе сдвигают поля ввода вразнобой. Столбец подписи — по
+ * самой длинной, поля — прижаты к правому краю панели. .field внутри
+ * становится display:contents — его текст и input/select сами по себе
+ * попадают в сетку двумя колонками, разметку менять не пришлось.
+ */
+.field-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 10px;
+  row-gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.field-grid > .field { display: contents; }
+.field-grid input,
+.field-grid select { justify-self: end; }
+.field-grid h3 { grid-column: 1 / -1; margin: 4px 0 0; }
+
 .input {
   background: var(--bg-track);
   color: var(--fg);
