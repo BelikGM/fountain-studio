@@ -115,6 +115,7 @@ export function startServer(
     ws.send(JSON.stringify(backupListMessage()));
     ws.send(JSON.stringify({ type: 'logHistory', events: eventLog.list() } satisfies ServerMessage));
     ws.send(JSON.stringify(autostartMessage()));
+    ws.send(JSON.stringify({ type: 'windState', ...engine.windState() } satisfies ServerMessage));
     ws.send(JSON.stringify(remoteStatus()));
 
     ws.on('message', (raw) => {
@@ -348,6 +349,10 @@ export function startServer(
           broadcast(autostartMessage(result.ok ? undefined : result.error));
           break;
         }
+        case 'setWindSpeed':
+          engine.setWindSpeed(msg.speedMs);
+          broadcast({ type: 'windState', ...engine.windState() } satisfies ServerMessage);
+          break;
       }
     });
   });

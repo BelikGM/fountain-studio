@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { BackupInfo, ConfigUniverse } from '@fountain-studio/shared';
+import { computeWindLimitPercent, type BackupInfo, type ConfigUniverse } from '@fountain-studio/shared';
 import {
   HOTKEY_DEFS,
   comboFromEvent,
@@ -405,6 +405,81 @@ function AutostartPanel({ engine }: { engine: EngineConnection }) {
 }
 
 /**
+ * Датчик ветра → безопасное снижение струй (§27 доработки, §4 п.1) —
+ * пороги настраиваются здесь один раз при пусконаладке; текущее показание
+ * ветра вводится оперативно на вкладке «Пульт» (пока нет датчика по
+ * Modbus/MQTT — задел под него, сам расчёт менять не придётся).
+ */
+function WindLimitPanel({ engine }: { engine: EngineConnection }) {
+  const { project, updateProject } = engine;
+  if (!project) return null;
+  const cfg = project.windLimit;
+  const update = (patch: Partial<typeof cfg>): void => updateProject({ ...project, windLimit: { ...cfg, ...patch } });
+
+  // Предпросмотр: что было бы при ветре чуть выше maxSpeed — наглядная проверка настроек.
+  const previewSpeed = cfg.maxSpeed;
+  const previewPercent = computeWindLimitPercent(previewSpeed, cfg);
+
+  return (
+    <section className="panel">
+      <h2>Датчик ветра</h2>
+      <p className="dim">
+        Ветер выше порога — мощность насосов (высота струй) снижается; свет не трогается. Пока без реального
+        датчика — оператор вводит текущую скорость ветра вручную на вкладке «Пульт».
+      </p>
+      <div className="form-row">
+        <label className="field">
+          <input type="checkbox" checked={cfg.enabled} onChange={(e) => update({ enabled: e.target.checked })} />{' '}
+          Включено
+        </label>
+        <label className="field">
+          Начало ограничения, м/с:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={0}
+            step={0.5}
+            disabled={!cfg.enabled}
+            value={cfg.warnSpeed}
+            onChange={(e) => update({ warnSpeed: Math.max(0, Number(e.target.value) || 0) })}
+          />
+        </label>
+        <label className="field">
+          Полное ограничение, м/с:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={cfg.warnSpeed + 0.1}
+            step={0.5}
+            disabled={!cfg.enabled}
+            value={cfg.maxSpeed}
+            onChange={(e) => update({ maxSpeed: Math.max(cfg.warnSpeed + 0.1, Number(e.target.value) || cfg.warnSpeed + 1) })}
+          />
+        </label>
+        <label className="field">
+          Мин. мощность, %:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={0}
+            max={100}
+            disabled={!cfg.enabled}
+            value={cfg.minPercent}
+            onChange={(e) => update({ minPercent: Math.max(0, Math.min(100, Math.round(Number(e.target.value)))) })}
+          />
+        </label>
+      </div>
+      {cfg.enabled && (
+        <p className="dim">
+          Проверка: при {previewSpeed} м/с (порог полного ограничения) мощность насосов будет снижена до{' '}
+          {previewPercent}%.
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
  * Настройки движка: вселенные (DMX-линии) и шаг тика — редактирование
  * fountain.config.json из интерфейса, без текстового редактора. Движок
  * применяет на лету (воспроизведение при этом останавливается) и сохраняет
@@ -630,6 +705,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
 
       <BackupPanel engine={engine} />
       <AutostartPanel engine={engine} />
+      <WindLimitPanel engine={engine} />
       <HotkeysPanel />
       <OperatorPanel />
     </main>

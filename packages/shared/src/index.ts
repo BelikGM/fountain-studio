@@ -14,4 +14,5 @@ export * from './scenegen';
 export * from './show';
 export * from './smoothing';
 export * from './videoanalysis';
+export * from './windlimit';
 export * from './wizard';

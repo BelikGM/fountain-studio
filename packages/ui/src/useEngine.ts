@@ -11,6 +11,7 @@ import type {
   Project,
   ServerMessage,
   UniverseInfo,
+  WindLimitConfig,
 } from '@fountain-studio/shared';
 
 /** Сколько записей журнала событий держим на клиенте (движок и так капает историю до 500). */
@@ -29,6 +30,13 @@ export interface AutostartState {
   supported: boolean;
   enabled: boolean;
   error?: string;
+}
+
+/** Ветер и текущее ограничение высоты струй (§27 доработки, §4 п.1). */
+export interface WindState {
+  speedMs: number | null;
+  limitPercent: number;
+  config: WindLimitConfig;
 }
 
 export interface EngineConfigState {
@@ -72,6 +80,8 @@ export interface EngineConnection {
   jitterHistory: JitterSample[];
   /** Автозапуск при входе в Windows (null — движок ещё не прислал). */
   autostart: AutostartState | null;
+  /** Ветер и текущее ограничение высоты струй (null — движок ещё не прислал). */
+  windState: WindState | null;
   send: (msg: ClientMessage) => void;
   /** Применяет правку проекта локально и отправляет движку. */
   updateProject: (project: Project) => void;
@@ -121,6 +131,7 @@ export function useEngine(): EngineConnection {
   const [logEvents, setLogEvents] = useState<LogEvent[]>([]);
   const [jitterHistory, setJitterHistory] = useState<JitterSample[]>([]);
   const [autostart, setAutostartState] = useState<AutostartState | null>(null);
+  const [windState, setWindState] = useState<WindState | null>(null);
   const [playback, setPlayback] = useState<PlaybackState>({
     activeSceneId: null,
     running: [],
@@ -254,6 +265,9 @@ export function useEngine(): EngineConnection {
           case 'autostartState':
             setAutostartState({ supported: msg.supported, enabled: msg.enabled, error: msg.error });
             break;
+          case 'windState':
+            setWindState({ speedMs: msg.speedMs, limitPercent: msg.limitPercent, config: msg.config });
+            break;
         }
       };
     };
@@ -381,6 +395,7 @@ export function useEngine(): EngineConnection {
     logEvents,
     jitterHistory,
     autostart,
+    windState,
     send,
     updateProject,
     requestAudio,

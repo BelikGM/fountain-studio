@@ -22,7 +22,7 @@ const PATTERN_HINT: Record<TestPatternMode, string> = {
 
 /** Консоль прямого управления: фейдеры адресов, тест-генераторы, blackout. */
 export function ConsoleView({ engine }: { engine: EngineConnection }) {
-  const { project, universes, stats, frames, playback, send } = engine;
+  const { project, universes, stats, frames, playback, windState, send } = engine;
   const [universeId, setUniverseId] = useState<number | null>(null);
   const [pageSize, setPageSize] = useState(32);
   const [page, setPage] = useState(0);
@@ -164,6 +164,32 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
             </button>
           ))}
         </div>
+
+        {project?.windLimit.enabled && (
+          <div className="group">
+            <label
+              className="field"
+              title="Ручной ввод — пока нет датчика по Modbus/MQTT. Пороги настраиваются на вкладке «Настройки»"
+            >
+              Ветер, м/с:{' '}
+              <input
+                className="input input-num"
+                type="number"
+                min={0}
+                step={0.5}
+                value={windState?.speedMs ?? ''}
+                placeholder="—"
+                onChange={(e) => {
+                  const v = e.target.value.trim();
+                  send({ type: 'setWindSpeed', speedMs: v === '' ? null : Number(v) });
+                }}
+              />
+            </label>
+            {windState && windState.limitPercent < 100 && (
+              <span className="warn">⚠ струи ограничены до {windState.limitPercent}%</span>
+            )}
+          </div>
+        )}
 
         <div className="group">
           <button

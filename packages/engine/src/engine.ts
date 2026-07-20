@@ -1,6 +1,8 @@
 import {
   DMX_UNIVERSE_SIZE,
   clampDmx,
+  computeWindLimitPercent,
+  defaultWindLimitConfig,
   profileMap,
   type ChannelTrim,
   type EngineStats,
@@ -9,8 +11,10 @@ import {
   type Project,
   type TestPatternMode,
   type UniverseInfo,
+  type WindLimitConfig,
 } from '@fountain-studio/shared';
 import { Ticker } from './clock';
+import { eventLog } from './eventlog';
 import type { EngineConfig, OutputConfig } from './config';
 import { ArtNetOutput } from './drivers/artnet';
 import { SacnOutput } from './drivers/sacn';
@@ -59,6 +63,15 @@ export class Engine {
   private trims = new Map<number, Map<number, ChannelTrim>>();
   /** Устройства с modbus-конфигом: индекс вселенной в this.universes + адрес-1. */
   private modbusPumps: { universeIndex: number; addressIdx: number; deviceId: string }[] = [];
+  /**
+   * Безопасное снижение струй по ветру (§27 доработки, §4 п.1): только каналы
+   * intensity устройств-насосов (kind='pump') — свет не трогаем. universeId →
+   * набор индексов адресов (адрес-1).
+   */
+  private pumpChannels = new Map<number, Set<number>>();
+  private windLimitConfig: WindLimitConfig = defaultWindLimitConfig();
+  /** Текущее показание скорости ветра, м/с — null, пока никто не ввёл/не прислал. */
+  private windSpeed: number | null = null;
 
   constructor(readonly config: EngineConfig) {
     for (const u of config.universes) {
@@ -148,6 +161,18 @@ export class Engine {
             if (v > 0) u.out[idx] = Math.round(t.min + (v * (t.max - t.min)) / 255);
           }
         }
+        // Безопасное снижение струй по ветру (§27 доработки, §4 п.1) — после
+        // калибровки, только каналы intensity насосов; свет не трогаем.
+        const windPercent = this.windLimitPercent();
+        if (windPercent < 100) {
+          const pumpIdx = this.pumpChannels.get(u.id);
+          if (pumpIdx) {
+            for (const idx of pumpIdx) {
+              const v = u.out[idx]!;
+              if (v > 0) u.out[idx] = Math.round((v * windPercent) / 100);
+            }
+          }
+        }
       } else {
         fillTestPattern(this.pattern, tSec, i, u.out);
       }
@@ -223,6 +248,48 @@ export class Engine {
       this.modbusPumps.push({ universeIndex, addressIdx: d.address - 1, deviceId: d.id });
     }
     this.pumps.setDevices(project.devices);
+
+    this.pumpChannels.clear();
+    for (const d of project.devices) {
+      const profile = profiles.get(d.profileId);
+      if (!profile || profile.kind !== 'pump') continue;
+      let set = this.pumpChannels.get(d.universe);
+      if (!set) {
+        set = new Set();
+        this.pumpChannels.set(d.universe, set);
+      }
+      for (let k = 0; k < profile.channels.length; k++) {
+        if (profile.channels[k]!.role !== 'intensity') continue;
+        const idx = d.address - 1 + k;
+        if (idx >= 0 && idx < DMX_UNIVERSE_SIZE) set.add(idx);
+      }
+    }
+    this.windLimitConfig = project.windLimit;
+  }
+
+  /** Ручной ввод (пока нет датчика по Modbus/MQTT — задел под него, см. windlimit.ts) или null — сбросить. */
+  setWindSpeed(speedMs: number | null): void {
+    const before = this.windLimitPercent();
+    this.windSpeed = speedMs;
+    const after = this.windLimitPercent();
+    if (before !== after) {
+      eventLog.log(
+        'wind',
+        speedMs === null
+          ? 'показание ветра сброшено — ограничение снято'
+          : `ветер ${speedMs} м/с → высота струй ограничена ${after}%`,
+        after < 100 ? 'warn' : 'info',
+      );
+    }
+  }
+
+  private windLimitPercent(): number {
+    if (this.windSpeed === null) return 100;
+    return computeWindLimitPercent(this.windSpeed, this.windLimitConfig);
+  }
+
+  windState(): { speedMs: number | null; limitPercent: number; config: WindLimitConfig } {
+    return { speedMs: this.windSpeed, limitPercent: this.windLimitPercent(), config: this.windLimitConfig };
   }
 
   modbusState(): ModbusState {

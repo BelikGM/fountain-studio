@@ -11,6 +11,7 @@ import {
   type OscBinding,
 } from './remote';
 import { sanitizeShows, type Show } from './show';
+import { defaultWindLimitConfig, sanitizeWindLimitConfig, type WindLimitConfig } from './windlimit';
 
 /**
  * Модель проекта Fountain Studio: профили устройств, патч (привязка к адресам),
@@ -236,6 +237,8 @@ export interface Project {
   mqttBindings: MqttBinding[];
   /** Триггеры по входящему DMX (§27 доработки, §4 п.4). */
   dmxTriggers: DmxTrigger[];
+  /** Безопасное снижение струй по ветру (§27 доработки, §4 п.1). */
+  windLimit: WindLimitConfig;
   /** 3D-схема фонтана (вкладка «3D»). */
   layout: FountainLayout;
 }
@@ -304,6 +307,7 @@ export function emptyProject(name = 'Новый проект'): Project {
     oscBindings: [],
     mqttBindings: [],
     dmxTriggers: [],
+    windLimit: defaultWindLimitConfig(),
     layout: emptyLayout(),
   };
 }
@@ -418,6 +422,7 @@ export function sanitizeProject(raw: unknown): Project {
     oscBindings: [],
     mqttBindings: [],
     dmxTriggers: [],
+    windLimit: defaultWindLimitConfig(),
     layout: emptyLayout(),
   };
   if (Array.isArray(r.profiles)) {
@@ -523,6 +528,7 @@ export function sanitizeProject(raw: unknown): Project {
   project.oscBindings = sanitizeOscBindings(r.oscBindings, remoteIds);
   project.mqttBindings = sanitizeMqttBindings(r.mqttBindings, remoteIds);
   project.dmxTriggers = sanitizeDmxTriggers(r.dmxTriggers, remoteIds);
+  project.windLimit = sanitizeWindLimitConfig(r.windLimit);
   project.layout = sanitizeLayout(r.layout, deviceIds);
   return project;
 }

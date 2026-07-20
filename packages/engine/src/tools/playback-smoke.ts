@@ -53,6 +53,7 @@ import {
   brightnessEnvelopePoints,
   colorChangeEvents,
   colorChannelEnvelopePoints,
+  computeWindLimitPercent,
   sampleFrameStats,
   type VideoFrameSample,
   type LogEvent,
@@ -1585,6 +1586,65 @@ async function main(): Promise<void> {
     await waitFor('триггеры убраны после теста', () => (projectEcho?.dmxTriggers.length ?? 0) === 0);
     mockDmxOverride = {};
     mockNodeAlive = false; // возвращаем как было — дальше по тесту это не важно, но не меняем чужое состояние
+  }
+
+  console.log('— Датчик ветра → безопасное снижение струй (§27 доработки, §4 п.1) —');
+  {
+    const testCfg = { enabled: true, warnSpeed: 8, maxSpeed: 15, minPercent: 20 };
+    check(computeWindLimitPercent(5, testCfg) === 100, 'computeWindLimitPercent: ниже порога — 100% (без ограничения)');
+    check(computeWindLimitPercent(15, testCfg) === 20, 'computeWindLimitPercent: на maxSpeed и выше — минимум (20%)');
+    check(
+      computeWindLimitPercent(11.5, testCfg) === 60,
+      'computeWindLimitPercent: посередине диапазона — линейная интерполяция (60%)',
+    );
+
+    // pump1 уже откалиброван (min:50,max:200) более ранним тестом — на время
+    // этой проверки снимаем калибровку, чтобы считать round-числа без второго
+    // слоя трансформации, и возвращаем её перед концом (её проверяет финальный
+    // «Сохранение проекта»).
+    const pump1TrimBefore = store.project.devices.find((d) => d.id === 'pump1')?.trim;
+    send({
+      type: 'updateProject',
+      project: {
+        ...store.project,
+        windLimit: testCfg,
+        devices: store.project.devices.map((d) => (d.id === 'pump1' ? { ...d, trim: undefined } : d)),
+      },
+    });
+    await waitFor(
+      'windLimit применён, калибровка pump1 временно снята',
+      () => projectEcho?.windLimit.enabled === true && !projectEcho.devices.find((d) => d.id === 'pump1')?.trim,
+    );
+
+    send({ type: 'setChannel', universe: 1, channel: 1, value: 200 }); // pump1 — intensity насоса
+    send({ type: 'setChannel', universe: 1, channel: 10, value: 200 }); // rgb1 R — не насос
+    await waitFor('каналы выставлены без ветра', () => ch(1) === 200 && ch(10) === 200);
+    check(true, 'без показания ветра — насос и свет на полном значении (200/200)');
+
+    send({ type: 'setWindSpeed', speedMs: 15 }); // полное ограничение (minPercent=20)
+    await waitFor('насос снижен ветром', () => ch(1) === 40, 2000); // round(200×20/100)=40
+    check(ch(10) === 200, 'ветер не трогает свет — канал R rgb1 остался 200');
+    check(true, 'ветер 15 м/с (maxSpeed) → насос снижен со 200 до 40 (×20%)');
+
+    send({ type: 'setWindSpeed', speedMs: null }); // сброс показания
+    await waitFor('ограничение снято', () => ch(1) === 200, 2000);
+    check(true, 'сброс показания ветра — насос вернулся к 200 (ограничение снято)');
+
+    send({
+      type: 'updateProject',
+      project: {
+        ...store.project,
+        windLimit: { ...testCfg, enabled: false },
+        devices: store.project.devices.map((d) => (d.id === 'pump1' ? { ...d, trim: pump1TrimBefore } : d)),
+      },
+    });
+    await waitFor(
+      'калибровка pump1 восстановлена',
+      () => projectEcho?.devices.find((d) => d.id === 'pump1')?.trim?.[0]?.min === 50,
+    );
+    send({ type: 'setChannel', universe: 1, channel: 1, value: 0 });
+    send({ type: 'setChannel', universe: 1, channel: 10, value: 0 });
+    await waitFor('каналы сброшены после теста', () => ch(1) === 0 && ch(10) === 0);
   }
 
   console.log('— Насос на Modbus TCP (мок-ПЧ, карта регистров Elhart EMD-PUMP) —');

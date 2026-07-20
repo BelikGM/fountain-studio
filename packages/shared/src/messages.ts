@@ -4,6 +4,7 @@
  */
 
 import type { Project } from './project';
+import type { WindLimitConfig } from './windlimit';
 
 export type TestPatternMode = 'off' | 'sine' | 'chase' | 'ramp';
 
@@ -251,7 +252,10 @@ export type ClientMessage =
   // Автозапуск движка при входе в Windows (§27 доработки, §3 п.3) — обёртка
   // над задачей планировщика (та же, что раньше ставилась PowerShell-скриптом).
   | { type: 'getAutostart' }
-  | { type: 'setAutostart'; enabled: boolean };
+  | { type: 'setAutostart'; enabled: boolean }
+  // Ручной ввод скорости ветра (§27 доработки, §4 п.1) — задел под будущий
+  // датчик по Modbus/MQTT: тот будет слать то же самое сообщение сам.
+  | { type: 'setWindSpeed'; speedMs: number | null };
 
 /** Движок → UI */
 export type ServerMessage =
@@ -289,4 +293,6 @@ export type ServerMessage =
   /** История журнала (шлётся при подключении). */
   | { type: 'logHistory'; events: LogEvent[] }
   /** Статус автозапуска (шлётся при подключении и после setAutostart). */
-  | { type: 'autostartState'; supported: boolean; enabled: boolean; error?: string };
+  | { type: 'autostartState'; supported: boolean; enabled: boolean; error?: string }
+  /** Ветер и текущее ограничение (шлётся при подключении и после setWindSpeed). */
+  | { type: 'windState'; speedMs: number | null; limitPercent: number; config: WindLimitConfig };
