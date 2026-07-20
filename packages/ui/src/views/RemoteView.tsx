@@ -1,4 +1,4 @@
-import { uid, type MqttBinding, type OscBinding, type RemoteAction } from '@fountain-studio/shared';
+import { uid, type DmxTrigger, type MqttBinding, type OscBinding, type RemoteAction } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
 
 const ACTION_LABEL: Record<RemoteAction['type'], string> = {
@@ -17,7 +17,7 @@ const ACTION_LABEL: Record<RemoteAction['type'], string> = {
  * только привязки «адрес/топик → действие», которые живут в проекте.
  */
 export function RemoteView({ engine }: { engine: EngineConnection }) {
-  const { project, remote, updateProject } = engine;
+  const { project, remote, universes, updateProject } = engine;
   if (!project) return <main className="view">Ожидание проекта от движка…</main>;
 
   const refOptions = (type: RemoteAction['type']): { id: string; name: string }[] => {
@@ -63,6 +63,13 @@ export function RemoteView({ engine }: { engine: EngineConnection }) {
 
       <OscPanel project={project} updateProject={updateProject} refOptions={refOptions} defaultAction={defaultAction} />
       <MqttPanel project={project} updateProject={updateProject} refOptions={refOptions} defaultAction={defaultAction} />
+      <DmxTriggerPanel
+        project={project}
+        universes={engine.universes}
+        updateProject={updateProject}
+        refOptions={refOptions}
+        defaultAction={defaultAction}
+      />
     </main>
   );
 }
@@ -246,6 +253,151 @@ function MqttPanel({
           onClick={() => update([...project.mqttBindings, { id: uid(), topic: '', action: defaultAction() }])}
         >
           + Привязка MQTT
+        </button>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * DMX-in как триггер (§27 доработки, §4 п.4) — внешний DMX-пульт/консоль
+ * шлёт Art-Net на этот ПК (тот же захват, что «Снять сцену с линии» в
+ * «Сценах»), значение канала в диапазоне запускает действие. Срабатывает по
+ * фронту — держащийся на значении фейдер/кнопка не спамит действие.
+ */
+function DmxTriggerPanel({
+  project,
+  universes,
+  updateProject,
+  refOptions,
+  defaultAction,
+}: {
+  project: NonNullable<EngineConnection['project']>;
+  universes: EngineConnection['universes'];
+  updateProject: EngineConnection['updateProject'];
+  refOptions: (type: RemoteAction['type']) => { id: string; name: string }[];
+  defaultAction: () => RemoteAction;
+}) {
+  const update = (dmxTriggers: DmxTrigger[]): void => updateProject({ ...project, dmxTriggers });
+  const firstUniverse = universes[0]?.id ?? 1;
+
+  return (
+    <section className="panel">
+      <h2>DMX-in триггеры</h2>
+      <p className="dim">
+        Внешний DMX-пульт/консоль, направленный Art-Net-ом на этот ПК: значение канала в диапазоне запускает
+        действие. Срабатывает один раз при входе в диапазон — держащееся значение (фейдер/кнопка) не повторяет
+        действие непрерывно.
+      </p>
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Вселенная</th>
+            <th>Канал</th>
+            <th>Диапазон</th>
+            <th>Действие</th>
+            <th>Цель</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {project.dmxTriggers.map((t) => (
+            <tr key={t.id}>
+              <td>
+                <select
+                  value={t.universe}
+                  onChange={(e) =>
+                    update(
+                      project.dmxTriggers.map((x) => (x.id === t.id ? { ...x, universe: Number(e.target.value) } : x)),
+                    )
+                  }
+                >
+                  {universes.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.label}
+                    </option>
+                  ))}
+                </select>
+              </td>
+              <td>
+                <input
+                  className="input input-num"
+                  type="number"
+                  min={1}
+                  max={512}
+                  value={t.address}
+                  onChange={(e) =>
+                    update(
+                      project.dmxTriggers.map((x) =>
+                        x.id === t.id
+                          ? { ...x, address: Math.max(1, Math.min(512, Math.round(Number(e.target.value)) || 1)) }
+                          : x,
+                      ),
+                    )
+                  }
+                />
+              </td>
+              <td>
+                <input
+                  className="input input-num"
+                  type="number"
+                  min={0}
+                  max={255}
+                  value={t.valueMin}
+                  onChange={(e) =>
+                    update(
+                      project.dmxTriggers.map((x) =>
+                        x.id === t.id
+                          ? { ...x, valueMin: Math.max(0, Math.min(x.valueMax, Math.round(Number(e.target.value)))) }
+                          : x,
+                      ),
+                    )
+                  }
+                />
+                {' – '}
+                <input
+                  className="input input-num"
+                  type="number"
+                  min={0}
+                  max={255}
+                  value={t.valueMax}
+                  onChange={(e) =>
+                    update(
+                      project.dmxTriggers.map((x) =>
+                        x.id === t.id
+                          ? { ...x, valueMax: Math.max(x.valueMin, Math.min(255, Math.round(Number(e.target.value)))) }
+                          : x,
+                      ),
+                    )
+                  }
+                />
+              </td>
+              <ActionCells
+                binding={t}
+                refOptions={refOptions}
+                onChange={(action) => update(project.dmxTriggers.map((x) => (x.id === t.id ? { ...x, action } : x)))}
+              />
+              <td>
+                <button className="btn btn-small" onClick={() => update(project.dmxTriggers.filter((x) => x.id !== t.id))}>
+                  ✕
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="form-row" style={{ marginTop: 10 }}>
+        <button
+          className="btn"
+          onClick={() =>
+            update([
+              ...project.dmxTriggers,
+              { id: uid(), universe: firstUniverse, address: 1, valueMin: 200, valueMax: 255, action: defaultAction() },
+            ])
+          }
+          disabled={universes.length === 0}
+        >
+          + Триггер DMX-in
         </button>
       </div>
     </section>

@@ -2,7 +2,14 @@ import { DMX_UNIVERSE_SIZE } from './dmx';
 import { sanitizeKeys, type KeyBinding } from './keys';
 import { emptyLayout, sanitizeLayout, type FountainLayout } from './layout';
 import { sanitizePlaylists, sanitizeSchedule, type Playlist, type ScheduleEntry } from './playlist';
-import { sanitizeMqttBindings, sanitizeOscBindings, type MqttBinding, type OscBinding } from './remote';
+import {
+  sanitizeDmxTriggers,
+  sanitizeMqttBindings,
+  sanitizeOscBindings,
+  type DmxTrigger,
+  type MqttBinding,
+  type OscBinding,
+} from './remote';
 import { sanitizeShows, type Show } from './show';
 
 /**
@@ -227,6 +234,8 @@ export interface Project {
   /** Привязки OSC-адресов и MQTT-топиков к действиям (§1 доработки: удалённое управление). */
   oscBindings: OscBinding[];
   mqttBindings: MqttBinding[];
+  /** Триггеры по входящему DMX (§27 доработки, §4 п.4). */
+  dmxTriggers: DmxTrigger[];
   /** 3D-схема фонтана (вкладка «3D»). */
   layout: FountainLayout;
 }
@@ -294,6 +303,7 @@ export function emptyProject(name = 'Новый проект'): Project {
     keys: [],
     oscBindings: [],
     mqttBindings: [],
+    dmxTriggers: [],
     layout: emptyLayout(),
   };
 }
@@ -407,6 +417,7 @@ export function sanitizeProject(raw: unknown): Project {
     keys: [],
     oscBindings: [],
     mqttBindings: [],
+    dmxTriggers: [],
     layout: emptyLayout(),
   };
   if (Array.isArray(r.profiles)) {
@@ -511,6 +522,7 @@ export function sanitizeProject(raw: unknown): Project {
   project.keys = sanitizeKeys(r.keys, remoteIds);
   project.oscBindings = sanitizeOscBindings(r.oscBindings, remoteIds);
   project.mqttBindings = sanitizeMqttBindings(r.mqttBindings, remoteIds);
+  project.dmxTriggers = sanitizeDmxTriggers(r.dmxTriggers, remoteIds);
   project.layout = sanitizeLayout(r.layout, deviceIds);
   return project;
 }

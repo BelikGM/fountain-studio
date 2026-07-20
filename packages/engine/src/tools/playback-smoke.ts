@@ -71,6 +71,7 @@ import dgram from 'node:dgram';
 import { createServer as createTcpServer, createConnection as createTcpConnection } from 'node:net';
 import { emaStep } from '../clock';
 import { DmxCapture } from '../dmxcapture';
+import { DmxTriggerWatcher } from '../dmxtriggers';
 import { Engine } from '../engine';
 import { MqttController } from '../mqttcontroller';
 import { NetworkMonitor } from '../netmonitor';
@@ -97,6 +98,17 @@ const PORT = 9521;
 const MOCK_NODE_PORT = 16454; // мок-нода Art-Net (не 6454, чтобы не мешать реальным)
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fountain-smoke-'));
 const projectFile = path.join(tmpDir, 'fountain.project.json');
+
+/**
+ * Доп. значения, подмешиваемые мок-нодой в её ArtDMX-кадр при следующем
+ * ArtPoll-ответе (вместе с фиксированными 111/222/33 на адр.1/2/20) — рычаг
+ * для проверки DMX-in-триггеров без гонки за портом с NetworkMonitor.
+ * Прямая инъекция UDP-пакета в MOCK_NODE_PORT ненадёжна: мок-нода и
+ * NetworkMonitor.listenSocket оба сидят на нём через reuseAddr, и на Windows
+ * пакет может достаться не тому сокету. Кадр, который мок-нода шлёт САМА в
+ * ответ на опрос, идёт через уже проверенный путь (this.socket движка).
+ */
+let mockDmxOverride: Record<number, number> = {};
 
 // Мок-нода: отвечает на ArtPoll (ArtPollReply), ArtTodRequest (ArtTodData с 2 UID)
 // и ArtRdm (§3 доработки — универсальные PID E1.20), пока mockNodeAlive = true.
@@ -132,6 +144,7 @@ mockNode.on('message', (msg, rinfo) => {
     dmx.writeUInt8(111, 18); // адрес 1
     dmx.writeUInt8(222, 19); // адрес 2
     dmx.writeUInt8(33, 18 + 19); // адрес 20 (насос 2)
+    for (const [addr, v] of Object.entries(mockDmxOverride)) dmx.writeUInt8(v, 18 + (Number(addr) - 1));
     mockNode.send(dmx, rinfo.port, rinfo.address);
   } else if (op === 0x8000) {
     const uids = [
@@ -407,7 +420,11 @@ const net = new NetworkMonitor({
   rdmTimeoutMs: 5000,
 });
 const dmxCapture = new DmxCapture();
-net.onDmx = (universe, data, fromIp) => dmxCapture.handle(universe, data, fromIp);
+const dmxTriggerWatcher = new DmxTriggerWatcher();
+net.onDmx = (universe, data, fromIp) => {
+  dmxCapture.handle(universe, data, fromIp);
+  dmxTriggerWatcher.handle(engine, store.project.dmxTriggers, universe, data);
+};
 net.start();
 
 const OSC_PORT = 15021;
@@ -1521,6 +1538,54 @@ async function main(): Promise<void> {
     dmxCycleMsg!.periodMs === null,
     'measureDmxCycle: на статичном коротком захвате периода честно нет (ответ пришёл)',
   );
+
+  console.log('— DMX-in как триггер действий (§27 доработки, §4 п.4) —');
+  {
+    // Мок-нода умышленно «умолкла» в предыдущем тесте — вернём её в строй,
+    // её собственный ArtPoll-ответ несёт кадр ArtDMX по уже проверенному
+    // пути (this.socket движка), в отличие от прямой инъекции пакета в
+    // MOCK_NODE_PORT (тот делят с NetworkMonitor.listenSocket через
+    // reuseAddr — ненадёжно на Windows).
+    mockNodeAlive = true;
+    mockDmxOverride = {};
+    send({
+      type: 'updateProject',
+      project: {
+        ...store.project,
+        dmxTriggers: [
+          { id: 'trigA', universe: 1, address: 5, valueMin: 200, valueMax: 255, action: { type: 'scene', refId: 'sceneA' } },
+        ],
+      },
+    });
+    await waitFor('dmxTriggers применены', () => (projectEcho?.dmxTriggers.length ?? 0) === 1);
+    send({ type: 'setScene', sceneId: null });
+    await waitFor('сцена снята перед проверкой', () => playback.activeSceneId === null);
+
+    mockDmxOverride = { 5: 50 }; // вне диапазона — не должно сработать
+    await sleep(500); // несколько циклов опроса (150 мс) — даём осечься, если бы сработало
+    check(playback.activeSceneId === null, 'dmxTrigger: значение вне диапазона не срабатывает (50 ∉ [200,255])');
+
+    mockDmxOverride = { 5: 220 }; // вход в диапазон — фронт
+    await waitFor('триггер сработал по фронту', () => playback.activeSceneId === 'sceneA', 3000);
+    check(true, 'dmxTrigger: вход в диапазон (220 ∈ [200,255]) запускает действие');
+
+    send({ type: 'setScene', sceneId: null });
+    await waitFor('сцена снята вручную', () => playback.activeSceneId === null);
+    await sleep(500); // значение 220 держится — не должно повторно сработать
+    check(playback.activeSceneId === null, 'dmxTrigger: держащееся значение не спамит действие повторно (только фронт)');
+
+    mockDmxOverride = { 5: 30 }; // выходим из диапазона — перевзводим фронт
+    await sleep(300);
+    mockDmxOverride = { 5: 210 }; // заходим снова — должен сработать ещё раз
+    await waitFor('триггер сработал повторно после выхода из диапазона', () => playback.activeSceneId === 'sceneA', 3000);
+    check(true, 'dmxTrigger: после выхода из диапазона и повторного входа фронт взводится заново');
+
+    send({ type: 'setScene', sceneId: null });
+    send({ type: 'updateProject', project: { ...store.project, dmxTriggers: [] } });
+    await waitFor('триггеры убраны после теста', () => (projectEcho?.dmxTriggers.length ?? 0) === 0);
+    mockDmxOverride = {};
+    mockNodeAlive = false; // возвращаем как было — дальше по тесту это не важно, но не меняем чужое состояние
+  }
 
   console.log('— Насос на Modbus TCP (мок-ПЧ, карта регистров Elhart EMD-PUMP) —');
   const pumpStatus = (): { connected: boolean; lastFreqHz: number; faultCode: number | null } | undefined =>

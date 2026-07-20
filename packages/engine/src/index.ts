@@ -5,6 +5,7 @@ import { BackupStore } from './backups';
 import { loadConfig } from './config';
 import { wireAlarmNotifications } from './alarms';
 import { DmxCapture } from './dmxcapture';
+import { DmxTriggerWatcher } from './dmxtriggers';
 import { Engine } from './engine';
 import { MqttController } from './mqttcontroller';
 import { NetworkMonitor } from './netmonitor';
@@ -47,7 +48,14 @@ const net =
     : undefined;
 // Захват входящего ArtDMX (§17 п.1): снятие готовых сцен с внешнего источника.
 const capture = new DmxCapture();
-if (net) net.onDmx = (universe, data, fromIp) => capture.handle(universe, data, fromIp);
+// DMX-in как триггер действий (§27 доработки, §4 п.4) — тот же входящий поток.
+const dmxTriggers = new DmxTriggerWatcher();
+if (net) {
+  net.onDmx = (universe, data, fromIp) => {
+    capture.handle(universe, data, fromIp);
+    dmxTriggers.handle(engine, store.project.dmxTriggers, universe, data);
+  };
+}
 net?.start();
 
 // Удалённое управление (§1 доработки): OSC-пульт и/или MQTT — оба отключены
