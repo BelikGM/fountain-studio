@@ -154,10 +154,31 @@ body {
   margin-right: 12px;
 }
 .help-btn:hover { border-color: var(--accent); color: var(--fg); }
+.license-btn { font-size: 13px; }
+.license-btn-warn {
+  border-color: var(--danger-text);
+  background: var(--danger-bg, transparent);
+  animation: license-pulse 2.4s ease-in-out infinite;
+}
+@keyframes license-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 80, 80, 0.35); }
+  50% { box-shadow: 0 0 0 4px rgba(220, 80, 80, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .license-btn-warn { animation: none; }
+}
 
 .help-modal {
   width: min(760px, calc(100vw - 48px));
   max-height: calc(100vh - 48px);
+}
+.license-modal { width: min(520px, calc(100vw - 48px)); }
+.license-machine-id {
+  background: var(--bg-track);
+  border-radius: 3px;
+  padding: 3px 7px;
+  font-size: 12px;
+  word-break: break-all;
 }
 .help-body {
   overflow-y: auto;

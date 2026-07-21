@@ -3,6 +3,7 @@
  * Все сообщения — JSON. Кадры DMX передаются в base64.
  */
 
+import type { LicenseStatus } from './license';
 import type { Project } from './project';
 import type { WindLimitConfig } from './windlimit';
 
@@ -235,6 +236,9 @@ export type ClientMessage =
   // + вся папка audio/, тем же base64-путём, что и загрузка аудио выше.
   | { type: 'exportProject' }
   | { type: 'importProject'; dataBase64: string }
+  // Лицензия (§27 доработки) — активация содержимым файла fountain.license.json,
+  // проверка целиком на движке (см. engine/license.ts).
+  | { type: 'activateLicense'; fileText: string }
   // Плейлисты: исполняет движок автономно (мастер-часы — тик движка).
   | { type: 'playPlaylist'; playlistId: string; itemIndex?: number }
   | { type: 'skipPlaylist'; dir: 1 | -1 }
@@ -288,6 +292,8 @@ export type ServerMessage =
   | { type: 'projectExport'; filename: string; dataBase64: string }
   /** Ответ на importProject — успех/ошибка (например, не ZIP или битый project.json). */
   | { type: 'importResult'; ok: boolean; message: string }
+  /** Статус лицензии — при подключении и после activateLicense. */
+  | { type: 'license'; status: LicenseStatus }
   /** Ответ на getDmxCapture: последний кадр внешнего ArtDMX; data = '' — захвата нет. */
   | { type: 'dmxCapture'; universe: number; data: string; ageMs: number; fromIp: string; frames: number }
   /** Ответ на measureDmxCycle. */

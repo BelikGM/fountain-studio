@@ -8,9 +8,11 @@
  *
  * Запуск: npm run smoke (или npm -w @fountain-studio/engine run smoke)
  */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import {
   actorPhases,
@@ -61,6 +63,8 @@ import {
   isUtilityLightOn,
   sampleFrameStats,
   type VideoFrameSample,
+  type LicenseFile,
+  type LicensePayload,
   type LogEvent,
   type ModbusState,
   type NetworkState,
@@ -81,6 +85,7 @@ import { DEMO_AUDIO_FILE, createDemoProject } from '../demoproject';
 import { DmxCapture } from '../dmxcapture';
 import { DmxTriggerWatcher } from '../dmxtriggers';
 import { Engine } from '../engine';
+import { canonicalPayload, loadLicenseStatus, machineFingerprint, verifyLicenseFile } from '../license';
 import { MqttController } from '../mqttcontroller';
 import { NetworkMonitor } from '../netmonitor';
 import { OscServer } from '../oscserver';
@@ -103,6 +108,7 @@ import { Scheduler } from '../schedule';
 import { startServer } from '../server';
 import { createZip, readZip } from '../zip';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = 9521;
 const MOCK_NODE_PORT = 16454; // мок-нода Art-Net (не 6454, чтобы не мешать реальным)
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fountain-smoke-'));
@@ -659,6 +665,7 @@ let backupConfigMsg: Extract<ServerMessage, { type: 'backupConfig' }> | null = n
 let backupListMsg: Extract<ServerMessage, { type: 'backupList' }> | null = null;
 let logEvents: LogEvent[] = [];
 let autostartMsg: Extract<ServerMessage, { type: 'autostartState' }> | null = null;
+let licenseMsg: Extract<ServerMessage, { type: 'license' }> | null = null;
 let projectExportMsg: Extract<ServerMessage, { type: 'projectExport' }> | null = null;
 let importResultMsg: Extract<ServerMessage, { type: 'importResult' }> | null = null;
 let sawStep1 = false;
@@ -714,6 +721,8 @@ ws.on('message', (raw) => {
     logEvents = [...logEvents, msg.event];
   } else if (msg.type === 'autostartState') {
     autostartMsg = msg;
+  } else if (msg.type === 'license') {
+    licenseMsg = msg;
   }
 });
 
@@ -2236,6 +2245,96 @@ async function main(): Promise<void> {
       }),
       'уведомления об авариях: info-события (не аварии) в MQTT не публикуются',
     );
+  }
+
+  console.log('— Лицензия (§27 доработки, «Продукт» — привязка к 1 ПК) —');
+  {
+    const myMachineId = machineFingerprint();
+    check(myMachineId === machineFingerprint(), 'machineFingerprint(): стабилен между вызовами');
+    check(
+      licenseMsg !== null && licenseMsg.status.licensed === false && licenseMsg.status.machineId === myMachineId,
+      'при подключении движок сразу присылает статус лицензии (не активирована, свой machineId)',
+    );
+
+    // Файл с чужой подписью — не тот ключ, что зашит в приложении (не должен активировать).
+    const foreign = crypto.generateKeyPairSync('ed25519');
+    const foreignPayload: LicensePayload = {
+      licenseeName: 'Чужой',
+      machineId: myMachineId,
+      issuedAt: new Date().toISOString(),
+      expiresAt: null,
+    };
+    const foreignFile: LicenseFile = {
+      payload: foreignPayload,
+      signature: crypto.sign(null, canonicalPayload(foreignPayload), foreign.privateKey).toString('base64'),
+    };
+    check(!verifyLicenseFile(foreignFile).valid, 'verifyLicenseFile(): подпись чужим ключом отклонена');
+
+    send({ type: 'activateLicense', fileText: JSON.stringify(foreignFile) });
+    await waitFor(
+      'движок ответил на активацию (чужая подпись)',
+      () => licenseMsg?.status.reason?.includes('одпись') === true,
+    );
+    check(licenseMsg?.status.licensed === false, 'activateLicense: файл с чужой подписью не активирует лицензию');
+
+    send({ type: 'activateLicense', fileText: '{битый json' });
+    await waitFor(
+      'движок ответил на активацию (битый JSON)',
+      () => licenseMsg?.status.reason?.includes('JSON') === true,
+    );
+    check(true, 'activateLicense: нечитаемый файл аккуратно отклонён с понятной причиной, без исключения');
+
+    // Позитивный сценарий и «верная подпись, но…» требуют настоящего приватного
+    // ключа — он только у вендора (license-keys/, в .gitignore). Если он есть
+    // локально (как в этом окружении, где ключ был сгенерирован для теста
+    // issue-license.ts), проверяем полный цикл; иначе — пропускаем с пометкой.
+    const privateKeyFile = path.join(__dirname, '..', '..', 'license-keys', 'private.pem');
+    if (fs.existsSync(privateKeyFile)) {
+      const privateKey = crypto.createPrivateKey(fs.readFileSync(privateKeyFile, 'utf8'));
+      const sign = (payload: LicensePayload): LicenseFile => ({
+        payload,
+        signature: crypto.sign(null, canonicalPayload(payload), privateKey).toString('base64'),
+      });
+
+      const wrongMachine = sign({
+        licenseeName: 'Тест',
+        machineId: 'не-этот-компьютер',
+        issuedAt: new Date().toISOString(),
+        expiresAt: null,
+      });
+      check(!verifyLicenseFile(wrongMachine).valid, 'verifyLicenseFile(): верная подпись, но чужой machineId — отклонено');
+
+      const expired = sign({
+        licenseeName: 'Тест',
+        machineId: myMachineId,
+        issuedAt: new Date(Date.now() - 2 * 365 * 24 * 3600 * 1000).toISOString(),
+        expiresAt: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
+      });
+      check(!verifyLicenseFile(expired).valid, 'verifyLicenseFile(): просроченная лицензия отклонена');
+
+      const good = sign({
+        licenseeName: 'Смоук-тест',
+        machineId: myMachineId,
+        issuedAt: new Date().toISOString(),
+        expiresAt: null,
+      });
+      send({ type: 'activateLicense', fileText: JSON.stringify(good) });
+      await waitFor('лицензия активирована', () => licenseMsg?.status.licensed === true, 2000);
+      check(
+        licenseMsg?.status.licensed === true && licenseMsg?.status.licenseeName === 'Смоук-тест',
+        'activateLicense: верная лицензия для этого ПК активируется и статус рассылается всем клиентам',
+      );
+      check(
+        fs.existsSync(path.join(tmpDir, 'fountain.license.json')),
+        'файл лицензии сохранён рядом с проектом (fountain.license.json)',
+      );
+      check(
+        loadLicenseStatus(tmpDir).licensed === true,
+        'loadLicenseStatus(): подтверждает лицензию при перечитывании с диска',
+      );
+    } else {
+      console.log('  (пропуск позитивного сценария — нет license-keys/private.pem у этого разработчика, это ожидаемо)');
+    }
   }
 
   console.log('— Сохранение проекта —');

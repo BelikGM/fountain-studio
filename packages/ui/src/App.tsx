@@ -7,6 +7,7 @@ import { KeysView, keyLabel } from './views/KeysView';
 import { ConsoleView } from './views/ConsoleView';
 import { TourOverlay, type TourStepDef } from './components/TourOverlay';
 import { HelpView } from './views/HelpView';
+import { LicenseView } from './views/LicenseView';
 import { TOUR_STORAGE_KEY } from './tour';
 import { LayoutView } from './views/LayoutView';
 import { OperatorScreen } from './views/OperatorScreen';
@@ -33,6 +34,13 @@ type Tab =
   | 'remote'
   | 'keys'
   | 'settings';
+
+/**
+ * Без активной лицензии на этот ПК (§27 доработки, «Продукт») доступны
+ * только запуск уже готового плейлиста и расписание — заведение оборудования,
+ * сцены/секвенсоры/шоу и диагностика требуют лицензии.
+ */
+const UNLICENSED_TABS: Tab[] = ['playlists', 'schedule'];
 
 const TABS: { id: Tab; label: string; full: string }[] = [
   { id: 'console', label: 'Пульт', full: 'Пульт — ручное управление: фейдеры адресов и тест-сигналы DMX' },
@@ -75,8 +83,11 @@ const TOUR_STEPS: TourStepDef[] = [
 
 export function App() {
   const engine = useEngine();
-  const { connected, version, stats, project, playback, send, undo, redo, savedAtMs } = engine;
+  const { connected, version, stats, project, playback, send, undo, redo, savedAtMs, licenseStatus } = engine;
+  // null — движок ещё не прислал статус: не режем вкладки, чтобы не мигать интерфейсом.
+  const unlicensed = licenseStatus !== null && !licenseStatus.licensed;
   const [showSaved, setShowSaved] = useState(false);
+  const [licenseOpen, setLicenseOpen] = useState(false);
   useEffect(() => {
     if (savedAtMs === null) return;
     setShowSaved(true);
@@ -84,6 +95,9 @@ export function App() {
     return () => window.clearTimeout(t);
   }, [savedAtMs]);
   const [tab, setTab] = useState<Tab>('console');
+  // Если лицензии нет, а сохранённая/текущая вкладка недоступна — подменяем показ,
+  // не трогая tab, чтобы вернуться на неё же после активации лицензии.
+  const effectiveTab: Tab = unlicensed && !UNLICENSED_TABS.includes(tab) ? 'playlists' : tab;
   // Режим оператора (§27 доработки, УХ п.8): состояние в localStorage,
   // переживает перезапуск приложения — снимается только паролем.
   const [locked, setLocked] = useState(() => isOperatorLocked());
@@ -98,8 +112,10 @@ export function App() {
     localStorage.getItem(TOUR_STORAGE_KEY) === '1' ? null : 0,
   );
   useEffect(() => {
-    if (tourStep !== null) setTab(TOUR_STEPS[tourStep]!.tabId as Tab);
-  }, [tourStep]);
+    // Без лицензии тур вести некуда (все его шаги — на закрытых вкладках) —
+    // просто не продвигаем вкладку вслед за туром, пока не активирована лицензия.
+    if (tourStep !== null && !unlicensed) setTab(TOUR_STEPS[tourStep]!.tabId as Tab);
+  }, [tourStep, unlicensed]);
   const finishTour = (): void => {
     localStorage.setItem(TOUR_STORAGE_KEY, '1');
     setTourStep(null);
@@ -126,8 +142,13 @@ export function App() {
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
       const binding = project.keys.find((k) => k.code === e.code);
       if (!binding) return;
-      e.preventDefault();
       const a = binding.action;
+      // Без лицензии клавиатурой доступен тот же набор действий, что и вкладками —
+      // плейлист и аварийная остановка, чтобы привязки не были лазейкой в обход §27.
+      if (unlicensed && a.type !== 'playlist' && a.type !== 'stopAll' && a.type !== 'blackout' && a.type !== 'pauseAll') {
+        return;
+      }
+      e.preventDefault();
       // Движок сам не видит клавиатурные привязки редактора — явно сообщаем
       // о срабатывании в общий журнал событий (§27 доработки, §3 п.1).
       const refName = (list: { id: string; name: string }[]): string =>
@@ -182,7 +203,7 @@ export function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [project, playback, send]);
+  }, [project, playback, send, unlicensed]);
 
   // Горячие клавиши редактора — отменить/повторить/сохранить (§27 доработки,
   // УХ п.6), комбинации переназначаются в «Настройках» (см. hotkeys.ts).
@@ -248,11 +269,11 @@ export function App() {
           </button>
         </div>
         <nav className="tabs">
-          {TABS.map((t) => (
+          {(unlicensed ? TABS.filter((t) => UNLICENSED_TABS.includes(t.id)) : TABS).map((t) => (
             <button
               key={t.id}
               data-tour={t.id}
-              className={tab === t.id ? 'tab active' : 'tab'}
+              className={effectiveTab === t.id ? 'tab active' : 'tab'}
               title={t.full}
               onClick={() => setTab(t.id)}
             >
@@ -260,6 +281,13 @@ export function App() {
             </button>
           ))}
         </nav>
+        <button
+          className={unlicensed ? 'help-btn license-btn license-btn-warn' : 'help-btn license-btn'}
+          title={unlicensed ? 'Лицензия не активирована — нажмите для активации' : 'Лицензия'}
+          onClick={() => setLicenseOpen(true)}
+        >
+          {unlicensed ? '🔒' : '🔑'}
+        </button>
         <button className="help-btn" title="Справка" onClick={() => setHelpOpen(true)}>
           ?
         </button>
@@ -268,7 +296,8 @@ export function App() {
         </div>
       </header>
       {helpOpen && <HelpView onClose={() => setHelpOpen(false)} />}
-      {tourStep !== null && (
+      {licenseOpen && <LicenseView engine={engine} onClose={() => setLicenseOpen(false)} />}
+      {tourStep !== null && !unlicensed && (
         <TourOverlay
           steps={TOUR_STEPS}
           step={tourStep}
@@ -277,18 +306,18 @@ export function App() {
         />
       )}
 
-      {tab === 'console' && <ConsoleView engine={engine} />}
-      {tab === 'patch' && <PatchView engine={engine} />}
-      {tab === 'layout' && <LayoutView engine={engine} />}
-      {tab === 'scenes' && <ScenesView engine={engine} />}
-      {tab === 'sequences' && <SequencesView engine={engine} />}
-      {tab === 'show' && <ShowView engine={engine} />}
-      {tab === 'playlists' && <PlaylistsView engine={engine} />}
-      {tab === 'schedule' && <ScheduleView engine={engine} />}
-      {tab === 'network' && <NetworkView engine={engine} />}
-      {tab === 'remote' && <RemoteView engine={engine} />}
-      {tab === 'keys' && <KeysView engine={engine} />}
-      {tab === 'settings' && <SettingsView engine={engine} />}
+      {effectiveTab === 'console' && <ConsoleView engine={engine} />}
+      {effectiveTab === 'patch' && <PatchView engine={engine} />}
+      {effectiveTab === 'layout' && <LayoutView engine={engine} />}
+      {effectiveTab === 'scenes' && <ScenesView engine={engine} />}
+      {effectiveTab === 'sequences' && <SequencesView engine={engine} />}
+      {effectiveTab === 'show' && <ShowView engine={engine} />}
+      {effectiveTab === 'playlists' && <PlaylistsView engine={engine} />}
+      {effectiveTab === 'schedule' && <ScheduleView engine={engine} />}
+      {effectiveTab === 'network' && <NetworkView engine={engine} />}
+      {effectiveTab === 'remote' && <RemoteView engine={engine} />}
+      {effectiveTab === 'keys' && <KeysView engine={engine} />}
+      {effectiveTab === 'settings' && <SettingsView engine={engine} />}
 
       <footer className="statusbar">
         {showSaved && <span className="ok-text">✔ сохранено</span>}

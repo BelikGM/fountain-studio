@@ -5,6 +5,7 @@ export * from './dmxcycle';
 export * from './dxf';
 export * from './keys';
 export * from './layout';
+export * from './license';
 export * from './messages';
 export * from './osc';
 export * from './playlist';

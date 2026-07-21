@@ -17,3 +17,8 @@ backups/
 packages/app/engine.cjs
 packages/app/ui/
 packages/app/release/
+
+# Лицензирование (§27 доработки) — приватный ключ издателя лицензий (у
+# вендора, никогда не в репозитории) и выданные лицензии конкретных установок.
+license-keys/
+fountain.license.json

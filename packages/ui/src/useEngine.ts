@@ -4,6 +4,7 @@ import type {
   ClientMessage,
   ConfigUniverse,
   EngineStats,
+  LicenseStatus,
   LogEvent,
   ModbusState,
   NetworkState,
@@ -82,6 +83,8 @@ export interface EngineConnection {
   autostart: AutostartState | null;
   /** Ветер и текущее ограничение высоты струй (null — движок ещё не прислал). */
   windState: WindState | null;
+  /** Статус лицензии этого ПК (null — движок ещё не прислал). §27 доработки. */
+  licenseStatus: LicenseStatus | null;
   send: (msg: ClientMessage) => void;
   /** Применяет правку проекта локально и отправляет движку. */
   updateProject: (project: Project) => void;
@@ -107,6 +110,8 @@ export interface EngineConnection {
   redo: () => void;
   canUndo: boolean;
   canRedo: boolean;
+  /** Активация лицензии по содержимому файла — резолвится итоговым статусом. */
+  activateLicense: (fileText: string) => Promise<LicenseStatus>;
 }
 
 /** Сколько шагов истории Undo/Redo держим в памяти. */
@@ -135,6 +140,7 @@ export function useEngine(): EngineConnection {
   const [jitterHistory, setJitterHistory] = useState<JitterSample[]>([]);
   const [autostart, setAutostartState] = useState<AutostartState | null>(null);
   const [windState, setWindState] = useState<WindState | null>(null);
+  const [licenseStatus, setLicenseStatus] = useState<LicenseStatus | null>(null);
   const [playback, setPlayback] = useState<PlaybackState>({
     activeSceneId: null,
     running: [],
@@ -152,6 +158,7 @@ export function useEngine(): EngineConnection {
   const audioWaitersRef = useRef(new Map<string, ((data: Uint8Array | null) => void)[]>());
   const exportWaitersRef = useRef<((data: { filename: string; dataBase64: string }) => void)[]>([]);
   const importWaitersRef = useRef<((r: { ok: boolean; message: string }) => void)[]>([]);
+  const licenseWaitersRef = useRef<((status: LicenseStatus) => void)[]>([]);
   /** Ожидающие ответов захвата DMX по вселенной. */
   const captureWaitersRef = useRef(
     new Map<number, ((snap: { data: Uint8Array; ageMs: number; fromIp: string; frames: number } | null) => void)[]>(),
@@ -285,6 +292,13 @@ export function useEngine(): EngineConnection {
           case 'windState':
             setWindState({ speedMs: msg.speedMs, limitPercent: msg.limitPercent, config: msg.config });
             break;
+          case 'license': {
+            setLicenseStatus(msg.status);
+            const waiters = licenseWaitersRef.current;
+            licenseWaitersRef.current = [];
+            for (const resolve of waiters) resolve(msg.status);
+            break;
+          }
         }
       };
     };
@@ -396,6 +410,15 @@ export function useEngine(): EngineConnection {
     [send],
   );
 
+  const activateLicense = useCallback(
+    (fileText: string) =>
+      new Promise<LicenseStatus>((resolve) => {
+        licenseWaitersRef.current.push(resolve);
+        send({ type: 'activateLicense', fileText });
+      }),
+    [send],
+  );
+
   const requestRdm = useCallback(
     (req: Extract<ClientMessage, { type: 'rdmRequest' }>) =>
       new Promise<Extract<ServerMessage, { type: 'rdmResponse' }>>((resolve) => {
@@ -431,6 +454,7 @@ export function useEngine(): EngineConnection {
     jitterHistory,
     autostart,
     windState,
+    licenseStatus,
     send,
     updateProject,
     requestAudio,
@@ -443,6 +467,7 @@ export function useEngine(): EngineConnection {
     redo,
     canUndo: undoStackRef.current.length > 0,
     canRedo: redoStackRef.current.length > 0,
+    activateLicense,
   };
 }
 

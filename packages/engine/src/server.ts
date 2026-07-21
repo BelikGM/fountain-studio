@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
   sanitizeProject,
@@ -13,6 +14,7 @@ import type { BackupStore } from './backups';
 import type { DmxCapture } from './dmxcapture';
 import { eventLog } from './eventlog';
 import type { Engine } from './engine';
+import { activateLicense, loadLicenseStatus } from './license';
 import type { MqttController } from './mqttcontroller';
 import type { NetworkMonitor } from './netmonitor';
 import type { OscServer } from './oscserver';
@@ -85,6 +87,11 @@ export function startServer(
     type: 'backupList',
     backups: backups?.list() ?? [],
   });
+  const projectDir = path.dirname(store.file);
+  const licenseMessage = (): Extract<ServerMessage, { type: 'license' }> => ({
+    type: 'license',
+    status: loadLicenseStatus(projectDir),
+  });
   // Журнал событий (§27 доработки, §3 п.1): новое событие — сразу всем
   // подключённым клиентам (не только тому, кто его вызвал).
   eventLog.subscribe((event) => broadcast({ type: 'logEvent', event }));
@@ -118,6 +125,7 @@ export function startServer(
     ws.send(JSON.stringify(autostartMessage()));
     ws.send(JSON.stringify({ type: 'windState', ...engine.windState() } satisfies ServerMessage));
     ws.send(JSON.stringify(remoteStatus()));
+    ws.send(JSON.stringify(licenseMessage()));
 
     ws.on('message', (raw) => {
       let msg: ClientMessage;
@@ -233,6 +241,15 @@ export function startServer(
           net?.poll();
           broadcastNetwork();
           break;
+        case 'activateLicense': {
+          // Рассылаем именно результат этой попытки, а не перечитанный с диска
+          // статус: при неудачной активации файл лицензии не пишется, и
+          // loadLicenseStatus() тогда вернул бы общее «не активирована»,
+          // потеряв конкретную причину отказа (чужая подпись/машина/истёк срок).
+          const status = activateLicense(projectDir, msg.fileText);
+          broadcast({ type: 'license', status });
+          break;
+        }
         case 'getDmxCapture': {
           // Логическая вселенная проекта → Art-Net Port-Address первого artnet-выхода.
           const protoUniverse = engine.config.universes
