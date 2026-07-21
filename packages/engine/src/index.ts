@@ -1,9 +1,13 @@
+import fs from 'node:fs';
 import path from 'node:path';
+import { sanitizeProject } from '@fountain-studio/shared';
 import { AudioStore } from './audio';
 import { AudioPlayer } from './audioplayer';
 import { BackupStore } from './backups';
 import { loadConfig } from './config';
 import { wireAlarmNotifications } from './alarms';
+import { generateDemoWav } from './demoaudio';
+import { DEMO_AUDIO_FILE, createDemoProject } from './demoproject';
 import { DmxCapture } from './dmxcapture';
 import { DmxTriggerWatcher } from './dmxtriggers';
 import { Engine } from './engine';
@@ -17,8 +21,18 @@ import { startServer } from './server';
 const config = loadConfig(process.argv);
 const engine = new Engine(config);
 const projectDir = path.dirname(config.configFile);
-const store = new ProjectStore(path.join(projectDir, 'fountain.project.json'));
+const projectFile = path.join(projectDir, 'fountain.project.json');
+// Демо-проект «из коробки» (§27 доработки) — только когда проекта ещё
+// действительно нет: не подменяет и не трогает существующий, только первый запуск.
+const isFirstRun = !fs.existsSync(projectFile);
+const store = new ProjectStore(projectFile);
 const audio = new AudioStore(path.join(projectDir, 'audio'));
+if (isFirstRun) {
+  audio.save(DEMO_AUDIO_FILE, generateDemoWav().toString('base64'));
+  store.update(sanitizeProject(createDemoProject()));
+  store.flush();
+  console.log('[project] демо-проект создан при первом запуске');
+}
 const backups = new BackupStore(
   path.join(projectDir, 'fountain.project.json'),
   () => JSON.stringify(store.project, null, 2),

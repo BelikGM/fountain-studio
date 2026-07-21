@@ -76,6 +76,8 @@ import { BackupStore } from '../backups';
 import dgram from 'node:dgram';
 import { createServer as createTcpServer, createConnection as createTcpConnection } from 'node:net';
 import { emaStep } from '../clock';
+import { generateDemoWav } from '../demoaudio';
+import { DEMO_AUDIO_FILE, createDemoProject } from '../demoproject';
 import { DmxCapture } from '../dmxcapture';
 import { DmxTriggerWatcher } from '../dmxtriggers';
 import { Engine } from '../engine';
@@ -2072,6 +2074,48 @@ async function main(): Promise<void> {
     check(importResultMsg!.ok === true, `importProject: успешно (${importResultMsg!.message})`);
     await waitFor('проект после импорта совпадает с исходным', () => projectEcho?.name === nameBefore, 2000);
     check(true, 'importProject: повторный импорт того же архива не изменил содержимое (круговой обход корректен)');
+  }
+
+  console.log('— Демо-проект «из коробки» (§27 доработки, раздел «Продукт») —');
+  {
+    const demo = createDemoProject();
+    const sanitized = sanitizeProject(demo);
+    check(
+      sanitized.devices.length === demo.devices.length &&
+        sanitized.scenes.length === demo.scenes.length &&
+        sanitized.sequences.length === demo.sequences.length &&
+        sanitized.shows.length === 1 &&
+        sanitized.layout.nozzles.length === 2 &&
+        sanitized.layout.lights.length === 2,
+      `createDemoProject: sanitizeProject не роняет ничего (${sanitized.devices.length} приборов, ${sanitized.scenes.length} сцен, ${sanitized.layout.nozzles.length} форсунки)`,
+    );
+    const show = sanitized.shows[0]!;
+    check(
+      show.audioFile === DEMO_AUDIO_FILE && show.durationMs > 0,
+      `createDemoProject: демо-шоу ссылается на ${DEMO_AUDIO_FILE}, длительность ${show.durationMs} мс`,
+    );
+    const blocksTrack = show.tracks.find((t) => t.kind === 'blocks');
+    const envTrack = show.tracks.find((t) => t.kind === 'envelope');
+    check(
+      blocksTrack?.kind === 'blocks' &&
+        blocksTrack.blocks.length === 4 &&
+        blocksTrack.blocks.every((b) => sanitized.scenes.some((s) => s.id === b.refId)),
+      'createDemoProject: блоки шоу ссылаются на реально существующие сцены проекта',
+    );
+    check(
+      envTrack?.kind === 'envelope' && envTrack.points.length > 0 && envTrack.deviceId === 'demo-pump1',
+      `createDemoProject: огибающая пульса насоса построена (${envTrack?.kind === 'envelope' ? envTrack.points.length : 0} точек)`,
+    );
+
+    const wav = generateDemoWav();
+    const riffOk = wav.toString('ascii', 0, 4) === 'RIFF' && wav.toString('ascii', 8, 12) === 'WAVE';
+    const sampleRate = wav.readUInt32LE(24);
+    const dataSize = wav.readUInt32LE(40);
+    const durationMs = Math.round((dataSize / 2 / sampleRate) * 1000);
+    check(
+      riffOk && sampleRate === 44100 && Math.abs(durationMs - show.durationMs) < 5,
+      `generateDemoWav: валидный WAV (44.1 кГц), длительность ${durationMs} мс совпадает с demo-шоу (${show.durationMs} мс)`,
+    );
   }
 
   console.log('— Автозапуск при входе в Windows (§27 доработки, §3 п.3) —');
