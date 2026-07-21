@@ -102,6 +102,53 @@ body {
 .conn-on { color: var(--ok); }
 .conn-off { color: var(--danger); }
 
+.help-btn {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-track);
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-weight: 600;
+  margin-right: 12px;
+}
+.help-btn:hover { border-color: var(--accent); color: var(--fg); }
+
+.help-modal {
+  width: min(760px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+}
+.help-body {
+  overflow-y: auto;
+  padding-right: 8px;
+  line-height: 1.6;
+}
+.help-body h1 { font-size: 22px; margin: 0 0 12px; }
+.help-body h2 { font-size: 18px; margin: 24px 0 8px; }
+.help-body h3 { font-size: 15px; margin: 18px 0 6px; color: var(--fg-dim); }
+.help-body p { margin: 8px 0; }
+.help-body ul,
+.help-body ol { margin: 8px 0; padding-left: 22px; }
+.help-body li { margin: 4px 0; }
+.help-body code {
+  background: var(--bg-track);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 12px;
+}
+.help-body pre {
+  background: var(--bg-track);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-size: 12px;
+}
+.help-body pre code { background: none; padding: 0; }
+.help-body hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+
 /* ── Тумблер темы: кружок справа = тёмная (луна), слева = светлая (солнце) ── */
 .theme-toggle {
   position: relative;

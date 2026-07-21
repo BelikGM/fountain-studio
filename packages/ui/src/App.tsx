@@ -5,6 +5,7 @@ import { isOperatorLocked } from './operatorMode';
 import { useEngine } from './useEngine';
 import { KeysView, keyLabel } from './views/KeysView';
 import { ConsoleView } from './views/ConsoleView';
+import { HelpView } from './views/HelpView';
 import { LayoutView } from './views/LayoutView';
 import { OperatorScreen } from './views/OperatorScreen';
 import { PatchView } from './views/PatchView';
@@ -63,6 +64,7 @@ export function App() {
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
     localStorage.getItem('fs-theme') === 'light' ? 'light' : 'dark',
   );
+  const [helpOpen, setHelpOpen] = useState(false);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -218,10 +220,14 @@ export function App() {
             </button>
           ))}
         </nav>
+        <button className="help-btn" title="Справка" onClick={() => setHelpOpen(true)}>
+          ?
+        </button>
         <div className={connected ? 'conn conn-on' : 'conn conn-off'}>
           {connected ? 'движок подключён' : 'нет связи с движком…'}
         </div>
       </header>
+      {helpOpen && <HelpView onClose={() => setHelpOpen(false)} />}
 
       {tab === 'console' && <ConsoleView engine={engine} />}
       {tab === 'patch' && <PatchView engine={engine} />}
