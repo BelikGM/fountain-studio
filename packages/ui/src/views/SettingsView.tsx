@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { computeWindLimitPercent, type BackupInfo, type ConfigUniverse } from '@fountain-studio/shared';
+import { TOUR_STORAGE_KEY } from '../tour';
 import {
   HOTKEY_DEFS,
   comboFromEvent,
@@ -912,6 +913,26 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
       <UtilityLightPanel engine={engine} />
       <HotkeysPanel />
       <OperatorPanel />
+      <TourReplayPanel />
     </main>
+  );
+}
+
+/** Повторный показ тура первого запуска (§27 доработки) — на случай, если пропустили или хотите освежить. */
+function TourReplayPanel() {
+  return (
+    <section className="panel">
+      <h2>Тур по программе</h2>
+      <p className="dim">Короткая подсказка по вкладкам «Приборы → 3D → Сцены → Шоу», которая показывается при первом запуске.</p>
+      <button
+        className="btn"
+        onClick={() => {
+          localStorage.removeItem(TOUR_STORAGE_KEY);
+          location.reload();
+        }}
+      >
+        Показать тур снова
+      </button>
+    </section>
   );
 }

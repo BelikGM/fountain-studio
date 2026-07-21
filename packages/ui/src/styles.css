@@ -102,6 +102,34 @@ body {
 .conn-on { color: var(--ok); }
 .conn-off { color: var(--danger); }
 
+/* ── Тур при первом запуске (§27 доработки) ─────────────────── */
+.tour-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  pointer-events: none;
+}
+.tour-spotlight {
+  position: fixed;
+  border-radius: 8px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65);
+  pointer-events: none;
+  transition: left 0.2s ease, top 0.2s ease, width 0.2s ease, height 0.2s ease;
+}
+.tour-callout {
+  position: fixed;
+  background: var(--bg-panel);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 14px 16px;
+  width: 280px;
+  pointer-events: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  transition: left 0.2s ease, top 0.2s ease;
+}
+.tour-callout-title { font-weight: 600; margin-bottom: 6px; color: var(--accent); }
+.tour-callout p { margin: 0 0 10px; font-size: 13px; color: var(--fg-dim); }
+
 .help-btn {
   width: 26px;
   height: 26px;

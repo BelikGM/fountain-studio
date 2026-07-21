@@ -5,7 +5,9 @@ import { isOperatorLocked } from './operatorMode';
 import { useEngine } from './useEngine';
 import { KeysView, keyLabel } from './views/KeysView';
 import { ConsoleView } from './views/ConsoleView';
+import { TourOverlay, type TourStepDef } from './components/TourOverlay';
 import { HelpView } from './views/HelpView';
+import { TOUR_STORAGE_KEY } from './tour';
 import { LayoutView } from './views/LayoutView';
 import { OperatorScreen } from './views/OperatorScreen';
 import { PatchView } from './views/PatchView';
@@ -47,6 +49,30 @@ const TABS: { id: Tab; label: string; full: string }[] = [
   { id: 'settings', label: 'Настройки', full: 'Настройки — DMX-линии (вселенные) и частота обновления' },
 ];
 
+/** Короткий маршрут по мотивам docs/MANUAL.md §4 — полные 8 шагов остаются в Справке. */
+const TOUR_STEPS: TourStepDef[] = [
+  {
+    tabId: 'patch',
+    title: 'Приборы',
+    text: 'Начните здесь: заведите оборудование объекта — насосы, клапаны, светильники — с адресацией по DMX.',
+  },
+  {
+    tabId: 'layout',
+    title: '3D',
+    text: 'Расставьте форсунки и прожекторы по реальной геометрии — дальше всё видно на экране, не только в цифрах.',
+  },
+  {
+    tabId: 'scenes',
+    title: 'Сцены',
+    text: 'Соберите базовые картины: общий максимум, дежурную подсветку, кольцо. Каждую проверяйте кнопкой «Просмотр на выходе».',
+  },
+  {
+    tabId: 'show',
+    title: 'Шоу',
+    text: 'Загрузите музыку и соберите номер: «⚡ Автопостановка», живая запись или ручная правка на таймлайне. Полный маршрут по всем разделам — в Справке (кнопка «?»).',
+  },
+];
+
 export function App() {
   const engine = useEngine();
   const { connected, version, stats, project, playback, send, undo, redo, savedAtMs } = engine;
@@ -65,6 +91,19 @@ export function App() {
     localStorage.getItem('fs-theme') === 'light' ? 'light' : 'dark',
   );
   const [helpOpen, setHelpOpen] = useState(false);
+  // Тур при первом запуске (§27 доработки) — null = не идёт; иначе индекс
+  // шага в TOUR_STEPS. Переключает вкладку вслед за собой, чтобы подсказка
+  // всегда указывала на реально открытый раздел.
+  const [tourStep, setTourStep] = useState<number | null>(() =>
+    localStorage.getItem(TOUR_STORAGE_KEY) === '1' ? null : 0,
+  );
+  useEffect(() => {
+    if (tourStep !== null) setTab(TOUR_STEPS[tourStep]!.tabId as Tab);
+  }, [tourStep]);
+  const finishTour = (): void => {
+    localStorage.setItem(TOUR_STORAGE_KEY, '1');
+    setTourStep(null);
+  };
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -212,6 +251,7 @@ export function App() {
           {TABS.map((t) => (
             <button
               key={t.id}
+              data-tour={t.id}
               className={tab === t.id ? 'tab active' : 'tab'}
               title={t.full}
               onClick={() => setTab(t.id)}
@@ -228,6 +268,14 @@ export function App() {
         </div>
       </header>
       {helpOpen && <HelpView onClose={() => setHelpOpen(false)} />}
+      {tourStep !== null && (
+        <TourOverlay
+          steps={TOUR_STEPS}
+          step={tourStep}
+          onSkip={finishTour}
+          onNext={() => (tourStep >= TOUR_STEPS.length - 1 ? finishTour() : setTourStep(tourStep + 1))}
+        />
+      )}
 
       {tab === 'console' && <ConsoleView engine={engine} />}
       {tab === 'patch' && <PatchView engine={engine} />}
