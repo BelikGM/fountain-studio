@@ -12,6 +12,7 @@ import { ListFilter } from '../components/ListFilter';
 import { PencilIcon, TrashIcon } from '../components/Icons';
 import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
+import { SequenceMatrix } from './SequenceMatrix';
 
 /** Секвенсоры: последовательности сцен с длительностью и фейдом, транспорт запуска. */
 export function SequencesView({ engine }: { engine: EngineConnection }) {
@@ -300,6 +301,9 @@ function SequenceEditor({
   const scenes = project!.scenes;
   const sceneName = (id: string): string => scenes.find((s) => s.id === id)?.name ?? '(сцена удалена)';
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  // Матричный редактор (§27 доработки) — сетка «шаг × прибор» вместо списка,
+  // альтернативный вид тех же Sequence.steps, без отдельной модели данных.
+  const [matrixOpen, setMatrixOpen] = useState(false);
   // clipboardHasKind сам по себе не React-состояние — отдельный флаг, чтобы
   // кнопка «Вставить шаг» появлялась сразу после копирования, без ожидания
   // случайного внешнего перерендера.
@@ -351,6 +355,20 @@ function SequenceEditor({
           <option value="once">Один раз</option>
         </select>
         <span className="dim">длительность цикла: {(totalMs / 1000).toFixed(1)} с</span>
+        <span className="spacer" />
+        <button
+          className={!matrixOpen ? 'btn btn-small active' : 'btn btn-small'}
+          onClick={() => setMatrixOpen(false)}
+        >
+          Список
+        </button>
+        <button
+          className={matrixOpen ? 'btn btn-small active' : 'btn btn-small'}
+          title="Сетка «шаг × прибор» — быстрая роспись значений на много приборов сразу"
+          onClick={() => setMatrixOpen(true)}
+        >
+          Матрица
+        </button>
       </div>
 
       <div className="form-row">
@@ -421,6 +439,8 @@ function SequenceEditor({
 
       {scenes.length === 0 ? (
         <div className="dim">Нет сцен — создайте их на вкладке «Сцены».</div>
+      ) : matrixOpen ? (
+        <SequenceMatrix project={project!} sequence={sequence} updateProject={engine.updateProject} />
       ) : (
         <>
           <table className="table">
