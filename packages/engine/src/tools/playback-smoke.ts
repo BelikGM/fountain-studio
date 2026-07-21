@@ -99,6 +99,7 @@ import {
 import { ProjectStore } from '../project';
 import { Scheduler } from '../schedule';
 import { startServer } from '../server';
+import { createZip, readZip } from '../zip';
 
 const PORT = 9521;
 const MOCK_NODE_PORT = 16454; // мок-нода Art-Net (не 6454, чтобы не мешать реальным)
@@ -656,6 +657,8 @@ let backupConfigMsg: Extract<ServerMessage, { type: 'backupConfig' }> | null = n
 let backupListMsg: Extract<ServerMessage, { type: 'backupList' }> | null = null;
 let logEvents: LogEvent[] = [];
 let autostartMsg: Extract<ServerMessage, { type: 'autostartState' }> | null = null;
+let projectExportMsg: Extract<ServerMessage, { type: 'projectExport' }> | null = null;
+let importResultMsg: Extract<ServerMessage, { type: 'importResult' }> | null = null;
 let sawStep1 = false;
 let sawFadeMidpoint = false;
 
@@ -685,6 +688,10 @@ ws.on('message', (raw) => {
     projectEcho = msg.project;
   } else if (msg.type === 'audio') {
     audioMsg = { name: msg.name, dataBase64: msg.dataBase64 };
+  } else if (msg.type === 'projectExport') {
+    projectExportMsg = msg;
+  } else if (msg.type === 'importResult') {
+    importResultMsg = msg;
   } else if (msg.type === 'network') {
     networkState = msg.state;
   } else if (msg.type === 'modbus') {
@@ -2027,6 +2034,45 @@ async function main(): Promise<void> {
   send({ type: 'getAudio', name: 'тест.mp3' });
   await waitFor('ответ getAudio', () => audioMsg !== null);
   check(audioMsg!.name === 'тест.mp3' && audioMsg!.dataBase64 === audioData, 'аудиофайл сохранён и отдан байт в байт');
+
+  console.log('— Экспорт/импорт проекта одним файлом (§27 доработки) —');
+  {
+    // Чистая проверка формата — без движка: create → read воспроизводит имена и байты точно.
+    const zipEntries = [
+      { name: 'project.json', data: Buffer.from('{"a":1}', 'utf8') },
+      { name: 'audio/тест звук.mp3', data: Buffer.from('бинарные-не-очень-данные-mp3-имитация'.repeat(50), 'utf8') },
+    ];
+    const zipBuf = createZip(zipEntries);
+    const readBack = readZip(zipBuf);
+    check(
+      readBack.length === 2 &&
+        readBack.find((e) => e.name === 'project.json')?.data.toString('utf8') === '{"a":1}' &&
+        readBack.find((e) => e.name.startsWith('audio/'))?.data.equals(zipEntries[1]!.data) === true,
+      'createZip/readZip: круговой обход воспроизводит имена (в т.ч. кириллица) и байты файлов точно',
+    );
+
+    // Живая проверка через движок: экспорт текущего проекта → импорт того же архива обратно.
+    send({ type: 'exportProject' });
+    await waitFor('получен экспорт проекта', () => projectExportMsg !== null, 2000);
+    check(
+      projectExportMsg!.filename.endsWith('.fsproj.zip') && projectExportMsg!.dataBase64.length > 100,
+      `exportProject: файл «${projectExportMsg!.filename}» получен (${projectExportMsg!.dataBase64.length} байт base64)`,
+    );
+
+    const exportedEntries = readZip(Buffer.from(projectExportMsg!.dataBase64, 'base64'));
+    check(
+      exportedEntries.some((e) => e.name === 'project.json') && exportedEntries.some((e) => e.name === 'audio/тест.mp3'),
+      'exportProject: архив содержит project.json и файлы из папки audio/',
+    );
+
+    const nameBefore = store.project.name;
+    importResultMsg = null;
+    send({ type: 'importProject', dataBase64: projectExportMsg!.dataBase64 });
+    await waitFor('импорт обработан', () => importResultMsg !== null, 2000);
+    check(importResultMsg!.ok === true, `importProject: успешно (${importResultMsg!.message})`);
+    await waitFor('проект после импорта совпадает с исходным', () => projectEcho?.name === nameBefore, 2000);
+    check(true, 'importProject: повторный импорт того же архива не изменил содержимое (круговой обход корректен)');
+  }
 
   console.log('— Автозапуск при входе в Windows (§27 доработки, §3 п.3) —');
   {

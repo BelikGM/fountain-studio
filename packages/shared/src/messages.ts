@@ -231,6 +231,10 @@ export type ClientMessage =
   // Аудиофайлы шоу: хранятся движком в папке audio/ рядом с проектом.
   | { type: 'uploadAudio'; name: string; dataBase64: string }
   | { type: 'getAudio'; name: string }
+  // Экспорт/импорт проекта одним файлом (§27 доработки) — .zip: project.json
+  // + вся папка audio/, тем же base64-путём, что и загрузка аудио выше.
+  | { type: 'exportProject' }
+  | { type: 'importProject'; dataBase64: string }
   // Плейлисты: исполняет движок автономно (мастер-часы — тик движка).
   | { type: 'playPlaylist'; playlistId: string; itemIndex?: number }
   | { type: 'skipPlaylist'; dir: 1 | -1 }
@@ -280,6 +284,10 @@ export type ServerMessage =
   | { type: 'modbus'; state: ModbusState }
   /** Ответ на getAudio (только запросившему клиенту); dataBase64 = '' — файла нет. */
   | { type: 'audio'; name: string; dataBase64: string }
+  /** Ответ на exportProject — готовый .zip для скачивания. */
+  | { type: 'projectExport'; filename: string; dataBase64: string }
+  /** Ответ на importProject — успех/ошибка (например, не ZIP или битый project.json). */
+  | { type: 'importResult'; ok: boolean; message: string }
   /** Ответ на getDmxCapture: последний кадр внешнего ArtDMX; data = '' — захвата нет. */
   | { type: 'dmxCapture'; universe: number; data: string; ageMs: number; fromIp: string; frames: number }
   /** Ответ на measureDmxCycle. */

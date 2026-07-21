@@ -263,6 +263,93 @@ function fmtSize(bytes: number): string {
 }
 
 /**
+ * Экспорт/импорт проекта одним файлом (§27 доработки) — .zip с project.json
+ * и всей папкой audio/: перенос между ПК или передача проекта заказчику в
+ * один клик, вместо ручного копирования fountain.project.json и папки audio
+ * по отдельности.
+ */
+function ExportImportPanel({ engine }: { engine: EngineConnection }) {
+  const { requestExportProject, importProjectArchive } = engine;
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const doExport = async (): Promise<void> => {
+    setExporting(true);
+    try {
+      const { filename, dataBase64 } = await requestExportProject();
+      const bytes = Uint8Array.from(atob(dataBase64), (c) => c.charCodeAt(0));
+      const blob = new Blob([bytes], { type: 'application/zip' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const doImport = async (file: File): Promise<void> => {
+    if (
+      !window.confirm(
+        'Импорт заменит ВЕСЬ текущий проект (приборы, сцены, шоу, расписание и т.д.) содержимым файла.\n\n' +
+          'Текущие несохранённые правки будут потеряны. Продолжить?',
+      )
+    ) {
+      return;
+    }
+    setImporting(true);
+    setImportMsg(null);
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let bin = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      const result = await importProjectArchive(btoa(bin));
+      setImportMsg(result);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  return (
+    <section className="panel">
+      <h2>Экспорт / импорт проекта</h2>
+      <p className="dim">
+        Один файл — весь проект (приборы, сцены, шоу, расписание) вместе с аудио шоу. Удобно для переноса между ПК
+        или передачи заказчику.
+      </p>
+      <div className="form-row">
+        <button className="btn" onClick={() => void doExport()} disabled={exporting}>
+          {exporting ? 'Собираю…' : '⬇ Экспортировать в файл'}
+        </button>
+        <label className="btn">
+          {importing ? 'Импортирую…' : '⬆ Импортировать из файла…'}
+          <input
+            type="file"
+            accept=".zip"
+            style={{ display: 'none' }}
+            disabled={importing}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void doImport(f);
+              e.target.value = '';
+            }}
+          />
+        </label>
+      </div>
+      {importMsg && (
+        <p className={importMsg.ok ? 'ok-text' : 'warn'}>
+          {importMsg.ok ? '✔ ' : '⚠ '}
+          {importMsg.message}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
  * Авто-бэкапы проекта (§27 доработки, УХ п.5): именованные снимки по расписанию,
  * отдельно от непрерывного живого автосохранения (то всегда включено и невидимо).
  * Смена интервала применяется сразу, без кнопки «Применить» и без остановки
@@ -817,6 +904,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
         )}
       </div>
 
+      <ExportImportPanel engine={engine} />
       <BackupPanel engine={engine} />
       <AutostartPanel engine={engine} />
       <WindLimitPanel engine={engine} />

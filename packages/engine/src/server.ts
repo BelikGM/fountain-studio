@@ -17,6 +17,7 @@ import type { MqttController } from './mqttcontroller';
 import type { NetworkMonitor } from './netmonitor';
 import type { OscServer } from './oscserver';
 import type { ProjectStore } from './project';
+import { createZip, readZip } from './zip';
 import {
   CC_GET_COMMAND,
   CC_SET_COMMAND,
@@ -308,6 +309,62 @@ export function startServer(
         case 'getAudio': {
           const data = audio.load(msg.name);
           ws.send(JSON.stringify({ type: 'audio', name: msg.name, dataBase64: data ?? '' } satisfies ServerMessage));
+          break;
+        }
+        case 'exportProject': {
+          // §27 доработки — весь проект (project.json + папка audio/) одним
+          // файлом: перенос между ПК и передача заказчику в один клик.
+          const entries = [
+            { name: 'project.json', data: Buffer.from(JSON.stringify(store.project, null, 2), 'utf8') },
+          ];
+          if (fs.existsSync(audio.dir)) {
+            for (const file of fs.readdirSync(audio.dir)) {
+              const full = `${audio.dir}/${file}`;
+              if (fs.statSync(full).isFile()) entries.push({ name: `audio/${file}`, data: fs.readFileSync(full) });
+            }
+          }
+          const zipBuf = createZip(entries);
+          const safeName = store.project.name.replace(/[^\p{L}\p{N}_-]+/gu, '_') || 'fountain-project';
+          ws.send(
+            JSON.stringify({
+              type: 'projectExport',
+              filename: `${safeName}.fsproj.zip`,
+              dataBase64: zipBuf.toString('base64'),
+            } satisfies ServerMessage),
+          );
+          break;
+        }
+        case 'importProject': {
+          try {
+            const entries = readZip(Buffer.from(msg.dataBase64, 'base64'));
+            const projectEntry = entries.find((e) => e.name === 'project.json');
+            if (!projectEntry) throw new Error('в архиве нет project.json — это не экспорт проекта Fountain Studio');
+            const project = sanitizeProject(JSON.parse(projectEntry.data.toString('utf8')));
+            for (const e of entries) {
+              if (!e.name.startsWith('audio/')) continue;
+              const name = e.name.slice('audio/'.length);
+              if (name) audio.save(name, e.data.toString('base64'));
+            }
+            store.update(project);
+            engine.setProject(project);
+            broadcast({ type: 'project', project });
+            broadcastPlayback();
+            ws.send(
+              JSON.stringify({
+                type: 'importResult',
+                ok: true,
+                message: `Импортирован проект «${project.name}»`,
+              } satisfies ServerMessage),
+            );
+          } catch (err) {
+            ws.send(
+              JSON.stringify({
+                type: 'importResult',
+                ok: false,
+                message: err instanceof Error ? err.message : String(err),
+              } satisfies ServerMessage),
+            );
+          }
           break;
         }
         case 'updateBackupConfig': {

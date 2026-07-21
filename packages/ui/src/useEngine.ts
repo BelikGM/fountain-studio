@@ -87,6 +87,9 @@ export interface EngineConnection {
   updateProject: (project: Project) => void;
   /** Запрашивает аудиофайл из хранилища движка (null — файла нет). */
   requestAudio: (name: string) => Promise<Uint8Array | null>;
+  /** Экспорт/импорт проекта одним файлом (§27 доработки) — project.json + audio/ в .zip. */
+  requestExportProject: () => Promise<{ filename: string; dataBase64: string }>;
+  importProjectArchive: (dataBase64: string) => Promise<{ ok: boolean; message: string }>;
   /** Последний кадр внешнего ArtDMX по вселенной проекта (null — захвата нет). */
   requestDmxCapture: (
     universe: number,
@@ -147,6 +150,8 @@ export function useEngine(): EngineConnection {
   const redoStackRef = useRef<Project[]>([]);
   /** Ожидающие ответа getAudio: имя файла → колбэки. */
   const audioWaitersRef = useRef(new Map<string, ((data: Uint8Array | null) => void)[]>());
+  const exportWaitersRef = useRef<((data: { filename: string; dataBase64: string }) => void)[]>([]);
+  const importWaitersRef = useRef<((r: { ok: boolean; message: string }) => void)[]>([]);
   /** Ожидающие ответов захвата DMX по вселенной. */
   const captureWaitersRef = useRef(
     new Map<number, ((snap: { data: Uint8Array; ageMs: number; fromIp: string; frames: number } | null) => void)[]>(),
@@ -217,6 +222,18 @@ export function useEngine(): EngineConnection {
             audioWaitersRef.current.delete(msg.name);
             const data = msg.dataBase64 === '' ? null : base64ToBytes(msg.dataBase64);
             for (const resolve of waiters) resolve(data);
+            break;
+          }
+          case 'projectExport': {
+            const waiters = exportWaitersRef.current;
+            exportWaitersRef.current = [];
+            for (const resolve of waiters) resolve({ filename: msg.filename, dataBase64: msg.dataBase64 });
+            break;
+          }
+          case 'importResult': {
+            const waiters = importWaitersRef.current;
+            importWaitersRef.current = [];
+            for (const resolve of waiters) resolve({ ok: msg.ok, message: msg.message });
             break;
           }
           case 'dmxCapture': {
@@ -333,6 +350,24 @@ export function useEngine(): EngineConnection {
     [send],
   );
 
+  const requestExportProject = useCallback(
+    () =>
+      new Promise<{ filename: string; dataBase64: string }>((resolve) => {
+        exportWaitersRef.current.push(resolve);
+        send({ type: 'exportProject' });
+      }),
+    [send],
+  );
+
+  const importProjectArchive = useCallback(
+    (dataBase64: string) =>
+      new Promise<{ ok: boolean; message: string }>((resolve) => {
+        importWaitersRef.current.push(resolve);
+        send({ type: 'importProject', dataBase64 });
+      }),
+    [send],
+  );
+
   const requestDmxCapture = useCallback(
     (universe: number) =>
       new Promise<{ data: Uint8Array; ageMs: number; fromIp: string; frames: number } | null>((resolve) => {
@@ -399,6 +434,8 @@ export function useEngine(): EngineConnection {
     send,
     updateProject,
     requestAudio,
+    requestExportProject,
+    importProjectArchive,
     requestDmxCapture,
     requestDmxCycle,
     requestRdm,
