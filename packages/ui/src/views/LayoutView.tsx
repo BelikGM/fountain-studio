@@ -4,9 +4,12 @@ import {
   insunitsToMeters,
   layoutFromDxf,
   nozzleDefaults,
+  nozzleGroupCentroid,
   parseDxf,
   profileMap,
   ringPositions,
+  rotateNozzleGroup,
+  translateNozzleGroup,
   uid,
   type Bowl,
   type DxfDrawing,
@@ -14,16 +17,18 @@ import {
   type FountainLayout,
   type LayoutLight,
   type Nozzle,
+  type NozzleGroup,
   type NozzleKind,
   type Project,
 } from '@fountain-studio/shared';
 import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
+import { PencilIcon, TrashIcon } from '../components/Icons';
 import { comboFromEvent, getCombo } from '../hotkeys';
 import type { EngineConnection } from '../useEngine';
 import { FountainScene, type SelectedElement } from '../three/FountainScene';
 import { buildDeviceIndex, createLiveHooks } from '../three/liveHooks';
 
-type Selected = { type: 'nozzle' | 'light' | 'bowl'; id: string } | null;
+type Selected = { type: 'nozzle' | 'light' | 'bowl' | 'group'; id: string } | null;
 
 /** Вкладка «3D»: схема фонтана, живая визуализация струй и света, импорт DXF. */
 export function LayoutView({ engine }: { engine: EngineConnection }) {
@@ -224,7 +229,7 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
   return (
     <main className="view view-split">
       <aside className="sidebar">
-        <ElementList layout={layout} selected={selected} onSelect={setSelected} />
+        <ElementList layout={layout} selected={selected} onSelect={setSelected} setLayout={setLayout} />
         <AddTools project={project} setLayout={setLayout} onSelect={setSelected} />
         <BindTools project={project} setLayout={setLayout} />
         <DxfImport project={project} setLayout={setLayout} />
@@ -267,6 +272,14 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
             onSelect={setSelected}
           />
         )}
+        {selected?.type === 'group' && (
+          <GroupProps
+            group={layout.nozzleGroups.find((g) => g.id === selected.id)}
+            layout={layout}
+            setLayout={setLayout}
+            onSelect={setSelected}
+          />
+        )}
         {!selected && (
           <section className="panel">
             <h2>3D-схема</h2>
@@ -287,12 +300,14 @@ function ElementList({
   layout,
   selected,
   onSelect,
+  setLayout,
 }: {
   layout: FountainLayout;
   selected: Selected;
   onSelect: (s: Selected) => void;
+  setLayout: (l: FountainLayout) => void;
 }) {
-  const item = (type: 'nozzle' | 'light' | 'bowl', id: string, label: string) => (
+  const item = (type: 'nozzle' | 'light' | 'bowl' | 'group', id: string, label: string) => (
     <li
       key={id}
       className={selected?.type === type && selected.id === id ? 'list-item selected' : 'list-item'}
@@ -301,6 +316,14 @@ function ElementList({
       {label}
     </li>
   );
+  // Контуры (§27 доработки, по примеру прежнего приложения) — именованная
+  // группа форсунок как живой объект, не разовый штамп: можно вернуться и
+  // разом повернуть/сдвинуть/перекрасить весь набор (см. GroupProps).
+  const addGroup = (): void => {
+    const g: NozzleGroup = { id: uid(), name: `Контур ${layout.nozzleGroups.length + 1}`, nozzleIds: [] };
+    setLayout({ ...layout, nozzleGroups: [...layout.nozzleGroups, g] });
+    onSelect({ type: 'group', id: g.id });
+  };
   return (
     <section className="panel">
       <h2>Схема</h2>
@@ -310,6 +333,11 @@ function ElementList({
       <ul className="list">{layout.lights.map((l) => item('light', l.id, l.name))}</ul>
       <h3>Чаши ({layout.bowls.length})</h3>
       <ul className="list">{layout.bowls.map((b) => item('bowl', b.id, b.name))}</ul>
+      <h3>Контуры ({layout.nozzleGroups.length})</h3>
+      <ul className="list">{layout.nozzleGroups.map((g) => item('group', g.id, g.name))}</ul>
+      <button className="btn btn-small" onClick={addGroup}>
+        + Контур
+      </button>
     </section>
   );
 }
@@ -552,6 +580,7 @@ function DxfImport({ project, setLayout }: { project: Project; setLayout: (l: Fo
         ...layout.lights,
         ...res.lights.map((p, i) => ({ id: uid(), name: `П${baseL + i + 1}`, x: r2(p.x), y: r2(p.y), z: -0.1, deviceId: null })),
       ],
+      nozzleGroups: layout.nozzleGroups,
     });
     setState(null);
   };
@@ -905,6 +934,223 @@ function BowlProps({
         >
           Удалить
         </button>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Контур (§27 доработки) — панель массового редактирования группы форсунок:
+ * общий тип/высота/диаметр, поворот и сдвиг всей группы разом. В отличие от
+ * Мастера нового объекта (одноразовый штамп при создании), группа сохраняется
+ * и позволяет вернуться к ней позже.
+ */
+function GroupProps({
+  group,
+  layout,
+  setLayout,
+  onSelect,
+}: {
+  group: NozzleGroup | undefined;
+  layout: FountainLayout;
+  setLayout: (l: FountainLayout) => void;
+  onSelect: (s: Selected) => void;
+}) {
+  const [renaming, setRenaming] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [bulkKind, setBulkKind] = useState<NozzleKind>('straight');
+  const [bulkHeight, setBulkHeight] = useState(3);
+  const [bulkWidth, setBulkWidth] = useState(0.03);
+  const [rotateBy, setRotateBy] = useState(15);
+  const [moveBy, setMoveBy] = useState({ dx: 0, dy: 0 });
+
+  if (!group) return null;
+  const patch = (p: Partial<NozzleGroup>): void =>
+    setLayout({ ...layout, nozzleGroups: layout.nozzleGroups.map((g) => (g.id === group.id ? { ...g, ...p } : g)) });
+  const toggleMember = (nozzleId: string): void => {
+    const has = group.nozzleIds.includes(nozzleId);
+    patch({ nozzleIds: has ? group.nozzleIds.filter((id) => id !== nozzleId) : [...group.nozzleIds, nozzleId] });
+  };
+  const centroid = nozzleGroupCentroid(layout.nozzles, group.nozzleIds);
+
+  return (
+    <section className="panel">
+      <h2>Контур</h2>
+      <div className="field-grid">
+        <label className="field">
+          Имя:{' '}
+          {renaming ? (
+            <input
+              className="input"
+              autoFocus
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onBlur={() => {
+                if (nameDraft.trim()) patch({ name: nameDraft.trim() });
+                setRenaming(false);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur();
+                else if (e.key === 'Escape') setRenaming(false);
+              }}
+            />
+          ) : (
+            <span className="input-title">{group.name}</span>
+          )}
+          <button
+            className="icon-btn"
+            title="Переименовать"
+            onClick={() => {
+              setNameDraft(group.name);
+              setRenaming(true);
+            }}
+          >
+            <PencilIcon />
+          </button>
+        </label>
+        <span className="dim">
+          Участников: {group.nozzleIds.length}, центр: {centroid.x.toFixed(2)}, {centroid.y.toFixed(2)} м
+        </span>
+      </div>
+
+      <h3>Участники</h3>
+      <div className="utility-device-list">
+        {layout.nozzles.map((n) => (
+          <label key={n.id} className="field">
+            <input type="checkbox" checked={group.nozzleIds.includes(n.id)} onChange={() => toggleMember(n.id)} />{' '}
+            {n.name}
+          </label>
+        ))}
+      </div>
+
+      <h3>Массовое редактирование</h3>
+      <div className="form-row">
+        <select className="input" value={bulkKind} onChange={(e) => setBulkKind(e.target.value as NozzleKind)}>
+          {NOZZLE_KINDS.map((k) => (
+            <option key={k.id} value={k.id}>
+              {k.label}
+            </option>
+          ))}
+        </select>
+        <button
+          className="btn btn-small"
+          disabled={group.nozzleIds.length === 0}
+          onClick={() =>
+            setLayout({
+              ...layout,
+              nozzles: layout.nozzles.map((n) =>
+                group.nozzleIds.includes(n.id) ? { ...n, kind: bulkKind, ...nozzleDefaults(bulkKind) } : n,
+              ),
+            })
+          }
+        >
+          Тип — всем
+        </button>
+      </div>
+      <div className="form-row">
+        <input
+          className="input input-num"
+          type="number"
+          step={0.5}
+          value={bulkHeight}
+          onChange={(e) => setBulkHeight(Number(e.target.value))}
+        />
+        <span className="dim">высота струи, м</span>
+        <button
+          className="btn btn-small"
+          disabled={group.nozzleIds.length === 0}
+          onClick={() =>
+            setLayout({
+              ...layout,
+              nozzles: layout.nozzles.map((n) =>
+                group.nozzleIds.includes(n.id) ? { ...n, maxHeightM: Math.max(0.1, bulkHeight) } : n,
+              ),
+            })
+          }
+        >
+          — всем
+        </button>
+      </div>
+      <div className="form-row">
+        <input
+          className="input input-num"
+          type="number"
+          step={0.01}
+          value={bulkWidth}
+          onChange={(e) => setBulkWidth(Number(e.target.value))}
+        />
+        <span className="dim">диаметр струи, м</span>
+        <button
+          className="btn btn-small"
+          disabled={group.nozzleIds.length === 0}
+          onClick={() =>
+            setLayout({
+              ...layout,
+              nozzles: layout.nozzles.map((n) =>
+                group.nozzleIds.includes(n.id) ? { ...n, widthM: Math.max(0.005, bulkWidth) } : n,
+              ),
+            })
+          }
+        >
+          — всем
+        </button>
+      </div>
+      <div className="form-row">
+        <input
+          className="input input-num"
+          type="number"
+          step={5}
+          value={rotateBy}
+          onChange={(e) => setRotateBy(Number(e.target.value))}
+        />
+        <span className="dim">° поворот вокруг центра группы</span>
+        <button
+          className="btn btn-small"
+          disabled={group.nozzleIds.length === 0}
+          onClick={() => setLayout({ ...layout, nozzles: rotateNozzleGroup(layout.nozzles, group.nozzleIds, rotateBy) })}
+        >
+          Повернуть
+        </button>
+      </div>
+      <div className="form-row">
+        <input
+          className="input input-num"
+          type="number"
+          step={0.1}
+          value={moveBy.dx}
+          onChange={(e) => setMoveBy({ ...moveBy, dx: Number(e.target.value) })}
+        />
+        <input
+          className="input input-num"
+          type="number"
+          step={0.1}
+          value={moveBy.dy}
+          onChange={(e) => setMoveBy({ ...moveBy, dy: Number(e.target.value) })}
+        />
+        <span className="dim">сдвиг X/Y, м</span>
+        <button
+          className="btn btn-small"
+          disabled={group.nozzleIds.length === 0}
+          onClick={() =>
+            setLayout({ ...layout, nozzles: translateNozzleGroup(layout.nozzles, group.nozzleIds, moveBy.dx, moveBy.dy) })
+          }
+        >
+          Сдвинуть
+        </button>
+      </div>
+
+      <div className="sidebar-actions">
+        <button
+          className="icon-btn icon-btn-danger"
+          title="Удалить контур (форсунки останутся)"
+          onClick={() => {
+            setLayout({ ...layout, nozzleGroups: layout.nozzleGroups.filter((g) => g.id !== group.id) });
+            onSelect(null);
+          }}
+        >
+          <TrashIcon />
+        </button>
+        <span className="dim">Удаление контура не трогает сами форсунки.</span>
       </div>
     </section>
   );

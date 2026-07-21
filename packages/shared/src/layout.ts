@@ -99,14 +99,64 @@ export interface LayoutLight {
   deviceId: string | null;
 }
 
+/**
+ * Контур (§27 доработки, по примеру прежнего приложения) — именованная
+ * группа форсунок как живой объект: в отличие от Мастера нового объекта
+ * (разовый штамп при создании), группа хранится и позволяет вернуться и
+ * разом повернуть/сдвинуть/перекрасить весь набор форсунок позже.
+ */
+export interface NozzleGroup {
+  id: string;
+  name: string;
+  nozzleIds: string[];
+}
+
 export interface FountainLayout {
   bowls: Bowl[];
   nozzles: Nozzle[];
   lights: LayoutLight[];
+  nozzleGroups: NozzleGroup[];
 }
 
 export function emptyLayout(): FountainLayout {
-  return { bowls: [], nozzles: [], lights: [] };
+  return { bowls: [], nozzles: [], lights: [], nozzleGroups: [] };
+}
+
+/** Центр (среднее X/Y) форсунок группы — точка вращения для rotateNozzleGroup. */
+export function nozzleGroupCentroid(nozzles: Nozzle[], nozzleIds: string[]): { x: number; y: number } {
+  const members = nozzles.filter((n) => nozzleIds.includes(n.id));
+  if (members.length === 0) return { x: 0, y: 0 };
+  const x = members.reduce((s, n) => s + n.x, 0) / members.length;
+  const y = members.reduce((s, n) => s + n.y, 0) / members.length;
+  return { x, y };
+}
+
+/** Поворачивает форсунки группы на angleDeg (против часовой) вокруг их центра — позиция и азимут (headingDeg). */
+export function rotateNozzleGroup(nozzles: Nozzle[], nozzleIds: string[], angleDeg: number): Nozzle[] {
+  const { x: cx, y: cy } = nozzleGroupCentroid(nozzles, nozzleIds);
+  const rad = (angleDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return nozzles.map((n) => {
+    if (!nozzleIds.includes(n.id)) return n;
+    const dx = n.x - cx;
+    const dy = n.y - cy;
+    return {
+      ...n,
+      x: Math.round((cx + dx * cos - dy * sin) * 1000) / 1000,
+      y: Math.round((cy + dx * sin + dy * cos) * 1000) / 1000,
+      headingDeg: ((n.headingDeg + angleDeg) % 360 + 360) % 360,
+    };
+  });
+}
+
+/** Сдвигает форсунки группы на (dx,dy). */
+export function translateNozzleGroup(nozzles: Nozzle[], nozzleIds: string[], dx: number, dy: number): Nozzle[] {
+  return nozzles.map((n) =>
+    nozzleIds.includes(n.id)
+      ? { ...n, x: Math.round((n.x + dx) * 1000) / 1000, y: Math.round((n.y + dy) * 1000) / 1000 }
+      : n,
+  );
 }
 
 /** Умолчания физики струи по типу форсунки. */
@@ -234,6 +284,19 @@ export function sanitizeLayout(raw: unknown, deviceIds: Set<string>): FountainLa
         y: round3(num(l.y, 0, -1000, 1000)),
         z: round3(num(l.z, 0, -10, 50)),
         deviceId: devRef(l.deviceId, deviceIds),
+      });
+    }
+  }
+  const nozzleIds = new Set(layout.nozzles.map((n) => n.id));
+  if (Array.isArray(r.nozzleGroups)) {
+    for (const g of r.nozzleGroups as NozzleGroup[]) {
+      if (!g || typeof g.id !== 'string') continue;
+      layout.nozzleGroups.push({
+        id: g.id,
+        name: typeof g.name === 'string' ? g.name : 'Контур',
+        nozzleIds: Array.isArray(g.nozzleIds)
+          ? [...new Set(g.nozzleIds.filter((id): id is string => typeof id === 'string' && nozzleIds.has(id)))]
+          : [],
       });
     }
   }

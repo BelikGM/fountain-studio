@@ -33,6 +33,7 @@ import {
   measureCyclePeriodMs,
   mergeCuts,
   mirrorScene,
+  nozzleGroupCentroid,
   parseDxf,
   peakEvents,
   planDeviceWizard,
@@ -41,6 +42,7 @@ import {
   radialWaveSequenceScenes,
   rainbowSequenceScenes,
   ringPositions,
+  rotateNozzleGroup,
   saluteSequenceScenes,
   sanitizeProject,
   shiftDeviceAddresses,
@@ -50,6 +52,7 @@ import {
   spectralCentroidEnvelope,
   swapDeviceAddresses,
   tempoCategory,
+  translateNozzleGroup,
   brightnessEnvelopePoints,
   colorChangeEvents,
   colorChannelEnvelopePoints,
@@ -1035,6 +1038,7 @@ async function main(): Promise<void> {
       { id: 'noz2', name: 'Ф2', kind: 'не-тип', x: 9999, y: 0, z: 0, tiltDeg: 200 },
     ],
     lights: [{ id: 'lt1', name: 'П1', x: 0, y: 1, z: -0.2, deviceId: 'rgb1' }],
+    nozzleGroups: [{ id: 'grp1', name: 'Контур 1', nozzleIds: ['noz1', 'нет-такой-форсунки'] }],
   };
   const sanitized = sanitizeProject({ ...demo, layout: layoutRaw });
   const noz1 = sanitized.layout.nozzles.find((n) => n.id === 'noz1')!;
@@ -1049,6 +1053,12 @@ async function main(): Promise<void> {
       noz2.tiltDeg === 85 &&
       sanitized.layout.lights[0]!.deviceId === 'rgb1',
     'sanitizeLayout: битые ссылки и значения приведены, элементы сохранены',
+  );
+  check(
+    sanitized.layout.nozzleGroups.length === 1 &&
+      sanitized.layout.nozzleGroups[0]!.nozzleIds.length === 1 &&
+      sanitized.layout.nozzleGroups[0]!.nozzleIds[0] === 'noz1',
+    'sanitizeLayout: контур сохранён, ссылка на несуществующую форсунку в группе отброшена',
   );
   const ring = ringPositions(4, 2);
   check(
@@ -1093,11 +1103,63 @@ async function main(): Promise<void> {
     'layoutFromDxf: мм → метры, слои разложены по ролям, чаши из круга и контура',
   );
 
+  console.log('— Контуры: геометрия группы форсунок (§27 доработки) —');
+  {
+    const base = (id: string, x: number, y: number, headingDeg = 0) => ({
+      id,
+      name: id,
+      kind: 'straight' as const,
+      x,
+      y,
+      z: 0,
+      tiltDeg: 0,
+      headingDeg,
+      maxHeightM: 3,
+      widthM: 0.03,
+      coneAngleDeg: 25,
+      rotationSpeedDegPerSec: 60,
+      riseMs: 500,
+      fallMs: 500,
+      pumpDeviceId: null,
+      pump2DeviceId: null,
+      valveDeviceId: null,
+      valveFollowsPump: false,
+      lightDeviceId: null,
+    });
+    const geomNozzles = [base('a', 0, 0), base('b', 2, 0), base('outside', 100, 100)];
+    const members = ['a', 'b'];
+
+    const c = nozzleGroupCentroid(geomNozzles, members);
+    check(Math.abs(c.x - 1) < 1e-9 && Math.abs(c.y - 0) < 1e-9, `nozzleGroupCentroid: центр (0,0)-(2,0) = (1,0) (получено ${c.x},${c.y})`);
+
+    const rotated = rotateNozzleGroup(geomNozzles, members, 90);
+    const ra = rotated.find((n) => n.id === 'a')!;
+    const rb = rotated.find((n) => n.id === 'b')!;
+    const rOut = rotated.find((n) => n.id === 'outside')!;
+    check(
+      Math.abs(ra.x - 1) < 1e-6 && Math.abs(ra.y - -1) < 1e-6 && Math.abs(rb.x - 1) < 1e-6 && Math.abs(rb.y - 1) < 1e-6,
+      `rotateNozzleGroup: поворот на 90° вокруг (1,0) — a→(1,-1), b→(1,1) (получено a=(${ra.x},${ra.y}), b=(${rb.x},${rb.y}))`,
+    );
+    check(ra.headingDeg === 90 && rb.headingDeg === 90, 'rotateNozzleGroup: азимут форсунок сдвинут на тот же угол');
+    check(rOut.x === 100 && rOut.y === 100, 'rotateNozzleGroup: форсунка вне группы не тронута');
+
+    const moved = translateNozzleGroup(geomNozzles, members, 5, -3);
+    const ma = moved.find((n) => n.id === 'a')!;
+    const mb = moved.find((n) => n.id === 'b')!;
+    const mOut = moved.find((n) => n.id === 'outside')!;
+    check(
+      ma.x === 5 && ma.y === -3 && mb.x === 7 && mb.y === -3,
+      `translateNozzleGroup: сдвиг (+5,-3) — a→(5,-3), b→(7,-3) (получено a=(${ma.x},${ma.y}), b=(${mb.x},${mb.y}))`,
+    );
+    check(mOut.x === 100 && mOut.y === 100, 'translateNozzleGroup: форсунка вне группы не тронута');
+  }
+
   console.log('— Генераторы сцен от геометрии (§17 п.2–3) —');
   const genActors = ringPositions(4, 2).map((p, i) => ({ deviceId: `gp${i + 1}`, x: p.x, y: p.y }));
   const genLayout = {
     bowls: [],
     lights: [],
+    nozzleGroups: [],
     nozzles: genActors.map((a, i) => ({
       id: `noz${i}`,
       name: `Форсунка ${i}`,

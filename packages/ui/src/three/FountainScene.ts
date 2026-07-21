@@ -90,7 +90,7 @@ export class FountainScene {
   private staticGroup = new THREE.Group();
   private nozzleMeshes = new Map<string, THREE.Mesh>();
   private lightMeshes = new Map<string, THREE.Mesh>();
-  private layout: FountainLayout = { bowls: [], nozzles: [], lights: [] };
+  private layout: FountainLayout = { bowls: [], nozzles: [], lights: [], nozzleGroups: [] };
   private selected: SelectedElement = null;
 
   // Частицы: параллельные массивы, компактирование свопом с хвостом.
