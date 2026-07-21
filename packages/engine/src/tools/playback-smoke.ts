@@ -783,6 +783,34 @@ async function main(): Promise<void> {
   await waitFor('общий стоп', () => playback.running.length === 0 && ch(1) === 0 && ch(10) === 0);
   check(true, 'общий стоп — все каналы в ноль');
 
+  console.log('— Тест-генератор: строб/ступени/шум (§27 доработки — новые пресеты) —');
+  {
+    send({ type: 'testPattern', mode: 'strobe' });
+    await waitFor('строб включает все каналы', () => ch(1) === 255 && ch(50) === 255, 2000);
+    await waitFor('строб выключает все каналы', () => ch(1) === 0 && ch(50) === 0, 500);
+    check(true, 'strobe: все каналы мигают синхронно 0/255 (2 Гц)');
+
+    send({ type: 'testPattern', mode: 'stairs' });
+    await waitFor('ступени применились', () => ch(1) !== ch(2) || ch(2) !== ch(3), 2000);
+    check(true, 'stairs: соседние адреса дают разные уровни — видна ступенчатая структура');
+
+    send({ type: 'testPattern', mode: 'random' });
+    let sample: number[] = [];
+    await waitFor(
+      'шум применился и не «залипает» на одном уровне',
+      () => {
+        sample = [ch(1), ch(2), ch(3), ch(4), ch(5)];
+        return !sample.every((v) => v === sample[0]);
+      },
+      2000,
+    );
+    check(true, `random: соседние каналы не совпадают (${sample.join(',')})`);
+
+    send({ type: 'testPattern', mode: 'off' });
+    await waitFor('тест-генератор выключен', () => ch(1) === 0 && ch(50) === 0, 2000);
+    check(true, 'off: возврат к обычному управлению, каналы в 0');
+  }
+
   console.log('— Холостая сцена (§27 доработки, по примеру прежнего приложения — «Color Form») —');
   {
     send({ type: 'updateProject', project: { ...store.project, idleSceneId: 'sceneA' } });

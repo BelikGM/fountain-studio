@@ -518,7 +518,42 @@ function fillTestPattern(mode: TestPatternMode, tSec: number, universeIndex: num
       out.fill(v);
       break;
     }
+    case 'strobe': {
+      // 2 Гц (250 мс вкл/выкл) — все каналы разом, проверка синхронности отклика.
+      const on = Math.floor(tSec * 4) % 2 === 0;
+      out.fill(on ? 255 : 0);
+      break;
+    }
+    case 'stairs': {
+      // Ступени по возрастанию адреса, с медленным сдвигом — виден порядок
+      // адресации на глаз без движения «бегущего огонька».
+      const shift = Math.floor(tSec * 10) % out.length;
+      for (let ch = 0; ch < out.length; ch++) {
+        out[ch] = Math.round((((ch + shift) % out.length) / Math.max(1, out.length - 1)) * 255);
+      }
+      break;
+    }
+    case 'random': {
+      // Детерминированный псевдослучайный «шум» (не Math.random — хеш от
+      // времени/канала), ~4 обновления/с — стресс-тест без излишнего мелькания.
+      const bucket = Math.floor(tSec * 4);
+      for (let ch = 0; ch < out.length; ch++) {
+        out[ch] = pseudoRandomByte(bucket * 100000 + universeIndex * 1000 + ch);
+      }
+      break;
+    }
     case 'off':
       break;
   }
+}
+
+/** Robert Jenkins' 32-bit integer hash → 0..255 — детерминированный «шум» для теста 'random'. */
+function pseudoRandomByte(seed: number): number {
+  let x = seed | 0;
+  x = (x ^ 61) ^ (x >>> 16);
+  x = x + (x << 3);
+  x = x ^ (x >>> 4);
+  x = Math.imul(x, 0x27d4eb2d);
+  x = x ^ (x >>> 15);
+  return (x >>> 0) % 256;
 }

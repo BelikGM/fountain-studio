@@ -27,13 +27,25 @@ export function TourOverlay({
   const def = steps[step]!;
 
   useEffect(() => {
-    const update = (): void => {
+    const measure = (): void => {
       const el = document.querySelector<HTMLElement>(`[data-tour="${def.tabId}"]`);
       setRect(el ? el.getBoundingClientRect() : null);
     };
-    update();
-    window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
+    // Двойной rAF: App переключает активную вкладку своим ОТДЕЛЬНЫМ эффектом
+    // (тоже useEffect) — при первом рендере он ещё не долетел, и кнопка
+    // измеряется ДО класса .active (тот жирнее — другая ширина), из-за чего
+    // подсветка вставала мимо реальной кнопки. Ждём, пока переключение и
+    // перерисовка точно осядут.
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(measure);
+    });
+    window.addEventListener('resize', measure);
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      window.removeEventListener('resize', measure);
+    };
   }, [def.tabId]);
 
   const isLast = step === steps.length - 1;

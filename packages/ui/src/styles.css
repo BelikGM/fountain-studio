@@ -19,6 +19,15 @@
   --warn-bg: #3a2e14;
   --warn-text: #ffd699;
   --border: #30343e;
+  /* Цвет фейдера/адреса по типу прибора (§27 доработки). */
+  --fader-pump: #e0a030;
+  --fader-valve: #a682e8;
+  --fader-red: #ff5c5c;
+  --fader-green: #4ade80;
+  --fader-blue: #5b9cff;
+  --fader-white: #eaeaea;
+  --fader-lamp: #f0c040;
+  --fader-other: #9aa0ac;
 }
 
 /* Светлая тема (тумблер в шапке; выбор хранится в localStorage). */
@@ -42,6 +51,8 @@
   --warn-bg: #fbeed3;
   --warn-text: #7a5400;
   --border: #cfd6e0;
+  /* Белый DMX-канал светлым не видно на светлой теме — серый вместо него. */
+  --fader-white: #8a8a8a;
 }
 
 * {
@@ -273,6 +284,44 @@ body {
   font-size: 12px;
 }
 
+/* СТОП (§27 доработки) — заметно отделён от соседних кнопок, чтобы не задеть случайно. */
+.btn-blackout { margin-left: 18px; }
+
+/* Панель «Все приборы по типу» на Пульте (§27 доработки) — раньше была
+   строкой в общем тулбаре, слишком тесно; теперь отдельный блок со своими
+   рядами (Свет/Насосы/Клапана) и горизонтальными разделителями между ними. */
+.quick-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+.quick-controls-title {
+  font-size: 11px;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.quick-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.quick-row-label {
+  width: 64px;
+  flex-shrink: 0;
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+.quick-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0;
+  opacity: 0.7;
+}
+
 .btn {
   background: var(--bg-track);
   color: var(--fg);
@@ -397,14 +446,29 @@ select {
 
 .fader-channel {
   font-size: 11px;
-  color: var(--fg);
+  color: var(--fg-dim);
   font-variant-numeric: tabular-nums;
 }
 
-/* Адрес занят прибором из патча — номер подсвечен (имя прибора в тултипе). */
-.fader-owned .fader-channel {
-  color: var(--accent);
-}
+/* Цвет полосы и цифры адреса по типу прибора (§27 доработки) — свободные
+   адреса остаются приглушёнными (fader-channel по умолчанию), занятые
+   красятся по виду прибора/роли канала, назначенной в ConsoleView. */
+.fader-pump .fader-channel { color: var(--fader-pump); }
+.fader-pump .fader-fill { background: var(--fader-pump); }
+.fader-valve .fader-channel { color: var(--fader-valve); }
+.fader-valve .fader-fill { background: var(--fader-valve); }
+.fader-red .fader-channel { color: var(--fader-red); }
+.fader-red .fader-fill { background: var(--fader-red); }
+.fader-green .fader-channel { color: var(--fader-green); }
+.fader-green .fader-fill { background: var(--fader-green); }
+.fader-blue .fader-channel { color: var(--fader-blue); }
+.fader-blue .fader-fill { background: var(--fader-blue); }
+.fader-white .fader-channel { color: var(--fader-white); }
+.fader-white .fader-fill { background: var(--fader-white); }
+.fader-lamp .fader-channel { color: var(--fader-lamp); }
+.fader-lamp .fader-fill { background: var(--fader-lamp); }
+.fader-other .fader-channel { color: var(--fader-other); }
+.fader-other .fader-fill { background: var(--fader-other); }
 
 .statusbar {
   display: flex;
@@ -756,6 +820,34 @@ select {
 }
 .color-swatch:hover { border-color: var(--accent); }
 
+/* Пользовательский слот палитры (§27 доработки) — пока цвет не выбран,
+   показывает шахматку «пусто», как и принято для «прозрачный/не задан». */
+.color-swatch-custom {
+  position: relative;
+  background-color: #444;
+  background-image:
+    linear-gradient(45deg, #888 25%, transparent 25%),
+    linear-gradient(-45deg, #888 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #888 75%),
+    linear-gradient(-45deg, transparent 75%, #888 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0px;
+}
+.color-swatch-custom input[type='color'] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+}
+
+.toggle-open,
+.toggle-closed {
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
 .toggle-open {
   background: var(--ok-bg);
   border-color: var(--ok-border);

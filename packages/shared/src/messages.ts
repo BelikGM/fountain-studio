@@ -6,7 +6,7 @@
 import type { Project } from './project';
 import type { WindLimitConfig } from './windlimit';
 
-export type TestPatternMode = 'off' | 'sine' | 'chase' | 'ramp';
+export type TestPatternMode = 'off' | 'sine' | 'chase' | 'ramp' | 'strobe' | 'stairs' | 'random';
 
 export interface UniverseInfo {
   /** Логический номер вселенной в проекте (1..N). */

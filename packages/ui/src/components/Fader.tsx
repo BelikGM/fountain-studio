@@ -7,11 +7,13 @@ interface FaderProps {
   value: number;
   /** Владелец адреса из патча («Насос 1 · Мощность»); нет — адрес свободен. */
   owner?: string;
+  /** CSS-класс по типу прибора/роли канала (§27 доработки) — красит цифру и полосу. */
+  roleClass?: string;
   onChange: (value: number) => void;
 }
 
 /** Вертикальный фейдер 0–255 с управлением мышью/тачем (pointer capture). */
-export function Fader({ channel, value, owner, onChange }: FaderProps) {
+export function Fader({ channel, value, owner, roleClass, onChange }: FaderProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [dragValue, setDragValue] = useState<number | null>(null);
 
@@ -25,8 +27,9 @@ export function Fader({ channel, value, owner, onChange }: FaderProps) {
     onChange(v);
   };
 
+  const cls = owner ? `fader fader-owned ${roleClass ?? ''}` : 'fader';
   return (
-    <div className={owner ? 'fader fader-owned' : 'fader'} title={owner ?? `адрес ${channel} свободен`}>
+    <div className={cls} title={owner ?? `адрес ${channel} свободен`}>
       <div className="fader-value">{shown}</div>
       <div
         ref={trackRef}
