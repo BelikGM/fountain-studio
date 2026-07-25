@@ -145,6 +145,11 @@ body {
   width: 26px;
   height: 26px;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
   border-radius: 50%;
   border: 1px solid var(--border);
   background: var(--bg-track);
@@ -154,7 +159,13 @@ body {
   margin-right: 12px;
 }
 .help-btn:hover { border-color: var(--accent); color: var(--fg); }
-.license-btn { font-size: 13px; }
+.license-btn {
+  font-size: 13px;
+  /* Эмодзи-глифы (🔒/🔑) визуально смещены вниз относительно своего em-бокса
+     сильнее, чем текст «?» — компенсируем, иначе замок «висит» криво в круге. */
+  position: relative;
+  top: -1px;
+}
 .license-btn-warn {
   border-color: var(--danger-text);
   background: var(--danger-bg, transparent);
