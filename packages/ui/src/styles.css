@@ -20,7 +20,7 @@
   --warn-text: #ffd699;
   --border: #30343e;
   /* Цвет фейдера/адреса по типу прибора (§27 доработки). */
-  --fader-pump: #e0a030;
+  --fader-pump: #eaeaea;
   --fader-valve: #a682e8;
   --fader-red: #ff5c5c;
   --fader-green: #4ade80;
@@ -51,8 +51,9 @@
   --warn-bg: #fbeed3;
   --warn-text: #7a5400;
   --border: #cfd6e0;
-  /* Белый DMX-канал светлым не видно на светлой теме — серый вместо него. */
+  /* Белый DMX-канал (и насосы — теперь тоже белые) светлым не видно на светлой теме — серый вместо него. */
   --fader-white: #8a8a8a;
+  --fader-pump: #8a8a8a;
 }
 
 * {
@@ -777,6 +778,26 @@ select {
 
 .row-error td { background: var(--danger-bg); }
 .row-playing td { background: var(--ok-bg); }
+
+/* Сырой DMX-поток (§27 доработки) — все 512 адресов сразу, без страниц. */
+.dmx-stream-grid {
+  display: grid;
+  gap: 2px;
+  margin-top: 10px;
+}
+.dmx-stream-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  padding: 2px 0;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+.dmx-stream-addr { font-size: 9px; color: var(--fg-dim); line-height: 1.2; }
+.dmx-stream-val { font-size: 12px; font-weight: 600; line-height: 1.2; }
 
 /* Перетаскивание строк таблицы (шаги секвенсора, шоу в плейлисте) — §27 п.9. */
 .drag-handle {

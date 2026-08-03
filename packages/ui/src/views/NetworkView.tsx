@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import type { ClientMessage, NetworkState, RdmAction } from '@fountain-studio/shared';
+import { useEffect, useState } from 'react';
+import { DMX_UNIVERSE_SIZE, type ClientMessage, type NetworkState, type RdmAction } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
 
 /**
@@ -20,6 +20,7 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
             прислал состояние.
           </p>
         </section>
+        <DmxStreamPanel engine={engine} hasInputCapture={false} />
         <JitterPanel engine={engine} />
         <EventLogPanel engine={engine} />
       </main>
@@ -125,9 +126,115 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
         )}
       </section>
 
+      <DmxStreamPanel engine={engine} hasInputCapture={true} />
       <JitterPanel engine={engine} />
       <EventLogPanel engine={engine} />
     </main>
+  );
+}
+
+const DMX_GRID_COLS = 32; // 32×16 = 512 адресов сразу, без страниц — «чистый поток» целиком
+
+/**
+ * Сырой DMX-поток на входе/выходе (§27 доработки, по запросу — «на 3D круто,
+ * но тяжелее какие-то ошибки заметить»): плотная сетка 1..512 без страниц и
+ * без интерактива фейдеров, только числа 0–255 — залипшие каналы, дыры,
+ * посторонний паттерн видно с одного взгляда.
+ *
+ * «Выход» — то, что сам движок реально шлёт в этом тике (engine.frames,
+ * тот же поток, что уходит на все настроенные выходы вселенной разом —
+ * Art-Net/usb-dmx/sACN). «Вход» — то, что движок ловит на линии Art-Net
+ * снаружи (getDmxCapture): если направить на этот ПК Art-Net с настоящего
+ * пульта/контроллера, здесь будет видно ровно то, что он реально шлёт.
+ */
+function DmxStreamPanel({ engine, hasInputCapture }: { engine: EngineConnection; hasInputCapture: boolean }) {
+  const { universes, frames, requestDmxCapture } = engine;
+  const [mode, setMode] = useState<'out' | 'in'>('out');
+  const [universeId, setUniverseId] = useState<number | null>(universes[0]?.id ?? null);
+  const [inSnapshot, setInSnapshot] = useState<{ data: Uint8Array; ageMs: number; fromIp: string; frames: number } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (universeId === null && universes.length > 0) setUniverseId(universes[0]!.id);
+  }, [universes, universeId]);
+
+  useEffect(() => {
+    if (mode !== 'in' || universeId === null || !hasInputCapture) return;
+    let cancelled = false;
+    const poll = (): void => {
+      void requestDmxCapture(universeId).then((snap) => {
+        if (!cancelled) setInSnapshot(snap);
+      });
+    };
+    poll();
+    const t = setInterval(poll, 400);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [mode, universeId, hasInputCapture, requestDmxCapture]);
+
+  const outData = universeId !== null ? frames[universeId] : undefined;
+  const data = mode === 'out' ? outData : inSnapshot?.data;
+
+  return (
+    <section className="panel">
+      <h2>Сырой DMX-поток</h2>
+      <div className="form-row">
+        <div className="group">
+          <button className={mode === 'out' ? 'btn active' : 'btn'} onClick={() => setMode('out')}>
+            Выход
+          </button>
+          <button
+            className={mode === 'in' ? 'btn active' : 'btn'}
+            onClick={() => setMode('in')}
+            disabled={!hasInputCapture}
+            title={hasInputCapture ? 'Снято на линии Art-Net извне' : 'Нужен хотя бы один настроенный Art-Net-выход'}
+          >
+            Вход
+          </button>
+        </div>
+        <div className="group">
+          {universes.map((u) => (
+            <button
+              key={u.id}
+              className={u.id === universeId ? 'btn btn-small active' : 'btn btn-small'}
+              onClick={() => setUniverseId(u.id)}
+            >
+              {u.label}
+            </button>
+          ))}
+        </div>
+        {mode === 'in' && (
+          <span className="dim">
+            {inSnapshot
+              ? `от ${inSnapshot.fromIp}, ${formatAge(inSnapshot.ageMs)}, кадров поймано ${inSnapshot.frames}`
+              : 'сигнала пока не было'}
+          </span>
+        )}
+      </div>
+      {!data ? (
+        <p className="dim">{mode === 'in' ? 'Ждём кадр с линии…' : 'Нет данных по этой вселенной.'}</p>
+      ) : (
+        <div className="dmx-stream-grid" style={{ gridTemplateColumns: `repeat(${DMX_GRID_COLS}, 1fr)` }}>
+          {Array.from({ length: DMX_UNIVERSE_SIZE }, (_, i) => {
+            const v = data[i] ?? 0;
+            return (
+              <div
+                key={i}
+                className="dmx-stream-cell"
+                title={`Адрес ${i + 1}: ${v}`}
+                style={{ background: `rgba(46, 157, 247, ${v / 255})` }}
+              >
+                <span className="dmx-stream-addr">{i + 1}</span>
+                <span className="dmx-stream-val">{v}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 
