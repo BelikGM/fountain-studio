@@ -3,8 +3,11 @@ import { useEffect, useState } from 'react';
 /**
  * Тур при первом запуске (§27 доработки, раздел «Продукт») — подсказки
  * поверх интерфейса по маршруту из docs/MANUAL.md §4 («С нуля до готового
- * шоу»): Приборы → 3D → Сцены → Шоу. Не все 8 шагов руководства — тур
- * задуман коротким, полный маршрут остаётся в Справке (кнопка «?»).
+ * шоу»): Оборудование → 3D → Сцены → Шоу, а перед ними шаг про Отладку — вкладку,
+ * на которой программа открывается (сам он в маршрут постройки не входит,
+ * но без него тур уводил с Отладки, не сказав, что это). Не все 8 шагов
+ * руководства — тур задуман коротким, полный маршрут остаётся в Справке
+ * (кнопка «?»).
  */
 export interface TourStepDef {
   tabId: string;
@@ -27,25 +30,33 @@ export function TourOverlay({
   const def = steps[step]!;
 
   useEffect(() => {
-    const measure = (): void => {
+    // Меряем кнопку каждый кадр, пока показан шаг. Раньше здесь был двойной
+    // rAF — он ловил только переключение вкладки (класс .active жирнее, другая
+    // ширина), но не более поздние перекомпоновки шапки. А их хватает: строка
+    // «версия N» приходит от движка асинхронно и раздвигает блок бренда,
+    // статус лицензии меняет набор вкладок, дошрифт догружается. Любая из них
+    // сдвигает вкладки уже ПОСЛЕ замера — и подсветка остаётся стоять левее
+    // реальной кнопки (ровно то, что было видно на «Оборудовании»). Кадр стоит
+    // одного getBoundingClientRect и живёт только 4 шага тура.
+    let raf = 0;
+    let prev: DOMRect | null = null;
+    const tick = (): void => {
       const el = document.querySelector<HTMLElement>(`[data-tour="${def.tabId}"]`);
-      setRect(el ? el.getBoundingClientRect() : null);
+      const next = el ? el.getBoundingClientRect() : null;
+      // setState только когда рамка реально поехала — иначе лишний рендер каждый кадр.
+      const moved =
+        (next === null) !== (prev === null) ||
+        (next !== null &&
+          prev !== null &&
+          (next.left !== prev.left || next.top !== prev.top || next.width !== prev.width || next.height !== prev.height));
+      if (moved) {
+        prev = next;
+        setRect(next);
+      }
+      raf = requestAnimationFrame(tick);
     };
-    // Двойной rAF: App переключает активную вкладку своим ОТДЕЛЬНЫМ эффектом
-    // (тоже useEffect) — при первом рендере он ещё не долетел, и кнопка
-    // измеряется ДО класса .active (тот жирнее — другая ширина), из-за чего
-    // подсветка вставала мимо реальной кнопки. Ждём, пока переключение и
-    // перерисовка точно осядут.
-    let raf2 = 0;
-    const raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(measure);
-    });
-    window.addEventListener('resize', measure);
-    return () => {
-      cancelAnimationFrame(raf1);
-      cancelAnimationFrame(raf2);
-      window.removeEventListener('resize', measure);
-    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
   }, [def.tabId]);
 
   const isLast = step === steps.length - 1;

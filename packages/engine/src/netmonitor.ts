@@ -285,7 +285,10 @@ export class NetworkMonitor {
     this.log.push({ atMs: Date.now(), text });
     if (this.log.length > 100) this.log.splice(0, this.log.length - 100);
     const lost = text.includes('ПОТЕРЯНА') || text.includes('ПРОПАЛ');
-    eventLog.log('net', text, lost ? 'warn' : 'info');
+    // «Снова на связи» помечаем явно — по этой пометке уведомления шлют
+    // «✅ Восстановлено» (см. shared LogEvent.kind).
+    const back = text.includes('снова на связи');
+    eventLog.log('net', text, lost ? 'warn' : 'info', back ? 'recovery' : undefined);
     this.onChange?.();
   }
 

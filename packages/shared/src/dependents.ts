@@ -1,3 +1,4 @@
+import { nozzleLightIds, nozzlePump2Ids, nozzlePumpIds, nozzleValveIds } from './layout';
 import type { Project } from './project';
 
 /**
@@ -73,7 +74,13 @@ export function deviceDependents(project: Project, deviceId: string): string[] {
   ).length;
   if (envelopes > 0) out.push(`огибающие в шоу (${envelopes})`);
   const nozzles = project.layout.nozzles.filter(
-    (n) => n.pumpDeviceId === deviceId || n.valveDeviceId === deviceId || n.lightDeviceId === deviceId,
+    (n) =>
+      // Учитываем и дополнительные привязки, иначе удаление устройства молча
+      // оборвало бы связь, о которой пользователя не предупредили.
+      nozzlePumpIds(n).includes(deviceId) ||
+      nozzleValveIds(n).includes(deviceId) ||
+      nozzleLightIds(n).includes(deviceId) ||
+      nozzlePump2Ids(n).includes(deviceId),
   ).length;
   if (nozzles > 0) out.push(`форсунки на 3D-схеме (${nozzles})`);
   return out;

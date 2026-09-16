@@ -1,6 +1,17 @@
 import { useEffect, useState } from 'react';
-import { computeWindLimitPercent, type BackupInfo, type ConfigUniverse } from '@fountain-studio/shared';
+import {
+  computeWindLimitPercent,
+  type BackupInfo,
+  type ConfigOutput,
+  type ConfigUniverse,
+  type UsbDmxScan,
+  type UsbDriverProblem,
+  FAILSAFE_TIMEOUT_MIN_SEC,
+  FAILSAFE_TIMEOUT_MAX_SEC,
+} from '@fountain-studio/shared';
+import { askConfirm } from '../components/ConfirmDialog';
 import { TOUR_STORAGE_KEY } from '../tour';
+import { setViewPrefs, VIEW_PREF_DEFAULTS, VIEW_PREF_LIMITS, viewPrefs } from '../three/viewPrefs';
 import {
   HOTKEY_DEFS,
   comboFromEvent,
@@ -81,7 +92,7 @@ function HotkeyRow({ id }: { id: HotkeyId }) {
       </td>
       <td>
         {combo !== def.default && (
-          <button className="btn btn-small" onClick={() => resetCombo(id)} title="Вернуть по умолчанию">
+          <button className="btn btn-small" onClick={() => resetCombo(id)} data-hint="Вернуть по умолчанию">
             ↺
           </button>
         )}
@@ -293,14 +304,12 @@ function ExportImportPanel({ engine }: { engine: EngineConnection }) {
   };
 
   const doImport = async (file: File): Promise<void> => {
-    if (
-      !window.confirm(
-        'Импорт заменит ВЕСЬ текущий проект (приборы, сцены, шоу, расписание и т.д.) содержимым файла.\n\n' +
-          'Текущие несохранённые правки будут потеряны. Продолжить?',
-      )
-    ) {
-      return;
-    }
+    const ok = await askConfirm('Заменить весь проект содержимым файла?', {
+      detail:
+        'Импорт перезапишет приборы, сцены, шоу, расписание — всё. Текущие несохранённые правки будут потеряны.',
+      okLabel: 'Импортировать',
+    });
+    if (!ok) return;
     setImporting(true);
     setImportMsg(null);
     try {
@@ -372,14 +381,28 @@ function BackupPanel({ engine }: { engine: EngineConnection }) {
     );
   }
 
-  const restore = (b: BackupInfo): void => {
-    const ok = window.confirm(
-      `Снимок от ${fmtBackupTime(b.atMs)} заменит собой ТЕКУЩИЙ проект целиком — всё, что сделано ` +
-        'после этого снимка, будет потеряно (если это тоже не заскриптовано в другом снимке).\n\n' +
-        'Восстановить?',
-    );
+  const restore = async (b: BackupInfo): Promise<void> => {
+    const ok = await askConfirm(`Восстановить снимок от ${fmtBackupTime(b.atMs)}?`, {
+      detail:
+        'Снимок заменит текущий проект целиком — всё, что сделано после него, будет потеряно.',
+      okLabel: 'Восстановить',
+    });
     if (!ok) return;
     send({ type: 'restoreBackup', file: b.file });
+  };
+
+  /** Зафиксировать нынешнее состояние эталоном — с подтверждением: оно затрёт прежний. */
+  const makeReference = async (): Promise<void> => {
+    const had = backups.some((b) => b.reference);
+    const ok = await askConfirm('Сделать нынешнее состояние эталоном?', {
+      detail: had
+        ? 'Прежний эталон будет заменён. Эталон — это заведомо рабочее состояние объекта: он не прореживается и переписывается только этой кнопкой.'
+        : 'Эталон — заведомо рабочее состояние объекта. Он не прореживается со временем и переписывается только этой кнопкой.',
+      okLabel: 'Сделать эталоном',
+      danger: false,
+    });
+    if (!ok) return;
+    send({ type: 'setReferenceBackup' });
   };
 
   return (
@@ -417,7 +440,19 @@ function BackupPanel({ engine }: { engine: EngineConnection }) {
         <button className="btn btn-small" onClick={() => send({ type: 'takeBackupNow' })}>
           Сделать снимок сейчас
         </button>
+        <button
+          className="btn btn-small"
+          data-hint="Зафиксировать нынешнее состояние как ЭТАЛОН объекта. Эталон не прореживается и не переписывается автоматикой — к нему возвращаются, если кто-то всё переделал."
+          onClick={() => void makeReference()}
+        >
+          Сделать эталоном
+        </button>
       </div>
+      <p className="dim">
+        Снимок делается, только если проект изменился. Хранятся: за последние 6 часов — по одному на
+        каждые 10 минут, за два месяца — по одному на день, дальше — по одному на месяц. Поэтому
+        полчаса правок не вытесняют рабочую версию месячной давности.
+      </p>
 
       {backups.length === 0 ? (
         <p className="dim">Снимков ещё нет.</p>
@@ -432,11 +467,14 @@ function BackupPanel({ engine }: { engine: EngineConnection }) {
           </thead>
           <tbody>
             {backups.map((b) => (
-              <tr key={b.file}>
-                <td>{fmtBackupTime(b.atMs)}</td>
+              <tr key={b.file} className={b.reference ? 'row-playing' : undefined}>
+                <td>
+                  {b.reference ? <b>Эталон</b> : fmtBackupTime(b.atMs)}
+                  {b.reference && <span className="dim"> · {fmtBackupTime(b.atMs)}</span>}
+                </td>
                 <td className="dim">{fmtSize(b.sizeBytes)}</td>
                 <td>
-                  <button className="btn btn-small" onClick={() => restore(b)}>
+                  <button className="btn btn-small" onClick={() => void restore(b)}>
                     Восстановить
                   </button>
                 </td>
@@ -493,55 +531,383 @@ function AutostartPanel({ engine }: { engine: EngineConnection }) {
 }
 
 /**
- * Датчик ветра → безопасное снижение струй (§27 доработки, §4 п.1) —
- * пороги настраиваются здесь один раз при пусконаладке; текущее показание
- * ветра вводится оперативно на вкладке «Пульт» (пока нет датчика по
- * Modbus/MQTT — задел под него, сам расчёт менять не придётся).
+ * Уведомления в Telegram.
+ *
+ * Токен здесь ТОЛЬКО вводится и уходит на движок — обратно он не приходит
+ * никогда, и в интерфейсе видно лишь «задан или нет». Так его не подсмотреть
+ * ни через журнал, ни через экспорт проекта, ни заглянув в чужой экран.
  */
+function TelegramPanel({ engine }: { engine: EngineConnection }) {
+  const { telegram, telegramTest, send, project, updateProject } = engine;
+  const [token, setToken] = useState('');
+  /** Черновик названия объекта — уходит в проект по выходу из поля, а не на каждую букву. */
+  const [siteDraft, setSiteDraft] = useState<string | null>(null);
+  if (!telegram) return null;
+  /**
+   * Название объекта — это имя проекта. Им подписаны сообщения, по нему метка
+   * #Саки_Пруд и тема «🏛 Саки Пруд». Раньше поменять его было негде, и все
+   * объекты пришли бы в Telegram как «Демо-проект». Сохраняем по выходу из
+   * поля: иначе на каждую набранную букву могла бы завестись своя тема.
+   */
+  const commitSite = (): void => {
+    const next = (siteDraft ?? '').trim();
+    setSiteDraft(null);
+    if (!project || next === '' || next === project.name) return;
+    updateProject({ ...project, name: next });
+  };
+  return (
+    <section className="panel">
+      <h2>Уведомления в Telegram</h2>
+      <p className="dim">
+        Аварии — сразу, отчёт — раз в сутки. Нет интернета — сообщения копятся на диске и уходят, когда
+        связь появится. По объектам раскладываются темами, по разделам — метками (#авария, #отчёт,
+        #состояние).
+      </p>
+      <div className="form-row">
+        <label
+          className="field"
+          data-hint="Так этот фонтан называется в сообщениях, в метке для поиска и в названии его темы в Telegram. У каждого объекта своё: Саки Пруд, Севастополь Тюльпан, Севастополь 60 лет, Севастополь Дюльбер."
+        >
+          Объект:{' '}
+          <input
+            className="input"
+            style={{ width: 240 }}
+            value={siteDraft ?? project?.name ?? ''}
+            onChange={(e) => setSiteDraft(e.target.value)}
+            onBlur={commitSite}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur();
+              else if (e.key === 'Escape') setSiteDraft(null);
+            }}
+          />
+        </label>
+      </div>
+      <div className="form-row">
+        <label className="field">
+          <input
+            type="checkbox"
+            checked={telegram.enabled}
+            onChange={(e) => send({ type: 'updateTelegram', enabled: e.target.checked })}
+          />{' '}
+          Включено
+        </label>
+        <label className="field" data-hint="Аварии ПЧ, пропажа нод и приборов с линии — то же, что попадает в журнал уровнями «предупреждение» и «ошибка»">
+          <input
+            type="checkbox"
+            checked={telegram.alarms}
+            onChange={(e) => send({ type: 'updateTelegram', alarms: e.target.checked })}
+          />{' '}
+          Слать аварии
+        </label>
+        <label className="field">
+          Отчёт в:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={0}
+            max={23}
+            value={telegram.dailyHour}
+            onChange={(e) => send({ type: 'updateTelegram', dailyHour: Number(e.target.value) || 0 })}
+          />{' '}
+          ч
+        </label>
+      </div>
+      <div className="form-row">
+        <label className="field" data-hint="Токен от @BotFather. Сохраняется в fountain.secrets.json рядом с проектом — этот файл не попадает ни в репозиторий, ни в экспорт.">
+          Токен бота:{' '}
+          <input
+            className="input"
+            style={{ width: 260 }}
+            type="password"
+            placeholder={telegram.hasToken ? 'задан — введите новый, чтобы заменить' : 'вставьте токен'}
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+          />
+        </label>
+        <button
+          className="btn btn-small"
+          disabled={token.trim() === ''}
+          onClick={() => {
+            send({ type: 'updateTelegram', token: token.trim() });
+            setToken('');
+          }}
+        >
+          Сохранить токен
+        </button>
+        <button
+          className="btn btn-small"
+          onClick={() => send({ type: 'testTelegram' })}
+          disabled={!telegram.hasToken}
+          data-hint="Пришлёт по одному сообщению каждого раздела — состояние, отчёт и пример аварии. Сразу видно и что связь есть, и как всё будет выглядеть."
+        >
+          Проверить связь
+        </button>
+      </div>
+      {/* Тихий режим: на время работ на объекте авария за аварией — обычное дело. */}
+      <div className="form-row">
+        <span className="dim">Тихий режим:</span>
+        {telegram.quietUntilMs > Date.now() ? (
+          <>
+            <span className="warn">
+              аварии не шлются до {new Date(telegram.quietUntilMs).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+            <button className="btn btn-small" onClick={() => send({ type: 'setTelegramQuiet', hours: 0 })}>
+              Снять
+            </button>
+          </>
+        ) : (
+          <>
+            {[1, 4, 8].map((h) => (
+              <button
+                key={h}
+                className="btn btn-small"
+                disabled={!telegram.hasToken}
+                data-hint="На время работ на объекте: аварии в Telegram не уходят, но в журнал пишутся. Когда время выйдет, придёт одна строка — сколько их было. «Восстановлено» приходит всегда."
+                onClick={() => send({ type: 'setTelegramQuiet', hours: h })}
+              >
+                {h} ч
+              </button>
+            ))}
+          </>
+        )}
+      </div>
+      <div className="form-row">
+        <label
+          className="field"
+          data-hint={
+            'У каждого объекта своя тема «🏛 Имя объекта» — как отдельная папка в чате. В личном чате с ботом темы включает владелец бота в мини-приложении @BotFather: ваш бот → Mode Settings → режим тем (не путать с Guest Chat Mode — это другое). Программа сама замечает включение в течение 5 минут. В группе-форуме бот должен быть администратором с правом управлять темами. Пока темы недоступны, всё идёт в общий чат, а разложить помогают метки.'
+          }
+        >
+          <input
+            type="checkbox"
+            checked={telegram.topicsBySite}
+            onChange={(e) => send({ type: 'updateTelegram', topicsBySite: e.target.checked })}
+          />{' '}
+          Темы по объектам
+        </label>
+        <span className="dim">
+          {!telegram.topicsBySite
+            ? 'выключено — всё в общий чат, раздел по меткам'
+            : telegram.topicsAvailable === true
+              ? `работают, тем объектов: ${telegram.siteTopicCount}`
+              : telegram.topicsAvailable === false
+                ? 'темы в чате не включены — пока идёт в общий чат (наведите на «Темы по объектам»)'
+                : 'выяснится при первой отправке'}
+        </span>
+      </div>
+      <div className="form-row">
+        <span
+          className="quick-row-label"
+          data-hint="Только если чат — группа-форум, где темы «Аварии», «Отчёты», «Состояние» заведены вручную: впишите их номера, и разделы лягут туда (это главнее тем по объектам). Ноль — раздел не привязан к теме."
+        >
+          Темы разделов:
+        </span>
+        <label className="field">
+          аварии:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={0}
+            value={telegram.topicAlarm}
+            onChange={(e) => send({ type: 'updateTelegram', topicAlarm: Number(e.target.value) || 0 })}
+          />
+        </label>
+        <label className="field">
+          отчёты:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={0}
+            value={telegram.topicReport}
+            onChange={(e) => send({ type: 'updateTelegram', topicReport: Number(e.target.value) || 0 })}
+          />
+        </label>
+        <label className="field">
+          состояние:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={0}
+            value={telegram.topicState}
+            onChange={(e) => send({ type: 'updateTelegram', topicState: Number(e.target.value) || 0 })}
+          />
+        </label>
+      </div>
+      <p className="dim">
+        Состояние: {telegram.hasToken ? 'токен задан' : 'токен не задан'} ·{' '}
+        {telegram.chatId
+          ? `получатель ${telegram.chatId}`
+          : `получатель не определён — откройте ${telegram.botName || 'бота'} и нажмите «Start»`}{' '}
+        ·
+        в очереди {telegram.queued}
+      </p>
+      {telegramTest && (
+        <p className={telegramTest.ok ? 'dim' : 'error-text'}>
+          {telegramTest.ok ? '✅ Сообщение доставлено.' : `Не получилось: ${telegramTest.error ?? 'нет связи'}`}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Датчик ветра → безопасное снижение струй.
+ *
+ * Настраивается здесь один раз при пусконаладке; текущее показание ветра
+ * вводится оперативно на вкладке «Отладка» (пока нет датчика по Modbus/MQTT —
+ * задел под него, сам расчёт менять не придётся).
+ *
+ * Порогов «начало» и «конец» здесь больше нет: ограничение считается из
+ * физики сноса и ВЫСОТЫ каждой струи (см. windlimit.ts). Поэтому в настройках
+ * задаётся не скорость ветра, а то, что человек действительно знает про свой
+ * объект: сколько воды можно пустить мимо чаши и когда фонтан пора глушить.
+ */
+/**
+ * Аварийное отключение (§ failsafe.ts). Живое состояние приходит от движка
+ * отдельным сообщением, настройка живёт в проекте — как ветровое ограничение
+ * и служебный свет: это свойство объекта, а не компьютера.
+ */
+function FailsafePanel({ engine }: { engine: EngineConnection }) {
+  const { project, updateProject, failsafe } = engine;
+  if (!project) return null;
+  const cfg = project.failsafe;
+  const update = (patch: Partial<typeof cfg>): void =>
+    updateProject({ ...project, failsafe: { ...cfg, ...patch } });
+
+  return (
+    <section className="panel">
+      <h2>Аварийное отключение</h2>
+      <p className="dim">
+        Если движок перестал выдавать кадры на линию — такт вставал или выход не доставляет
+        (выдернули USB, закрылся порт), — насосы и клапаны принудительно уходят в 0. Без этого
+        приборы держат ПОСЛЕДНЕЕ принятое значение: насос продолжит крутиться, струя останется
+        поднятой. Когда вывод восстановится, движок сам вернётся к обычной картине.
+      </p>
+      {failsafe?.active ? (
+        <p className="error-text" style={{ marginLeft: 0 }}>
+          ✖ Сейчас сработало: {failsafe.reason}. Вода отключена.
+        </p>
+      ) : (
+        <p className="ok-text">
+          ✔ Вывод в норме{failsafe && failsafe.trips > 0 ? ` (срабатываний с запуска: ${failsafe.trips})` : ''}
+        </p>
+      )}
+      <div className="form-row">
+        <label className="field">
+          <input type="checkbox" checked={cfg.enabled} onChange={(e) => update({ enabled: e.target.checked })} />{' '}
+          Включено
+        </label>
+        <label
+          className="field"
+          data-hint="Сколько терпим пропажу вывода, прежде чем гасить воду. Меньше 3 с ставить не стоит: короткие подвисания Windows — обычное дело, и фонтан начнёт мигать."
+        >
+          Ждать, с:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={FAILSAFE_TIMEOUT_MIN_SEC}
+            max={FAILSAFE_TIMEOUT_MAX_SEC}
+            step={1}
+            disabled={!cfg.enabled}
+            value={cfg.timeoutSec}
+            onChange={(e) =>
+              update({
+                timeoutSec: Math.max(
+                  FAILSAFE_TIMEOUT_MIN_SEC,
+                  Math.min(FAILSAFE_TIMEOUT_MAX_SEC, Math.round(Number(e.target.value)) || 10),
+                ),
+              })
+            }
+          />
+        </label>
+        <label className="field" data-hint="Гасить ли заодно подсветку. Воду (насосы и клапаны) гасим всегда — это безопасность; свет иногда просят оставить, чтобы объект не стоял в темноте.">
+          <input
+            type="checkbox"
+            checked={cfg.lights}
+            disabled={!cfg.enabled}
+            onChange={(e) => update({ lights: e.target.checked })}
+          />{' '}
+          Гасить и свет
+        </label>
+      </div>
+      <p className="dim">
+        Чего этим не закрыть: если процесс движка убит целиком, слать безопасный кадр уже некому —
+        для этого есть сторож, который поднимает движок заново (он стартует с нулей). Закрытие
+        редактора аварией НЕ считается: шоу играет движок, и оно должно продолжаться.
+      </p>
+    </section>
+  );
+}
+
 function WindLimitPanel({ engine }: { engine: EngineConnection }) {
   const { project, updateProject } = engine;
   if (!project) return null;
   const cfg = project.windLimit;
   const update = (patch: Partial<typeof cfg>): void => updateProject({ ...project, windLimit: { ...cfg, ...patch } });
 
-  // Предпросмотр: что было бы при ветре чуть выше maxSpeed — наглядная проверка настроек.
-  const previewSpeed = cfg.maxSpeed;
-  const previewPercent = computeWindLimitPercent(previewSpeed, cfg);
+  /**
+   * Предпросмотр — таблицей по высотам струй: одно число тут ничего не скажет,
+   * потому что ограничение у каждой струи своё. Высоты берём реальные, какие
+   * есть в схеме, плюс опорные — чтобы было видно и то, чего на объекте пока
+   * нет.
+   */
+  const heights = [
+    ...new Set([...project.layout.nozzles.map((n) => Math.round(n.maxHeightM)), 2, 6, 15]),
+  ]
+    .filter((h) => h > 0)
+    .sort((a, b) => a - b)
+    .slice(0, 6);
+  const speeds = [1, 2, 3, 4, 6, 8, 10];
 
   return (
     <section className="panel">
       <h2>Датчик ветра</h2>
       <p className="dim">
         Ветер выше порога — мощность насосов (высота струй) снижается; свет не трогается. Пока без реального
-        датчика — оператор вводит текущую скорость ветра вручную на вкладке «Пульт».
+        датчика — оператор вводит текущую скорость ветра вручную на вкладке «Отладка».
       </p>
       <div className="form-row">
         <label className="field">
           <input type="checkbox" checked={cfg.enabled} onChange={(e) => update({ enabled: e.target.checked })} />{' '}
           Включено
         </label>
-        <label className="field">
-          Начало ограничения, м/с:{' '}
+        <label className="field" data-hint="Насколько далеко от оси струи вода ещё может падать. 0,6 м — это примерно «в чашу, а не на дорожку». Меньше значение — раньше и сильнее снижаем.">
+          Допустимый снос, м:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={0.05}
+            max={10}
+            step={0.1}
+            disabled={!cfg.enabled}
+            value={cfg.marginM}
+            onChange={(e) => update({ marginM: Math.max(0.05, Math.min(10, Number(e.target.value) || 0.6)) })}
+          />
+        </label>
+        <label className="field" data-hint="Насколько быстро ветер разгоняет воду. Плотная связная струя — 5–6 с, обычная — 4, сильно распылённая или туман — 2–2,5. Чем меньше, тем сильнее сносит.">
+          Сцепка с ветром, с:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={0.5}
+            max={20}
+            step={0.5}
+            disabled={!cfg.enabled}
+            value={cfg.tauSec}
+            onChange={(e) => update({ tauSec: Math.max(0.5, Math.min(20, Number(e.target.value) || 4)) })}
+          />
+        </label>
+        <label className="field" data-hint="Выше этого ветра фонтан глушится совсем: картины всё равно нет, а вода уходит за борт чаши. 0 — не глушить никогда.">
+          Стоп при ветре, м/с:{' '}
           <input
             className="input input-num"
             type="number"
             min={0}
+            max={60}
             step={0.5}
             disabled={!cfg.enabled}
-            value={cfg.warnSpeed}
-            onChange={(e) => update({ warnSpeed: Math.max(0, Number(e.target.value) || 0) })}
-          />
-        </label>
-        <label className="field">
-          Полное ограничение, м/с:{' '}
-          <input
-            className="input input-num"
-            type="number"
-            min={cfg.warnSpeed + 0.1}
-            step={0.5}
-            disabled={!cfg.enabled}
-            value={cfg.maxSpeed}
-            onChange={(e) => update({ maxSpeed: Math.max(cfg.warnSpeed + 0.1, Number(e.target.value) || cfg.warnSpeed + 1) })}
+            value={cfg.stopSpeed}
+            onChange={(e) => update({ stopSpeed: Math.max(0, Math.min(60, Number(e.target.value) || 0)) })}
           />
         </label>
         <label className="field">
@@ -558,10 +924,37 @@ function WindLimitPanel({ engine }: { engine: EngineConnection }) {
         </label>
       </div>
       {cfg.enabled && (
-        <p className="dim">
-          Проверка: при {previewSpeed} м/с (порог полного ограничения) мощность насосов будет снижена до{' '}
-          {previewPercent}%.
-        </p>
+        <>
+          <p className="dim">
+            Снос растёт линейно с высотой струи, поэтому ограничение у каждой струи своё: высокие режутся
+            заметно раньше низких. В таблице — сколько процентов мощности останется.
+          </p>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Высота струи</th>
+                {speeds.map((s) => (
+                  <th key={s}>{s} м/с</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {heights.map((h) => (
+                <tr key={h}>
+                  <td>{h} м</td>
+                  {speeds.map((s) => {
+                    const p = computeWindLimitPercent(s, cfg, h);
+                    return (
+                      <td key={s} className={p === 0 ? 'error-text' : p < 100 ? 'warn' : 'dim'}>
+                        {p === 0 ? 'стоп' : `${p}%`}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
     </section>
   );
@@ -630,7 +1023,7 @@ function UtilityLightPanel({ engine }: { engine: EngineConnection }) {
           <input type="checkbox" checked={cfg.enabled} onChange={(e) => update({ enabled: e.target.checked })} />{' '}
           Включено
         </label>
-        <label className="field" title="Ручной оверрайд — не доверять расписанию, держать включённым всегда">
+        <label className="field" data-hint="Ручной оверрайд — не доверять расписанию, держать включённым всегда">
           <input
             type="checkbox"
             checked={cfg.always}
@@ -682,6 +1075,121 @@ function UtilityLightPanel({ engine }: { engine: EngineConnection }) {
 }
 
 /**
+ * Короткая строка о драйвере FTDI. Главное — не путать два случая: драйвера
+ * нет вовсе (надо скачать и поставить) и драйвер есть, но интерфейс ни разу
+ * не подключали к этому компьютеру (Windows положит библиотеку сама).
+ */
+function driverProblemText(p: UsbDriverProblem): string {
+  switch (p) {
+    case 'no-device':
+      return '◐ драйвер установлен; библиотека появится, когда подключите интерфейс по USB';
+    case 'no-driver':
+      return '✖ драйвер FTDI не установлен — поставьте FTDI CDM, затем подключите интерфейс';
+    case 'wrong-bitness':
+      return '✖ найдена только 32-битная библиотека — нужен 64-разрядный драйвер FTDI CDM';
+    case 'broken':
+      return '✖ библиотека есть, но не загрузилась — переустановите драйвер FTDI CDM';
+    default:
+      return '✖ драйвер FTDI недоступен (наведите — подробности)';
+  }
+}
+
+/** Варианты выбора интерфейса FountanPlay: FTDI по серийному номеру и COM-порты FTDI. */
+function musidoraTargets(scan: UsbDmxScan | null, current: string): { value: string; label: string }[] {
+  const list: { value: string; label: string }[] = [];
+  for (const d of scan?.ftdi ?? []) {
+    if (!d.serial) continue;
+    list.push({ value: d.serial, label: `№ ${d.serial}${d.opened ? ' (занят)' : ''}` });
+  }
+  for (const p of scan?.ports ?? []) {
+    if (p.vendorId.toLowerCase() !== '0403') continue;
+    list.push({ value: p.path, label: `${p.path} (COM)` });
+  }
+  if (current && !list.some((x) => x.value === current)) {
+    list.push({ value: current, label: `${current} (не подключён)` });
+  }
+  return list;
+}
+
+/**
+ * Что происходит с USB-DMX прямо сейчас: есть ли драйвер FTDI, какие
+ * устройства видны и уходят ли кадры в интерфейс FountanPlay. На объекте по
+ * этой строке сразу понятно, где искать: драйвер, кабель, занятость другой
+ * программой — или всё передаётся, и дело уже в адресах приборов.
+ */
+function UsbDmxStatus({ scan, universes }: { scan: UsbDmxScan | null; universes: ConfigUniverse[] }) {
+  const musidora = universes.flatMap((u) =>
+    u.outputs
+      .filter((o) => o.type === 'musidora')
+      .map((o) => ({ universe: u, out: o, key: /^COM\d+$/i.test(o.path ?? '') ? (o.path ?? '').toUpperCase() : (o.path ?? '') })),
+  );
+  if (!scan) {
+    return (
+      <div className="usb-status">
+        <div className="usb-status-title">USB-DMX на этом компьютере</div>
+        <div className="dim">опрос…</div>
+      </div>
+    );
+  }
+  const d2 = scan.d2xx;
+  return (
+    <div className="usb-status">
+      <div className="usb-status-title">USB-DMX на этом компьютере</div>
+      <div className="usb-status-row">
+        <span className="usb-status-name">Драйвер FTDI</span>
+        {d2.ok ? (
+          <span className="ok-text" data-hint={d2.dll}>
+            ✔ ftd2xx {d2.version}
+          </span>
+        ) : (
+          <span className={d2.problem === 'no-device' ? 'warn' : 'error-text'} data-hint={d2.error}>
+            {driverProblemText(d2.problem)}
+          </span>
+        )}
+      </div>
+      <div className="usb-status-row">
+        <span className="usb-status-name">Устройства FTDI</span>
+        {scan.ftdi.length === 0 ? (
+          <span className="dim">{d2.ok ? 'не найдено — проверьте кабель USB' : 'интерфейс не подключён к этому ПК'}</span>
+        ) : (
+          <span>
+            {scan.ftdi.map((d) => (
+              <span key={`${d.index}-${d.serial}`} className="usb-dev" data-hint={`${d.type}, VID/PID ${d.id.toString(16).padStart(8, '0')}`}>
+                № {d.serial || '—'} «{d.description || 'без названия'}»{d.opened ? ' · открыт' : ''}
+              </span>
+            ))}
+          </span>
+        )}
+      </div>
+      {musidora.map(({ universe, out, key }) => {
+        const link = scan.links.find((l) => (l.target === 'авто' ? '' : l.target) === key);
+        const fresh = !!link && link.phase === 'open' && link.lastOkMs > 0 && scan.atMs - link.lastOkMs < 2500;
+        return (
+          <div className="usb-status-row" key={universe.id}>
+            <span className="usb-status-name">
+              {universe.label || `Вселенная ${universe.id}`} → выход {out.musidoraOut ?? 1}
+            </span>
+            {!link ? (
+              <span className="warn">не запущено — нажмите «Применить и сохранить»</span>
+            ) : fresh ? (
+              <span className="ok-text">
+                ✔ кадры уходят в интерфейс{link.serial ? ` № ${link.serial}` : link.description ? ` ${link.description}` : ''} · {link.framesOk}
+              </span>
+            ) : link.phase === 'open' ? (
+              <span className="dim">интерфейс открыт, ждём кадров…</span>
+            ) : link.phase === 'error' ? (
+              <span className="error-text">✖ {link.text}</span>
+            ) : (
+              <span className="dim">{link.text}</span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
  * Настройки движка: вселенные (DMX-линии) и шаг тика — редактирование
  * fountain.config.json из интерфейса, без текстового редактора. Движок
  * применяет на лету (воспроизведение при этом останавливается) и сохраняет
@@ -700,6 +1208,21 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
     setTickMs(engineConfig.tickMs);
     setUniverses(engineConfig.universes.map((u) => ({ ...u, outputs: u.outputs.map((o) => ({ ...o })) })));
   }, [engineConfig, dirty]);
+
+  /**
+   * USB-DMX: пока есть хоть одна USB-вселенная (в сохранённой конфигурации или
+   * в правке), раз в 2 с спрашиваем движок, что с драйвером и интерфейсами.
+   * На объекте это главный индикатор «нашёлся ли интерфейс и уходят ли кадры».
+   */
+  const usbInUse = [...universes, ...(engineConfig?.universes ?? [])].some((u) =>
+    u.outputs.some((o) => o.type === 'musidora' || o.type === 'usb-dmx' || o.type === 'open-dmx'),
+  );
+  useEffect(() => {
+    if (!engine.connected || !usbInUse) return;
+    send({ type: 'scanUsbDmx' });
+    const id = window.setInterval(() => send({ type: 'scanUsbDmx' }), 2000);
+    return () => window.clearInterval(id);
+  }, [engine.connected, usbInUse, send]);
 
   if (!engineConfig) {
     return (
@@ -733,30 +1256,37 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
     );
   };
 
+  /**
+   * Новая линия повторяет протокол предыдущей: на объекте все линии идут через
+   * одно и то же железо, и заставлять переключать протокол у каждой — лишняя
+   * работа и лишний шанс ошибиться. У интерфейса FountanPlay заодно
+   * подставляется следующий номер разъёма DMX.
+   */
   const addUniverse = (): void => {
     touch();
     const id = Math.max(0, ...universes.map((u) => u.id)) + 1;
-    setUniverses([
-      ...universes,
-      {
-        id,
-        label: `Вселенная ${id}`,
-        outputs: [{ type: 'artnet', host: '127.0.0.1', universe: id - 1 }],
-      },
-    ]);
+    const prev = universes[universes.length - 1]?.outputs[0];
+    const out: ConfigOutput =
+      prev?.type === 'musidora'
+        ? { type: 'musidora', universe: 0, path: prev.path ?? '', musidoraOut: Math.min(3, (prev.musidoraOut ?? 1) + 1) }
+        : prev?.type === 'artnet' || prev?.type === 'sacn'
+          ? { type: prev.type, host: prev.host ?? '127.0.0.1', universe: id - 1 }
+          : { type: 'musidora', universe: 0, path: '', musidoraOut: 1 };
+    setUniverses([...universes, { id, label: `Линия ${id}`, outputs: [out] }]);
   };
 
-  const removeUniverse = (id: number): void => {
+  const removeUniverse = async (id: number): Promise<void> => {
     const devices = project?.devices.filter((d) => d.universe === id) ?? [];
     if (devices.length > 0) {
-      const ok = window.confirm(
-        `На вселенной ${id} стоят приборы: ${devices.length} шт. (${devices
-          .slice(0, 5)
-          .map((d) => d.name)
-          .join(', ')}${devices.length > 5 ? '…' : ''}).\n\n` +
-          'После удаления вселенной они перестанут выводиться, пока вы не перенесёте их ' +
-          'на другую вселенную на вкладке «Приборы». Удалить?',
-      );
+      const names = devices
+        .slice(0, 5)
+        .map((d) => d.name)
+        .join(', ');
+      const ok = await askConfirm(`Удалить вселенную ${id}?`, {
+        detail:
+          `На ней стоят приборы: ${devices.length} шт. (${names}${devices.length > 5 ? '…' : ''}). ` +
+          'После удаления они перестанут выводиться, пока вы не перенесёте их на другую вселенную на вкладке «Оборудование».',
+      });
       if (!ok) return;
     }
     touch();
@@ -787,8 +1317,8 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
               <th>№</th>
               <th>Название</th>
               <th>Протокол</th>
-              <th>IP ноды</th>
-              <th title="Номер вселенной внутри протокола: Art-Net считает с 0, sACN — с 1">
+              <th data-hint="IP ноды (Art-Net), COM-порт адаптера или интерфейс Musidora">Адрес</th>
+              <th data-hint="Номер вселенной внутри протокола: Art-Net считает с 0, sACN — с 1. У Musidora — номер выхода интерфейса">
                 № в протоколе
               </th>
               <th></th>
@@ -812,16 +1342,45 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
                   <td>
                     <select
                       value={out?.type ?? 'artnet'}
+                      data-hint={
+                        'Все варианты USB-DMX используют один и тот же USB-переходник FTDI и один драйвер FTDI — разница только в том, ЧТО программа шлёт в линию.\n' +
+                        'Art-Net и sACN — по сети, через ноду: самый надёжный вариант для постоянного объекта (длинные линии, развязка, много вселенных).\n' +
+                        'USB-DMX (ENTTEC PRO) — адаптер с контроллером ENTTEC DMX USB PRO: тайминг линии держит сам адаптер, программа шлёт кадр в его обёртке.\n' +
+                        'USB-DMX (Open DMX) — простой адаптер без контроллера (ENTTEC Open DMX USB и клоны): весь сигнал DMX по микросекундам строит компьютер, под нагрузкой возможны рывки.\n' +
+                        'USB-DMX (FountanPlay) — тот самый интерфейс из комплекта программы FontanPlay (USB1DMX/USB2DMX/USB3DMX): у него свой контроллер, программа шлёт кадр в его обёртке. На время работы закройте FontanPlay — интерфейс открывает только одна программа.'
+                      }
                       onChange={(e) =>
-                        patchOutput(u.id, { type: e.target.value as 'artnet' | 'sacn' })
+                        patchOutput(u.id, {
+                          type: e.target.value as ConfigOutput['type'],
+                        })
                       }
                     >
                       <option value="artnet">Art-Net</option>
                       <option value="sacn">sACN</option>
+                      <option value="usb-dmx">USB-DMX (ENTTEC PRO)</option>
+                      <option value="open-dmx">USB-DMX (Open DMX)</option>
+                      <option value="musidora">USB-DMX (FountanPlay)</option>
                     </select>
                   </td>
                   <td>
-                    {out?.type === 'artnet' ? (
+                    {out?.type === 'musidora' ? (
+                      <select
+                        style={{ width: 150 }}
+                        value={out.path ?? ''}
+                        data-hint={
+                          '«Авто» — первое свободное FTDI-устройство, как делает FontanPlay.\n' +
+                          'Если к компьютеру подключено несколько FTDI (например, ещё и USB-RS485), выберите интерфейс по серийному номеру. Вселенным одного интерфейса ставьте одно и то же значение.'
+                        }
+                        onChange={(e) => patchOutput(u.id, { path: e.target.value })}
+                      >
+                        <option value="">Авто</option>
+                        {musidoraTargets(engine.usbScan, out.path ?? '').map((t) => (
+                          <option key={t.value} value={t.value}>
+                            {t.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : out?.type === 'artnet' ? (
                       <input
                         className="input"
                         style={{ width: 120 }}
@@ -829,30 +1388,62 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
                         placeholder="192.168.0.50"
                         onChange={(e) => patchOutput(u.id, { host: e.target.value })}
                       />
+                    ) : out?.type === 'usb-dmx' || out?.type === 'open-dmx' ? (
+                      <input
+                        className="input"
+                        style={{ width: 120 }}
+                        value={out.path ?? ''}
+                        placeholder="COM5"
+                        list="usb-com-ports"
+                        data-hint="COM-порт адаптера. Найденные порты подсказываются в списке; ещё их видно в Диспетчере устройств Windows, раздел «Порты (COM и LPT)»."
+                        onChange={(e) => patchOutput(u.id, { path: e.target.value })}
+                      />
                     ) : (
                       <span className="dim">multicast</span>
                     )}
                   </td>
                   <td>
-                    <input
-                      className="input input-num"
-                      type="number"
-                      min={0}
-                      value={out?.universe ?? 0}
-                      onChange={(e) => patchOutput(u.id, { universe: Math.max(0, Math.round(Number(e.target.value)) || 0) })}
-                    />
+                    {out?.type === 'musidora' ? (
+                      <select
+                        value={String(out.musidoraOut ?? 1)}
+                        data-hint={
+                          'Номер РАЗЪЁМА DMX на самом интерфейсе: у USB1DMX он один (1), у USB2DMX — два (1 и 2), у USB3DMX — три.\n' +
+                          'Вторая линия — это отдельная вселенная с тем же интерфейсом и выходом 2.\n' +
+                          'Ставьте номер строго по числу разъёмов на коробке. Если выбрать выход, которого на интерфейсе нет, его данные могут лечь на первый выход и перебить его — в FontanPlay это заметно потому, что она всегда шлёт все три выхода, даже когда разъём один. Наша программа шлёт только те выходы, что вы завели здесь.'
+                        }
+                        onChange={(e) => patchOutput(u.id, { musidoraOut: Number(e.target.value) })}
+                      >
+                        <option value="1">Выход 1</option>
+                        <option value="2">Выход 2</option>
+                        <option value="3">Выход 3</option>
+                      </select>
+                    ) : out?.type === 'usb-dmx' || out?.type === 'open-dmx' ? (
+                      <span className="dim" data-hint="У провода нет номера вселенной: адаптер отдаёт один-единственный кадр DMX512 в свою линию">
+                        —
+                      </span>
+                    ) : (
+                      <input
+                        className="input input-num"
+                        type="number"
+                        min={0}
+                        value={out?.universe ?? 0}
+                        onChange={(e) =>
+                          patchOutput(u.id, { universe: Math.max(0, Math.round(Number(e.target.value)) || 0) })
+                        }
+                      />
+                    )}
                   </td>
                   <td>
                     {u.outputs.length > 1 && (
-                      <span className="badge" title="У вселенной несколько выходов; здесь редактируется первый, остальные сохраняются как есть">
+                      <span className="badge" data-hint="У вселенной несколько выходов; здесь редактируется первый, остальные сохраняются как есть">
                         +{u.outputs.length - 1} вых.
                       </span>
                     )}{' '}
                     <button
                       className="btn btn-small"
                       disabled={universes.length <= 1}
-                      title={universes.length <= 1 ? 'Нужна хотя бы одна вселенная' : 'Удалить вселенную'}
-                      onClick={() => removeUniverse(u.id)}
+                      data-hint={universes.length <= 1 ? 'Нужна хотя бы одна вселенная' : 'Удалить вселенную'}
+                      onClick={() => void removeUniverse(u.id)}
                     >
                       ✕
                     </button>
@@ -867,6 +1458,14 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
             + Вселенная
           </button>
         </div>
+        <datalist id="usb-com-ports">
+          {(engine.usbScan?.ports ?? []).map((p) => (
+            <option key={p.path} value={p.path}>
+              {[p.manufacturer, p.vendorId && `VID ${p.vendorId}`].filter(Boolean).join(' · ')}
+            </option>
+          ))}
+        </datalist>
+        {usbInUse && <UsbDmxStatus scan={engine.usbScan} universes={engineConfig.universes} />}
       </section>
 
       <section className="panel">
@@ -908,13 +1507,65 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
       <ExportImportPanel engine={engine} />
       <BackupPanel engine={engine} />
       <AutostartPanel engine={engine} />
+      <TelegramPanel engine={engine} />
+      <FailsafePanel engine={engine} />
       <WindLimitPanel engine={engine} />
       <IdleScenePanel engine={engine} />
       <UtilityLightPanel engine={engine} />
       <HotkeysPanel />
+      <ViewControlsPanel />
       <OperatorPanel />
       <TourReplayPanel />
     </main>
+  );
+}
+
+/**
+ * Чувствительность мыши в 3D-виде. Умолчания OrbitControls (обе скорости 1.0)
+ * на этой сцене несбалансированы: вращение уносит вид от одного движения, а
+ * панорама еле ползёт. Здесь и выверенные значения, и регулировка — мыши и
+ * коврики у всех разные. Хранится на этом компьютере, в проект не попадает.
+ */
+function ViewControlsPanel() {
+  const [prefs, setPrefs] = useState(viewPrefs());
+  const apply = (patch: Partial<typeof prefs>): void => {
+    setViewPrefs(patch);
+    setPrefs(viewPrefs());
+  };
+  const row = (
+    label: string,
+    hint: string,
+    key: 'rotateSpeed' | 'panSpeed',
+  ): JSX.Element => {
+    const [lo, hi, step] = VIEW_PREF_LIMITS[key];
+    return (
+      <label className="field" data-hint={hint}>
+        {label}
+        <input
+          type="range"
+          min={lo}
+          max={hi}
+          step={step}
+          value={prefs[key]}
+          onChange={(e) => apply({ [key]: Number(e.target.value) })}
+        />
+        <span className="dim">×{prefs[key].toFixed(2)}</span>
+      </label>
+    );
+  };
+  return (
+    <section className="panel">
+      <h2>Управление камерой в 3D</h2>
+      <p className="dim">Насколько быстро вид отзывается на мышь на вкладке «3D».</p>
+      {row('Вращение (ЛКМ по пустому месту)', 'Поворот камеры вокруг сцены', 'rotateSpeed')}
+      {row('Панорама (ПКМ)', 'Сдвиг сцены без поворота', 'panSpeed')}
+      <button
+        className="btn btn-small"
+        onClick={() => apply({ ...VIEW_PREF_DEFAULTS })}
+      >
+        Вернуть значения по умолчанию
+      </button>
+    </section>
   );
 }
 
@@ -923,7 +1574,7 @@ function TourReplayPanel() {
   return (
     <section className="panel">
       <h2>Тур по программе</h2>
-      <p className="dim">Короткая подсказка по вкладкам «Приборы → 3D → Сцены → Шоу», которая показывается при первом запуске.</p>
+      <p className="dim">Короткая подсказка по вкладкам «Отладка → Оборудование → 3D → Сцены → Шоу», которая показывается при первом запуске.</p>
       <button
         className="btn"
         onClick={() => {

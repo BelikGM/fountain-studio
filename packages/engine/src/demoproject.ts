@@ -1,4 +1,6 @@
-import { emptyProject, ringPositions, uid, type Project } from '@fountain-studio/shared';
+import {
+  BOWL_DEFAULTS,
+  LIGHT_DEFAULTS, emptyProject, ringPositions, uid, type Project } from '@fountain-studio/shared';
 import { DEMO_TRACK_DURATION_MS } from './demoaudio';
 
 /**
@@ -68,7 +70,9 @@ export function createDemoProject(): Project {
 
   const ring = ringPositions(2, 2);
   project.layout = {
-    bowls: [{ id: uid(), name: 'Чаша', shape: 'circle', x: 0, y: 0, radius: 3, width: 6, length: 6, height: 0.3 }],
+    bowls: [
+      { id: uid(), name: 'Чаша', shape: 'circle', x: 0, y: 0, radius: 3, width: 6, length: 6, height: 0.3, ...BOWL_DEFAULTS },
+    ],
     nozzles: [
       {
         id: 'demo-noz1',
@@ -88,7 +92,18 @@ export function createDemoProject(): Project {
         pumpDeviceId: 'demo-pump1',
         pump2DeviceId: null,
         valveDeviceId: 'demo-valve1',
-        valveFollowsPump: false,
+
+        extraPumpDeviceIds: [],
+
+        extraValveDeviceIds: [],
+
+        extraLightDeviceIds: [],
+
+        extraPump2DeviceIds: [],
+        modelFile: null,
+        modelScale: 1,
+
+        sprayFactor: 0.3,
         lightDeviceId: 'demo-light1',
       },
       {
@@ -109,13 +124,24 @@ export function createDemoProject(): Project {
         pumpDeviceId: 'demo-pump2',
         pump2DeviceId: null,
         valveDeviceId: 'demo-valve2',
-        valveFollowsPump: false,
+
+        extraPumpDeviceIds: [],
+
+        extraValveDeviceIds: [],
+
+        extraLightDeviceIds: [],
+
+        extraPump2DeviceIds: [],
+        modelFile: null,
+        modelScale: 1,
+
+        sprayFactor: 0.3,
         lightDeviceId: 'demo-light2',
       },
     ],
     lights: [
-      { id: 'demo-lt1', name: 'Прожектор 1', x: ring[0]!.x, y: ring[0]!.y, z: -0.15, deviceId: 'demo-light1' },
-      { id: 'demo-lt2', name: 'Прожектор 2', x: ring[1]!.x, y: ring[1]!.y, z: -0.15, deviceId: 'demo-light2' },
+      { id: 'demo-lt1', name: 'Прожектор 1', x: ring[0]!.x, y: ring[0]!.y, z: -0.15, deviceId: 'demo-light1', ...LIGHT_DEFAULTS },
+      { id: 'demo-lt2', name: 'Прожектор 2', x: ring[1]!.x, y: ring[1]!.y, z: -0.15, deviceId: 'demo-light2', ...LIGHT_DEFAULTS },
     ],
     nozzleGroups: [],
   };

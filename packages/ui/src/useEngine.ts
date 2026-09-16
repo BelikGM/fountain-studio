@@ -4,14 +4,17 @@ import type {
   ClientMessage,
   ConfigUniverse,
   EngineStats,
+  FailsafeState,
   LicenseStatus,
   LogEvent,
   ModbusState,
   NetworkState,
+  TelegramStatus,
   PlaybackState,
   Project,
   ServerMessage,
   UniverseInfo,
+  UsbDmxScan,
   WindLimitConfig,
 } from '@fountain-studio/shared';
 
@@ -58,13 +61,25 @@ export interface EngineConnection {
   stats: EngineStats | null;
   /** Последний кадр каждой вселенной (id → 512 байт). */
   frames: Record<number, Uint8Array>;
+  /**
+   * Кадры, уходящие в линию после переадресации. Совпадают с frames, пока
+   * переадресации нет. По ним рисуется 3D-вид — он показывает объект, а не
+   * расчёт.
+   */
+  wireFrames: Record<number, Uint8Array>;
   /** Проект (источник истины — движок; правки шлём через updateProject). */
   project: Project | null;
   playback: PlaybackState;
   /** Состояние сети Art-Net/RDM (null — мониторинг не активен). */
   network: NetworkState | null;
+  /** Состояние уведомлений в Telegram — без токена, его движок наружу не отдаёт. */
+  telegram: TelegramStatus | null;
+  /** Результат разовой проверки связи: null — ещё не проверяли. */
+  telegramTest: { ok: boolean; error?: string } | null;
   /** Состояние насосов на Modbus (null — движок ещё не прислал; пуст — насосов на Modbus нет). */
   modbus: ModbusState | null;
+  /** Аварийное отключение: сработало ли и почему (null — движок ещё не прислал). */
+  failsafe: FailsafeState | null;
   /** Статус OSC/MQTT (null — движок ещё не прислал). Включение — в fountain.config.json. */
   remote: RemoteStatus | null;
   /** Редактируемая конфигурация движка: вселенные и тик (вкладка «Настройки»). */
@@ -85,6 +100,8 @@ export interface EngineConnection {
   windState: WindState | null;
   /** Статус лицензии этого ПК (null — движок ещё не прислал). §27 доработки. */
   licenseStatus: LicenseStatus | null;
+  /** USB-DMX на ПК движка: драйвер FTDI, устройства, порты, интерфейсы Musidora (ответ на scanUsbDmx). */
+  usbScan: UsbDmxScan | null;
   send: (msg: ClientMessage) => void;
   /** Применяет правку проекта локально и отправляет движку. */
   updateProject: (project: Project) => void;
@@ -128,9 +145,13 @@ export function useEngine(): EngineConnection {
   const [universes, setUniverses] = useState<UniverseInfo[]>([]);
   const [stats, setStats] = useState<EngineStats | null>(null);
   const [frames, setFrames] = useState<Record<number, Uint8Array>>({});
+  const [wireFrames, setWireFrames] = useState<Record<number, Uint8Array>>({});
   const [project, setProject] = useState<Project | null>(null);
   const [network, setNetwork] = useState<NetworkState | null>(null);
+  const [telegram, setTelegram] = useState<TelegramStatus | null>(null);
+  const [telegramTest, setTelegramTest] = useState<{ ok: boolean; error?: string } | null>(null);
   const [modbus, setModbus] = useState<ModbusState | null>(null);
+  const [failsafe, setFailsafe] = useState<FailsafeState | null>(null);
   const [remote, setRemote] = useState<RemoteStatus | null>(null);
   const [engineConfig, setEngineConfig] = useState<EngineConfigState | null>(null);
   const [backupConfig, setBackupConfig] = useState<{ enabled: boolean; intervalMin: number } | null>(null);
@@ -141,6 +162,7 @@ export function useEngine(): EngineConnection {
   const [autostart, setAutostartState] = useState<AutostartState | null>(null);
   const [windState, setWindState] = useState<WindState | null>(null);
   const [licenseStatus, setLicenseStatus] = useState<LicenseStatus | null>(null);
+  const [usbScan, setUsbScan] = useState<UsbDmxScan | null>(null);
   const [playback, setPlayback] = useState<PlaybackState>({
     activeSceneId: null,
     running: [],
@@ -202,9 +224,15 @@ export function useEngine(): EngineConnection {
               return next.length > MAX_JITTER_SAMPLES ? next.slice(next.length - MAX_JITTER_SAMPLES) : next;
             });
             break;
-          case 'frame':
-            setFrames((prev) => ({ ...prev, [msg.universe]: base64ToBytes(msg.data) }));
+          case 'frame': {
+            const logical = base64ToBytes(msg.data);
+            setFrames((prev) => ({ ...prev, [msg.universe]: logical }));
+            setWireFrames((prev) => ({
+              ...prev,
+              [msg.universe]: msg.wire ? base64ToBytes(msg.wire) : logical,
+            }));
             break;
+          }
           case 'project':
             if (pendingEditsRef.current > 0) {
               pendingEditsRef.current--;
@@ -215,11 +243,23 @@ export function useEngine(): EngineConnection {
           case 'playback':
             setPlayback(msg.state);
             break;
+          case 'telegram':
+            setTelegram(msg.state);
+            break;
+          case 'telegramTest':
+            setTelegramTest({ ok: msg.ok, ...(msg.error ? { error: msg.error } : {}) });
+            break;
           case 'network':
             setNetwork(msg.state);
             break;
           case 'modbus':
             setModbus(msg.state);
+            break;
+          case 'failsafe':
+            setFailsafe(msg.state);
+            break;
+          case 'usbDmxScan':
+            setUsbScan(msg.scan);
             break;
           case 'remoteStatus':
             setRemote({ osc: msg.osc, mqtt: msg.mqtt });
@@ -441,10 +481,14 @@ export function useEngine(): EngineConnection {
     universes,
     stats,
     frames,
+    wireFrames,
     project,
     playback,
     network,
+    telegram,
+    telegramTest,
     modbus,
+    failsafe,
     remote,
     engineConfig,
     backupConfig,
@@ -455,6 +499,7 @@ export function useEngine(): EngineConnection {
     autostart,
     windState,
     licenseStatus,
+    usbScan,
     send,
     updateProject,
     requestAudio,

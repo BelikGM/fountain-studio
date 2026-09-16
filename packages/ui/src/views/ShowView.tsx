@@ -36,6 +36,7 @@ import { comboFromEvent, getCombo } from '../hotkeys';
 import type { EngineConnection } from '../useEngine';
 import { extractVideoFrameSamples } from '../videoFrames';
 import { ShowVideoRender } from './ShowVideoRender';
+import { PauseIcon, PlayIcon, StopIcon } from '../components/Icons';
 
 const HEAD_W = 216;
 const RULER_H = 28;
@@ -136,9 +137,9 @@ export function ShowView({ engine }: { engine: EngineConnection }) {
     setSelectedId(copy.id);
   };
 
-  const removeShow = (): void => {
+  const removeShow = async (): Promise<void> => {
     if (!selected) return;
-    if (!confirmDelete('шоу', selected.name, showDependents(project, selected.id))) return;
+    if (!(await confirmDelete('шоу', selected.name, showDependents(project, selected.id)))) return;
     if (playback.show?.showId === selected.id) send({ type: 'stopShow' });
     updateProject({ ...project, shows: project.shows.filter((s) => s.id !== selected.id) });
   };
@@ -153,12 +154,12 @@ export function ShowView({ engine }: { engine: EngineConnection }) {
           <button className="btn" onClick={duplicateShow} disabled={!selected}>
             Дублировать
           </button>
-          <button className="btn" onClick={removeShow} disabled={!selected}>
+          <button className="btn" onClick={() => void removeShow()} disabled={!selected}>
             Удалить
           </button>
         </div>
         {shows.length > 0 && (
-          <div className="sidebar-actions" title="Новое шоу с той же структурой дорожек (имена, виды, привязки огибающих), но без содержимого и своего аудио — задел под новую песню">
+          <div className="sidebar-actions" data-hint="Новое шоу с той же структурой дорожек (имена, виды, привязки огибающих), но без содержимого и своего аудио — задел под новую песню">
             <select className="input-mini" value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
               <option value="">по шаблону…</option>
               {shows.map((s) => (
@@ -185,7 +186,9 @@ export function ShowView({ engine }: { engine: EngineConnection }) {
             >
               {s.name}
               {playback.show?.showId === s.id && (
-                <span className="badge badge-live">{playback.show.playing ? '▶' : '⏸'}</span>
+                <span className="badge badge-live badge-icon">
+                  {playback.show.playing ? <PlayIcon /> : <PauseIcon />}
+                </span>
               )}
             </li>
           ))}
@@ -250,6 +253,20 @@ function ShowEditor({
   const [dispMs, setDispMs] = useState(0);
   const [sel, setSel] = useState<CutRange | null>(null);
   const [selBlock, setSelBlock] = useState<{ trackId: string; blockId: string } | null>(null);
+  /** Какую дорожку тащим — для подсветки и самой перестановки. */
+  const [dragTrack, setDragTrack] = useState<number | null>(null);
+  /**
+   * Набор выделенных блоков — «дорожка:блок».
+   *
+   * Отдельно от selBlock: тот показывает, чьи свойства открыты, а набор
+   * говорит, что сдвинется, скопируется и удалится разом. Ровно как выделение
+   * элементов на схеме: есть состав набора и есть активный в нём.
+   */
+  const [selBlocks, setSelBlocks] = useState<Set<string>>(new Set());
+  const blockKey = (trackId: string, blockId: string): string => trackId + ':' + blockId;
+  // Набор нужен внутри обработчиков мыши, живущих вне перерисовки.
+  const selBlocksRef = useRef(selBlocks);
+  selBlocksRef.current = selBlocks;
   const [drag, setDrag] = useState<DragState | null>(null);
   // Панель зон эффекта плавности дорожки (§27 доработки, УХ п.16) — открыта на
   // одной дорожке за раз, id null — все закрыты.
@@ -579,21 +596,47 @@ function ShowEditor({
         e.preventDefault();
         seek(0);
       } else if (comboFromEvent(e) === getCombo('copy')) {
-        if (!selBlock) return;
-        const track = showRef.current.tracks.find((t) => t.id === selBlock.trackId);
-        const block = track && track.kind === 'blocks' ? track.blocks.find((b) => b.id === selBlock.blockId) : undefined;
-        if (block) {
-          e.preventDefault();
-          copyToClipboard('showBlock', { trackId: selBlock.trackId, block });
+        /**
+         * Копируем ВЕСЬ выделенный набор — вместе с его внутренними
+         * расстояниями. При вставке набор встаёт от плейхеда, сохраняя
+         * рисунок: именно так переносят найденную связку блоков в другое место
+         * трека, а не блок за блоком.
+         */
+        const sel = selBlocksRef.current;
+        const picked: { trackId: string; block: ShowBlock }[] = [];
+        for (const t of showRef.current.tracks) {
+          if (t.kind !== 'blocks') continue;
+          for (const b of t.blocks) if (sel.has(blockKey(t.id, b.id))) picked.push({ trackId: t.id, block: b });
         }
-      } else if (comboFromEvent(e) === getCombo('paste') && clipboardHasKind('showBlock')) {
-        const clip = pasteFromClipboard<{ trackId: string; block: ShowBlock }>('showBlock');
-        const track = clip ? showRef.current.tracks.find((t) => t.id === clip.trackId) : undefined;
-        if (clip && track && track.kind === 'blocks') {
+        if (picked.length === 0 && selBlock) {
+          const track = showRef.current.tracks.find((t) => t.id === selBlock.trackId);
+          const block = track && track.kind === 'blocks' ? track.blocks.find((b) => b.id === selBlock.blockId) : undefined;
+          if (block) picked.push({ trackId: selBlock.trackId, block });
+        }
+        if (picked.length > 0) {
           e.preventDefault();
-          const newBlock: ShowBlock = { ...clip.block, id: uid(), startMs: Math.round(currentPos()) };
-          updateTrack({ ...track, blocks: [...track.blocks, newBlock].sort((a, b) => a.startMs - b.startMs) });
-          setSelBlock({ trackId: track.id, blockId: newBlock.id });
+          const base = Math.min(...picked.map((p) => p.block.startMs));
+          copyToClipboard('showBlocks', picked.map((p) => ({ ...p, offsetMs: p.block.startMs - base })));
+        }
+      } else if (comboFromEvent(e) === getCombo('paste') && clipboardHasKind('showBlocks')) {
+        const clip = pasteFromClipboard<{ trackId: string; block: ShowBlock; offsetMs: number }[]>('showBlocks');
+        if (clip && clip.length > 0) {
+          e.preventDefault();
+          const at = Math.round(currentPos());
+          const added = new Set<string>();
+          const tracks = showRef.current.tracks.map((t) => {
+            if (t.kind !== 'blocks') return t;
+            const mine = clip.filter((c) => c.trackId === t.id);
+            if (mine.length === 0) return t;
+            const fresh = mine.map((c) => {
+              const nb: ShowBlock = { ...c.block, id: uid(), startMs: Math.max(0, at + c.offsetMs) };
+              added.add(blockKey(t.id, nb.id));
+              return nb;
+            });
+            return { ...t, blocks: [...t.blocks, ...fresh].sort((a, b) => a.startMs - b.startMs) };
+          });
+          onChange({ ...showRef.current, tracks });
+          setSelBlocks(added);
         }
       }
     };
@@ -908,6 +951,23 @@ function ShowEditor({
     if (selBlock?.trackId === id) setSelBlock(null);
   };
 
+  /**
+   * Перестановка дорожки мышью на любое место.
+   *
+   * Кнопки ↑↓ двигают на одну позицию — этого хватает на трёх дорожках, но
+   * когда их полтора десятка, поднять нижнюю наверх становится десятком
+   * кликов. Порядок дорожек — это порядок их полос на таймлайне, и собирать
+   * рядом связанные (свет чаши, струи кольца) удобно именно перетаскиванием.
+   */
+  const reorderTrack = (from: number, to: number): void => {
+    if (from === to) return;
+    const tracks = [...show.tracks];
+    const [moved] = tracks.splice(from, 1);
+    if (!moved) return;
+    tracks.splice(to, 0, moved);
+    onChange({ ...show, tracks });
+  };
+
   const moveTrack = (i: number, dir: -1 | 1): void => {
     const j = i + dir;
     if (j < 0 || j >= show.tracks.length) return;
@@ -924,15 +984,34 @@ function ShowEditor({
     };
     const onUp = (): void => {
       setDrag((d) => {
-        if (d) {
-          const track = showRef.current.tracks.find((t) => t.id === d.trackId);
-          if (track && track.kind === 'blocks') {
-            const blocks = track.blocks
-              .map((b) => (b.id === d.blockId ? adjustedBlock(b, d) : b))
-              .sort((a, b) => a.startMs - b.startMs);
-            updateTrack({ ...track, blocks });
-          }
-        }
+        if (!d) return null;
+        /**
+         * Сдвиг применяется КО ВСЕМУ набору, а растягивание — только к тому
+         * блоку, за край которого потянули: одинаковая длительность у разных
+         * блоков почти никогда не нужна, а вот подвинуть связку блоков как
+         * целое — постоянная работа при монтаже под музыку.
+         */
+        const sel = selBlocksRef.current;
+        const group = d.kind === 'move' && sel.size > 0;
+        const next = showRef.current.tracks.map((t) => {
+          if (t.kind !== 'blocks') return t;
+          const touched = group
+            ? t.blocks.some((b) => sel.has(blockKey(t.id, b.id)))
+            : t.id === d.trackId;
+          if (!touched) return t;
+          const blocks = t.blocks
+            .map((b) => {
+              const mine = group ? sel.has(blockKey(t.id, b.id)) : t.id === d.trackId && b.id === d.blockId;
+              if (!mine) return b;
+              // Каждый блок едет от СВОЕГО исходного места на общую дельту.
+              return group
+                ? { ...b, startMs: Math.max(0, snap(b.startMs + d.dMs)) }
+                : adjustedBlock(b, d);
+            })
+            .sort((a, b) => a.startMs - b.startMs);
+          return { ...t, blocks };
+        });
+        onChange({ ...showRef.current, tracks: next });
         return null;
       });
     };
@@ -963,6 +1042,54 @@ function ShowEditor({
     }
     return Math.round(ms / 100) * 100;
   };
+  /**
+   * Рамка выделения по таймлайну.
+   *
+   * Время берём из положения рамки по горизонтали, дорожки — по вертикали: у
+   * каждой ленты в разметке стоит её id, и на отпускании достаточно спросить
+   * у браузера, какие ленты рамка накрыла. Так не приходится ни держать
+   * геометрию дорожек в состоянии, ни перестраивать разметку таймлайна.
+   */
+  const startBand = (clientX: number, clientY: number): void => {
+    const el = document.createElement('div');
+    el.className = 'tl-band';
+    document.body.appendChild(el);
+    const draw = (x: number, y: number): void => {
+      el.style.left = `${Math.min(clientX, x)}px`;
+      el.style.top = `${Math.min(clientY, y)}px`;
+      el.style.width = `${Math.abs(x - clientX)}px`;
+      el.style.height = `${Math.abs(y - clientY)}px`;
+    };
+    draw(clientX, clientY);
+    const onMove = (e: MouseEvent): void => draw(e.clientX, e.clientY);
+    const onUp = (e: MouseEvent): void => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      const box = el.getBoundingClientRect();
+      el.remove();
+      if (box.width < 4 && box.height < 4) return;
+      const picked = new Set<string>();
+      for (const t of showRef.current.tracks) {
+        if (t.kind !== 'blocks') continue;
+        const lane = document.querySelector<HTMLElement>(`[data-blocks-lane="${t.id}"]`);
+        if (!lane) continue;
+        const lr = lane.getBoundingClientRect();
+        // Лента должна попасть в рамку по вертикали.
+        if (lr.bottom < box.top || lr.top > box.bottom) continue;
+        const fromMs = ((box.left - lr.left) / scale) * 1000;
+        const toMs = ((box.right - lr.left) / scale) * 1000;
+        for (const b of t.blocks) {
+          // Берём блок, если он хоть частью попал в отрезок времени.
+          if (b.startMs + b.durationMs < fromMs || b.startMs > toMs) continue;
+          picked.add(blockKey(t.id, b.id));
+        }
+      }
+      setSelBlocks((prev) => (e.ctrlKey || e.metaKey ? new Set([...prev, ...picked]) : picked));
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
   const adjustedBlock = (b: ShowBlock, d: DragState): ShowBlock =>
     d.kind === 'move'
       ? { ...b, startMs: Math.max(0, snap(d.origStartMs + d.dMs)) }
@@ -1054,16 +1181,19 @@ function ShowEditor({
 
       <div className="form-row transport">
         {!playing ? (
-          <button className="btn active" onClick={play} disabled={durMs <= 0}>
-            ▶ Пуск
+          <button className="btn btn-icon active" onClick={play} disabled={durMs <= 0}>
+            <PlayIcon />
+            Пуск
           </button>
         ) : (
-          <button className="btn" onClick={() => pause()}>
-            ⏸ Пауза
+          <button className="btn btn-icon" onClick={() => pause()}>
+            <PauseIcon />
+            Пауза
           </button>
         )}
-        <button className="btn" onClick={stop}>
-          ■ Стоп
+        <button className="btn btn-icon" onClick={stop}>
+          <StopIcon />
+          Стоп
         </button>
         <span className="time-display">
           {fmtTime(dispMs)} / {fmtTime(durMs)}
@@ -1089,17 +1219,17 @@ function ShowEditor({
           className="btn"
           onClick={autoStage}
           disabled={!buffer}
-          title="Аудиоанализ трека: черновая огибающая громкости на насос/диммер + оценка темпа (§17)"
+          data-hint="Аудиоанализ трека: черновая огибающая громкости на насос/диммер + оценка темпа (§17)"
         >
           ⚡ Автопостановка
         </button>
         {bpm > 0 && (
-          <label className="field" title="Темп определён автоматически по аудиодорожке (та же оценка, что у «Автопостановки»)">
+          <label className="field" data-hint="Темп определён автоматически по аудиодорожке (та же оценка, что у «Автопостановки»)">
             <input type="checkbox" checked={snapToBeat} onChange={(e) => setSnapToBeat(e.target.checked)} /> прилипание к
             долям ({bpm} BPM)
           </label>
         )}
-        <label className={videoBusy ? 'btn' : 'btn'} title="Извлечь яркость/цвет из видеоролика → черновые дорожки (§4). Не ИИ — эвристика по кадрам.">
+        <label className={videoBusy ? 'btn' : 'btn'} data-hint="Извлечь яркость/цвет из видеоролика → черновые дорожки (§4). Не ИИ — эвристика по кадрам.">
           {videoBusy ? '🎬 Читаю…' : '🎬 Из видео'}
           <input
             type="file"
@@ -1120,7 +1250,7 @@ function ShowEditor({
             setVideoRenderOpen(true);
           }}
           disabled={durMs <= 0}
-          title="Записать 3D-сцену на время шоу в видеофайл — показать заказчику программу до выезда на объект"
+          data-hint="Записать 3D-сцену на время шоу в видеофайл — показать заказчику программу до выезда на объект"
         >
           🎥 Рендер в видео
         </button>
@@ -1131,7 +1261,7 @@ function ShowEditor({
             value={recordTrackId ?? blocksTracks[0]!.id}
             onChange={(e) => setRecordTrackId(e.target.value)}
             disabled={recording}
-            title="Дорожка блоков, куда пишутся клавиши во время записи"
+            data-hint="Дорожка блоков, куда пишутся клавиши во время записи"
           >
             {blocksTracks.map((t) => (
               <option key={t.id} value={t.id}>
@@ -1144,7 +1274,7 @@ function ShowEditor({
           className={recording ? 'btn btn-danger active' : 'btn'}
           onClick={toggleRecording}
           disabled={blocksTracks.length === 0}
-          title="Живая запись: клавиши из «Клавиши» (сцена/секвенсор) пишутся в выбранную дорожку блоков, вооружённые огибающие — тяните ползунок"
+          data-hint="Живая запись: клавиши из «Клавиши» (сцена/секвенсор) пишутся в выбранную дорожку блоков, вооружённые огибающие — тяните ползунок"
         >
           {recording ? '⏺ Идёт запись' : '⏺ Запись'}
         </button>
@@ -1200,7 +1330,24 @@ function ShowEditor({
 
           {show.tracks.map((track, ti) => (
             <div key={track.id} className="tl-row" style={{ height: track.kind === 'blocks' ? BLOCKS_H : ENV_H }}>
-              <div className="tl-head">
+              <div
+                className={dragTrack === ti ? 'tl-head row-dragging' : 'tl-head'}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (dragTrack !== null) reorderTrack(dragTrack, ti);
+                  setDragTrack(null);
+                }}
+              >
+                <span
+                  className="drag-handle"
+                  data-hint="Перетащить, чтобы переставить дорожку. Кнопками ↑↓ — на одну позицию"
+                  draggable
+                  onDragStart={() => setDragTrack(ti)}
+                  onDragEnd={() => setDragTrack(null)}
+                >
+                  ⠿
+                </span>
                 <input
                   className="input input-mini tl-track-name"
                   value={track.name}
@@ -1236,7 +1383,7 @@ function ShowEditor({
                       <>
                         <button
                           className={envRecordArmed.has(track.id) ? 'btn btn-small btn-danger' : 'btn btn-small'}
-                          title="Вооружить запись огибающей: тяните ползунок во время воспроизведения"
+                          data-hint="Вооружить запись огибающей: тяните ползунок во время воспроизведения"
                           onClick={() =>
                             setEnvRecordArmed((prev) => {
                               const next = new Set(prev);
@@ -1263,7 +1410,7 @@ function ShowEditor({
                   </div>
                 )}
                 <div className="tl-head-controls">
-                  <label className="dim" title="Опережение дорожки, мс: вода читается раньше света">
+                  <label className="dim" data-hint="Опережение дорожки, мс: вода читается раньше света">
                     <input
                       className="input input-mini input-offset"
                       type="number"
@@ -1275,7 +1422,7 @@ function ShowEditor({
                   </label>
                   <button
                     className={track.muted ? 'btn btn-small btn-danger' : 'btn btn-small'}
-                    title="Приглушить дорожку"
+                    data-hint="Приглушить дорожку"
                     onClick={() => updateTrack({ ...track, muted: !track.muted })}
                   >
                     M
@@ -1285,7 +1432,7 @@ function ShowEditor({
                       className={
                         track.effects.length > 0 || effectsOpenId === track.id ? 'btn btn-small active' : 'btn btn-small'
                       }
-                      title="Зоны эффекта плавности (Quick/Rate/Decay) на этой дорожке"
+                      data-hint="Зоны эффекта плавности (Quick/Rate/Decay) на этой дорожке"
                       onClick={() => setEffectsOpenId(effectsOpenId === track.id ? null : track.id)}
                     >
                       🎚{track.effects.length > 0 ? ` ${track.effects.length}` : ''}
@@ -1294,7 +1441,7 @@ function ShowEditor({
                   {track.kind === 'envelope' && track.points.length > 2 && (
                     <button
                       className={smoothOpenId === track.id ? 'btn btn-small active' : 'btn btn-small'}
-                      title="Прореживание и сглаживание записанной вживую огибающей"
+                      data-hint="Прореживание и сглаживание записанной вживую огибающей"
                       onClick={() => setSmoothOpenId(smoothOpenId === track.id ? null : track.id)}
                     >
                       ∿
@@ -1342,8 +1489,24 @@ function ShowEditor({
                     updateTrack({ ...track, blocks: [...track.blocks, block].sort((a, b) => a.startMs - b.startMs) });
                     setSelBlock({ trackId: track.id, blockId: block.id });
                   }}
-                  onStartDrag={(block, kind, clientX) => {
+                  snapMs={snap}
+                  selectedKeys={selBlocks}
+                  trackKey={blockKey}
+                  onBand={startBand}
+                  onStartDrag={(block, kind, clientX, additive) => {
+                    const key = blockKey(track.id, block.id);
                     setSelBlock({ trackId: track.id, blockId: block.id });
+                    setSelBlocks((prev) => {
+                      if (additive) {
+                        const next = new Set(prev);
+                        if (next.has(key)) next.delete(key);
+                        else next.add(key);
+                        return next;
+                      }
+                      // Клик по блоку, который уже в наборе, набор не сбрасывает —
+                      // иначе групповой сдвиг было бы не начать.
+                      return prev.has(key) ? prev : new Set([key]);
+                    });
                     setDrag({
                       kind,
                       trackId: track.id,
@@ -1417,7 +1580,7 @@ function ShowEditor({
             {show.cuts.map((c, i) => (
               <span key={i} className="cut-chip">
                 {fmtTime(c.startMs)}–{fmtTime(c.endMs)}
-                <button className="btn btn-small" title="Восстановить фрагмент" onClick={() => removeCut(i)}>
+                <button className="btn btn-small" data-hint="Восстановить фрагмент" onClick={() => removeCut(i)}>
                   ↩
                 </button>
               </span>
@@ -1677,48 +1840,82 @@ function BlocksLane({
   scale,
   drag,
   adjustedBlock,
+  snapMs,
   selBlockId,
+  selectedKeys,
+  trackKey,
   sceneName,
   seqName,
   onAdd,
   onStartDrag,
+  onBand,
 }: {
   track: BlocksTrack;
   laneW: number;
   scale: number;
   drag: DragState | null;
   adjustedBlock: (b: ShowBlock, d: DragState) => ShowBlock;
+  /** Прилипание к сетке — то же, что при записи в проект. */
+  snapMs: (ms: number) => number;
   selBlockId: string | null;
+  /** Ключи выделенных блоков — по ним подсвечиваем весь набор. */
+  selectedKeys: Set<string>;
+  trackKey: (trackId: string, blockId: string) => string;
   sceneName: (id: string) => string;
   seqName: (id: string) => string;
   onAdd: (tMs: number) => void;
-  onStartDrag: (block: ShowBlock, kind: 'move' | 'resize', clientX: number) => void;
+  onStartDrag: (block: ShowBlock, kind: 'move' | 'resize', clientX: number, additive: boolean) => void;
+  /** Начата рамка выделения — с Shift по пустому месту ленты. */
+  onBand: (clientX: number, clientY: number) => void;
 }) {
   return (
     <div
       className={track.muted ? 'tl-lane lane-muted' : 'tl-lane'}
+      data-blocks-lane={track.id}
       style={{ width: laneW }}
       onDoubleClick={(e) => {
         if ((e.target as HTMLElement).closest('.block')) return;
         const r = e.currentTarget.getBoundingClientRect();
         onAdd(((e.clientX - r.left) / scale) * 1000);
       }}
-      title="Двойной щелчок — добавить блок"
+      data-hint="Двойной щелчок — добавить блок · Shift и протяжка — выделить блоки рамкой"
+      onMouseDown={(e) => {
+        if (!e.shiftKey || (e.target as HTMLElement).closest('.block')) return;
+        e.preventDefault();
+        onBand(e.clientX, e.clientY);
+      }}
     >
       {track.blocks.map((raw) => {
-        const b = drag && drag.trackId === track.id && drag.blockId === raw.id ? adjustedBlock(raw, drag) : raw;
+        const inSet = selectedKeys.has(trackKey(track.id, raw.id));
+        const dragged = drag !== null && drag.trackId === track.id && drag.blockId === raw.id;
+        /**
+         * Двигается ВЕСЬ набор: тянут один блок — едут все выделенные, и
+         * каждый от своего исходного места. Растягивание так не размножается:
+         * его получает только тот блок, за край которого взялись.
+         */
+        const b =
+          drag === null
+            ? raw
+            : dragged && drag.kind === 'resize'
+              ? adjustedBlock(raw, drag)
+              : drag.kind === 'move' && (dragged || inSet)
+                ? { ...raw, startMs: Math.max(0, snapMs(raw.startMs + drag.dMs)) }
+                : raw;
         return (
           <div
             key={b.id}
             className={
-              'block' + (b.type === 'sequence' ? ' block-seq' : '') + (b.id === selBlockId ? ' selected' : '')
+              'block' +
+              (b.type === 'sequence' ? ' block-seq' : '') +
+              (b.id === selBlockId ? ' selected' : '') +
+              (inSet ? ' block-marked' : '')
             }
             style={{ left: (b.startMs / 1000) * scale, width: Math.max(8, (b.durationMs / 1000) * scale) }}
             onMouseDown={(e) => {
               e.preventDefault();
               const r = e.currentTarget.getBoundingClientRect();
               const kind = e.clientX > r.right - 8 ? 'resize' : 'move';
-              onStartDrag(raw, kind, e.clientX);
+              onStartDrag(raw, kind, e.clientX, e.ctrlKey || e.metaKey);
             }}
           >
             <span className="block-label">{b.type === 'scene' ? sceneName(b.refId) : `⟳ ${seqName(b.refId)}`}</span>
@@ -1760,9 +1957,10 @@ function EnvelopeLane({
   return (
     <div
       className={track.muted ? 'tl-lane lane-muted' : 'tl-lane'}
+      data-blocks-lane={track.id}
       style={{ width: laneW }}
       data-lane={track.id}
-      title="Двойной щелчок — точка; правая кнопка — удалить точку"
+      data-hint="Двойной щелчок — точка; правая кнопка — удалить точку"
     >
       <svg width={laneW} height={ENV_H} className="env-svg">
         {points.length > 0 && <polyline points={poly} className="env-line" />}

@@ -1,3 +1,4 @@
+import { nozzlePumpIds, nozzleValveIds } from './layout';
 import type { FountainLayout } from './layout';
 import type { DeviceProfile, PatchedDevice, Scene } from './project';
 import { uid } from './project';
@@ -32,10 +33,12 @@ export function layoutActors(layout: FountainLayout, role: ActorRole): GeoActor[
     }
     return out;
   }
-  const key = role === 'pump' ? 'pumpDeviceId' : 'valveDeviceId';
+  // Все устройства роли, а не только основное: если форсунку питают два
+  // насоса, генератор (волна, зеркало) должен двигать оба. Координата у них
+  // общая — форсунки, поэтому фазу волны они получают одинаковую.
   for (const n of layout.nozzles) {
-    const id = n[key];
-    if (id && !seen.has(id)) {
+    for (const id of role === 'pump' ? nozzlePumpIds(n) : nozzleValveIds(n)) {
+      if (seen.has(id)) continue;
       seen.add(id);
       out.push({ deviceId: id, x: n.x, y: n.y });
     }

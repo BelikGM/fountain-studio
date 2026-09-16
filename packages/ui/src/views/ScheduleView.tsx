@@ -133,7 +133,7 @@ export function ScheduleView({ engine }: { engine: EngineConnection }) {
                       <button
                         key={d}
                         className={e.days.includes(d) ? 'btn btn-small active' : 'btn btn-small'}
-                        title={e.days.length === 0 ? 'Дни не отмечены — каждый день' : ''}
+                        data-hint={e.days.length === 0 ? 'Дни не отмечены — каждый день' : ''}
                         onClick={() =>
                           patch(e.id, {
                             days: e.days.includes(d) ? e.days.filter((x) => x !== d) : [...e.days, d],

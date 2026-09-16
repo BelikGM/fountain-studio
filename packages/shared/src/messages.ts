@@ -3,11 +3,70 @@
  * Все сообщения — JSON. Кадры DMX передаются в base64.
  */
 
+import type { FailsafeState } from './failsafe';
 import type { LicenseStatus } from './license';
 import type { Project } from './project';
 import type { WindLimitConfig } from './windlimit';
 
-export type TestPatternMode = 'off' | 'sine' | 'chase' | 'ramp' | 'strobe' | 'stairs' | 'random';
+export type TestPatternMode =
+  | 'off'
+  | 'sine'
+  | 'chase'
+  /**
+   * Подъём 0→255 за период и сброс. Раньше рядом был отдельный 'slowramp' —
+   * он считался ТОЙ ЖЕ формулой и отличался только умолчанием периода, что
+   * теперь бессмысленно: период задаётся полем. Режимы объединены.
+   */
+  | 'ramp'
+  | 'strobe'
+  | 'stairs'
+  /** Чётные/нечётные приборы через одного — ловит сдвиг и перепутанную адресацию. */
+  | 'oddeven'
+  /** По одному прибору за раз: «какой это по счёту» без беготни к щиту. */
+  | 'solo';
+
+/**
+ * К чему применять тест-генератор (§27 доработки). 'all' — вся вселенная, как
+ * было раньше: генератор подменяет собой весь кадр. Остальные — только каналы
+ * приборов этого вида, остальное продолжает играть от сцен/шоу; так можно
+ * гонять насосы, не гася свет, и наоборот.
+ */
+export type TestPatternScope = 'all' | 'pump' | 'valve' | 'lamp';
+
+/**
+ * Темп генератора в секундах. Для шаговых режимов (бегущая, чёт/нечёт, по
+ * очереди) — время одного шага; для циклических (синус, подъём, строб) —
+ * длительность полного цикла. «Ступени» статичны и темпа не имеют.
+ * Не задан — берётся умолчание режима.
+ *
+ * Умолчания намеренно в одном диапазоне (0.1–6 с) — раньше разброс был от
+ * 0.025 до 20 с, и переключение режима то дёргало картину, то заставляло ждать
+ * полминуты. Значения подобраны так, чтобы каждый режим сразу читался глазом;
+ * тонкая настройка — полем в Пульте.
+ */
+export const DEFAULT_PATTERN_SPEED_SEC: Record<TestPatternMode, number> = {
+  off: 1,
+  sine: 4,
+  chase: 0.1,
+  ramp: 6,
+  strobe: 1,
+  stairs: 0,
+  oddeven: 1,
+  solo: 2,
+};
+
+/** Шаговые режимы: у них speedSec — время одного шага, а не период цикла.
+ *  «Ступени» сюда не входят — картина статична, темп ей не нужен. */
+export const STEP_PATTERNS: TestPatternMode[] = ['chase', 'oddeven', 'solo'];
+
+/**
+ * Режимы с ПЛАВНОЙ шкалой: насос идёт через промежуточные значения, а не
+ * скачет 0/255. У них клапаны держатся открытыми всё время работы генератора —
+ * иначе при значении насоса ниже порога клапан закрыт и струи просто нет,
+ * смотреть не на что. У остальных (строб, бегущая, по очереди, чёт/нечёт)
+ * значение и так двоичное, и клапан честно повторяет его.
+ */
+export const ANALOG_PATTERNS: TestPatternMode[] = ['sine', 'ramp', 'stairs'];
 
 export interface UniverseInfo {
   /** Логический номер вселенной в проекте (1..N). */
@@ -28,6 +87,7 @@ export interface EngineStats {
   /** Всего отправлено кадров вселенных во все выходы. */
   framesSent: number;
   pattern: TestPatternMode;
+  patternScope: TestPatternScope;
 }
 
 /** Состояние запущенного секвенсора для отображения в UI. */
@@ -119,7 +179,28 @@ export interface RdmDeviceInfoPayload {
   sensorCount: number;
 }
 
-export type RdmAction = 'deviceInfo' | 'labels' | 'getIdentify' | 'setIdentify' | 'getAddress' | 'setAddress';
+export type RdmAction =
+  | 'deviceInfo'
+  | 'labels'
+  | 'getIdentify'
+  | 'setIdentify'
+  | 'getAddress'
+  | 'setAddress'
+  /** Опрос всех датчиков прибора: сколько их — прибор сообщает сам. */
+  | 'sensors';
+
+/** Один датчик прибора: что меряет, чем и сколько намерил. */
+export interface RdmSensorReading {
+  index: number;
+  /** Человекочитаемое: «Температура», «Напряжение»… */
+  typeName: string;
+  /** Имя от самого прибора, если он его дал. */
+  description: string;
+  unit: string;
+  value: number;
+  lowest: number;
+  highest: number;
+}
 
 /** Состояние насоса, управляемого напрямую по Modbus (§12 п.9). */
 export interface PumpModbusStatus {
@@ -147,7 +228,33 @@ export interface ModbusState {
  * отдельно от непрерывного живого автосохранения: защита от «сам всё сломал»,
  * а не от потери процесса.
  */
+/** Что можно показать про уведомления в интерфейсе — токена здесь нет и быть не должно. */
+export interface TelegramStatus {
+  enabled: boolean;
+  hasToken: boolean;
+  chatId: string;
+  queued: number;
+  dailyHour: number;
+  alarms: boolean;
+  /** Имя бота (@name) по токену — чтобы знать, куда слать /start. */
+  botName: string;
+  /** Номера тем форума по разделам; 0 — раздел идёт в общий чат. */
+  topicAlarm: number;
+  topicReport: number;
+  topicState: number;
+  /** Раскладывать по объектам темами, когда темы доступны. */
+  topicsBySite: boolean;
+  /** Доступны ли темы в этом чате: null — ещё не выяснено (нет связи или получателя). */
+  topicsAvailable: boolean | null;
+  /** Сколько тем объектов уже заведено. */
+  siteTopicCount: number;
+  /** Тихий режим действует до этого момента (unix, мс); 0 — выключен. */
+  quietUntilMs: number;
+}
+
 export interface BackupInfo {
+  /** Эталон — защищённый снимок, который не прореживается и не переписывается автоматикой. */
+  reference?: boolean;
   /** Имя файла в папке backups/ рядом с проектом, содержит метку времени. */
   file: string;
   atMs: number;
@@ -167,6 +274,13 @@ export interface LogEvent {
   source: string;
   level: 'info' | 'warn' | 'error';
   message: string;
+  /**
+   * «Прибор/узел вернулся в строй». Ставится явно источником события, а не
+   * угадывается по тексту: уведомления по этой пометке шлют «✅
+   * Восстановлено», а обычные info-события (запуск сцены и т.п.) в
+   * Telegram не попадают.
+   */
+  kind?: 'recovery';
 }
 
 /**
@@ -174,7 +288,7 @@ export interface LogEvent {
  * (вкладка «Настройки»). Зеркало OutputConfig движка.
  */
 export interface ConfigOutput {
-  type: 'artnet' | 'sacn' | 'usb-dmx';
+  type: 'artnet' | 'sacn' | 'usb-dmx' | 'open-dmx' | 'musidora';
   /** IP ноды (artnet) — обязателен, если не broadcast. */
   host?: string;
   port?: number;
@@ -182,9 +296,64 @@ export interface ConfigOutput {
   universe: number;
   broadcast?: boolean;
   priority?: number;
-  /** COM-порт (usb-dmx). */
+  /**
+   * COM-порт (usb-dmx, open-dmx). У musidora — выбор интерфейса: пусто —
+   * первый свободный (как FontanPlay), серийный номер FTDI или «COMn».
+   */
   path?: string;
   baudRate?: number;
+  /** Интерфейс FountanPlay: выход 1…3 (разъём DMX; у USB2DMX — 1 и 2). */
+  musidoraOut?: number;
+}
+
+/** FTDI-устройство, найденное драйвером D2XX (ответ на scanUsbDmx). */
+export interface UsbFtdiDevice {
+  index: number;
+  serial: string;
+  description: string;
+  type: string;
+  id: number;
+  opened: boolean;
+}
+
+/** COM-порт системы (ответ на scanUsbDmx). */
+export interface UsbSerialPort {
+  path: string;
+  manufacturer: string;
+  vendorId: string;
+  productId: string;
+  serialNumber: string;
+}
+
+/** Состояние открытого интерфейса Musidora. */
+export interface MusidoraLinkInfo {
+  target: string;
+  phase: 'loading' | 'searching' | 'open' | 'error';
+  text: string;
+  serial: string;
+  description: string;
+  outs: number[];
+  framesOk: number;
+  framesFailed: number;
+  lastOkMs: number;
+}
+
+/**
+ * Почему не удалось выйти на драйвер FTDI. Разделяем «драйвера вообще нет»
+ * (надо скачать и поставить) и «драйвер есть, но интерфейс ни разу не
+ * подключали к этому ПК» (Windows положит библиотеку сама при подключении).
+ */
+export type UsbDriverProblem = 'no-driver' | 'no-device' | 'wrong-bitness' | 'broken' | 'other';
+
+/** Всё про USB-DMX на этом компьютере — для вкладки «Настройки». */
+export interface UsbDmxScan {
+  /** Библиотека драйвера FTDI (ftd2xx.dll): версия или причина, почему нет. */
+  d2xx: { ok: true; version: string; dll: string } | { ok: false; error: string; problem: UsbDriverProblem };
+  ftdi: UsbFtdiDevice[];
+  ports: UsbSerialPort[];
+  links: MusidoraLinkInfo[];
+  /** Время снимка на движке. */
+  atMs: number;
 }
 
 export interface ConfigUniverse {
@@ -202,7 +371,7 @@ export type ClientMessage =
   // воспроизведения до resumeAll. Отдельно от blackout — см. Console/ConsoleView.
   | { type: 'pauseAll' }
   | { type: 'resumeAll' }
-  | { type: 'testPattern'; mode: TestPatternMode }
+  | { type: 'testPattern'; mode: TestPatternMode; scope?: TestPatternScope; speedSec?: number }
   // Проект: полная замена (редактор шлёт после каждого изменения, движок сохраняет на диск).
   | { type: 'updateProject'; project: Project }
   // Ctrl+S (§27 доработки, УХ п.6): принудительный немедленный flush на диск —
@@ -245,11 +414,13 @@ export type ClientMessage =
   | { type: 'stopPlaylist' }
   // Немедленный опрос сети (ArtPoll + ArtTodRequest вне расписания).
   | { type: 'refreshNetwork' }
+  // USB-DMX: найти FTDI-устройства и COM-порты, состояние интерфейсов Musidora.
+  | { type: 'scanUsbDmx' }
   // Захват входящего ArtDMX (§17 п.1): снимок кадра вселенной проекта и период цикла.
   | { type: 'getDmxCapture'; universe: number }
   | { type: 'measureDmxCycle'; universe: number }
   // RDM (§3 доработки): GET/SET по обнаруженному через TOD UID.
-  | { type: 'rdmRequest'; uid: string; action: 'deviceInfo' | 'labels' | 'getIdentify' | 'getAddress' }
+  | { type: 'rdmRequest'; uid: string; action: 'deviceInfo' | 'labels' | 'getIdentify' | 'getAddress' | 'sensors' }
   | { type: 'rdmRequest'; uid: string; action: 'setIdentify'; on: boolean }
   | { type: 'rdmRequest'; uid: string; action: 'setAddress'; address: number }
   // Настройки движка (вкладка «Настройки»): вселенные и шаг тика. Движок
@@ -262,6 +433,23 @@ export type ClientMessage =
   | { type: 'listBackups' }
   | { type: 'takeBackupNow' }
   | { type: 'restoreBackup'; file: string }
+  | { type: 'setReferenceBackup' }
+  /** Настройка уведомлений в Telegram. Токен уходит на движок и там же остаётся. */
+  | {
+      type: 'updateTelegram';
+      token?: string;
+      chatId?: string;
+      enabled?: boolean;
+      dailyHour?: number;
+      alarms?: boolean;
+      topicAlarm?: number;
+      topicReport?: number;
+      topicState?: number;
+      topicsBySite?: boolean;
+    }
+  | { type: 'testTelegram' }
+  /** Тихий режим на N часов (0 — снять): не слать аварии во время работ на объекте. */
+  | { type: 'setTelegramQuiet'; hours: number }
   // Журнал событий (§27 доработки, §3 п.1): источники на стороне редактора
   // (сейчас — клавиатурные привязки из вкладки «Клавиши») сами не видны
   // движку, поэтому явно сообщают о срабатывании, чтобы попасть в общий
@@ -281,11 +469,22 @@ export type ServerMessage =
   /** Редактируемая конфигурация движка (шлётся при подключении и после updateConfig). */
   | { type: 'config'; tickMs: number; universes: ConfigUniverse[] }
   | { type: 'stats'; stats: EngineStats }
-  | { type: 'frame'; universe: number; data: string }
+  /**
+   * Кадр вселенной. data — РАСЧЁТНЫЙ кадр по адресам проекта (по нему работают
+   * фейдеры Пульта: вы двигаете свой адрес и видите своё значение). wire — то,
+   * что после переадресации реально уходит в кабель; приходит, только если у
+   * вселенной есть переадресация, иначе он совпадает с data. По wire рисуется
+   * 3D-вид: там должно быть видно, что произойдёт на объекте.
+   */
+  | { type: 'frame'; universe: number; data: string; wire?: string }
   | { type: 'project'; project: Project }
   | { type: 'playback'; state: PlaybackState }
   | { type: 'network'; state: NetworkState }
   | { type: 'modbus'; state: ModbusState }
+  /** Аварийное отключение включилось или снялось (см. failsafe.ts). */
+  | { type: 'failsafe'; state: FailsafeState }
+  /** Ответ на scanUsbDmx (только запросившему). */
+  | { type: 'usbDmxScan'; scan: UsbDmxScan }
   /** Ответ на getAudio (только запросившему клиенту); dataBase64 = '' — файла нет. */
   | { type: 'audio'; name: string; dataBase64: string }
   /** Ответ на exportProject — готовый .zip для скачивания. */
@@ -306,10 +505,15 @@ export type ServerMessage =
   | { type: 'rdmResponse'; uid: string; ok: true; action: 'labels'; manufacturer: string; model: string; softwareVersion: string }
   | { type: 'rdmResponse'; uid: string; ok: true; action: 'getIdentify' | 'setIdentify'; identify: boolean }
   | { type: 'rdmResponse'; uid: string; ok: true; action: 'getAddress' | 'setAddress'; address: number }
+  /** Показания всех датчиков прибора — пустой список означает «датчиков нет». */
+  | { type: 'rdmResponse'; uid: string; ok: true; action: 'sensors'; sensors: RdmSensorReading[] }
   /** Настройка авто-бэкапов (шлётся при подключении и после updateBackupConfig). */
   | { type: 'backupConfig'; enabled: boolean; intervalMin: number }
   /** Список снимков (шлётся при подключении, после listBackups и после снятия нового снимка). */
   | { type: 'backupList'; backups: BackupInfo[] }
+  /** Состояние уведомлений — БЕЗ токена: наружу уходит только «настроено или нет». */
+  | { type: 'telegram'; state: TelegramStatus }
+  | { type: 'telegramTest'; ok: boolean; error?: string }
   /** Ответ на saveNow. */
   | { type: 'saved'; atMs: number }
   /** Новое событие в журнале (шлётся всем клиентам сразу при возникновении). */

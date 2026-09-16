@@ -10,10 +10,11 @@
  * Данные (fountain.config.json, fountain.project.json, audio/) живут в
  * «Документы\Fountain Studio» — обновление приложения их не трогает.
  */
-const { app, BrowserWindow, dialog, utilityProcess } = require('electron');
+const { app, BrowserWindow, dialog, net: enet, protocol, utilityProcess } = require('electron');
 const fs = require('node:fs');
 const net = require('node:net');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 const ENGINE_PORT = 9520;
 const DEV_URL = 'http://localhost:5180';
@@ -27,6 +28,60 @@ function dataDir() {
   const dir = path.join(app.getPath('documents'), 'Fountain Studio');
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+/**
+ * Папка со своими 3D-моделями форсунок, прожекторов и чаш.
+ *
+ * Лежит рядом с конфигом и проектом, в «Документы\Fountain Studio\models», а
+ * НЕ внутри установленного приложения: то, что упаковано в приложение, при
+ * обновлении затирается и вообще доступно только на чтение. Сюда пользователь
+ * кладёт свои .glb и правит index.json.
+ */
+function modelsDir() {
+  const dir = path.join(dataDir(), 'models');
+  fs.mkdirSync(dir, { recursive: true });
+  const index = path.join(dir, 'index.json');
+  if (!fs.existsSync(index)) {
+    fs.writeFileSync(
+      index,
+      JSON.stringify(
+        {
+          note:
+            'Свои 3D-модели. Положите файл .glb рядом с этим файлом и добавьте запись в models: ' +
+            '{ "file": "имя.glb", "name": "как назвать в списке", "for": "nozzle" | "light" | "bowl" }.',
+          models: [],
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+  }
+  return dir;
+}
+
+/**
+ * Отдаём эту папку окну по схеме usermodels://local/<имя файла>.
+ *
+ * Окно в собранном приложении открыто через file:// и просто так читать
+ * произвольную папку на диске не может — нужна своя схема. Наружу отдаём
+ * ТОЛЬКО имя файла из этой папки: путь из адреса срезается, чтобы адресом
+ * нельзя было выйти за её пределы.
+ */
+function serveModels() {
+  protocol.handle('usermodels', (request) => {
+    let name = '';
+    try {
+      name = path.basename(decodeURIComponent(new URL(request.url).pathname));
+    } catch {
+      name = '';
+    }
+    if (!name || name === '.' || name === '..') return new Response('', { status: 404 });
+    const file = path.join(modelsDir(), name);
+    if (!fs.existsSync(file)) return new Response('', { status: 404 });
+    return enet.fetch(pathToFileURL(file).toString());
+  });
 }
 
 /** Первый запуск: кладём конфиг по умолчанию (Art-Net на 127.0.0.1, 3 вселенных). */
@@ -99,7 +154,16 @@ function createWindow() {
   }
 }
 
+// Схему надо объявить до готовности приложения, иначе fetch из окна её не увидит.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'usermodels',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, bypassCSP: true },
+  },
+]);
+
 app.whenReady().then(async () => {
+  serveModels();
   await startEngineIfNeeded();
   createWindow();
   app.on('activate', () => {

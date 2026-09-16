@@ -2,15 +2,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
+  applyAddressRemap,
   sanitizeProject,
   type ClientMessage,
   type ConfigUniverse,
   type RdmAction,
+  type RdmSensorReading,
   type ServerMessage,
 } from '@fountain-studio/shared';
 import type { AudioStore } from './audio';
 import { isAutostartEnabled, isAutostartSupported, setAutostart, unsupportedReason } from './autostart';
 import type { BackupStore } from './backups';
+import type { TelegramNotifier } from './telegram';
 import type { DmxCapture } from './dmxcapture';
 import { eventLog } from './eventlog';
 import type { Engine } from './engine';
@@ -19,11 +22,20 @@ import type { MqttController } from './mqttcontroller';
 import type { NetworkMonitor } from './netmonitor';
 import type { OscServer } from './oscserver';
 import type { ProjectStore } from './project';
+import { scanUsbDmx } from './usbscan';
 import { createZip, readZip } from './zip';
 import {
   CC_GET_COMMAND,
   CC_SET_COMMAND,
   PID_DEVICE_INFO,
+  PID_SENSOR_DEFINITION,
+  PID_SENSOR_VALUE,
+  encodeSensorIndex,
+  parseSensorDefinition,
+  parseSensorValue,
+  sensorScaled,
+  sensorTypeName,
+  sensorUnitName,
   PID_DEVICE_MODEL_DESCRIPTION,
   PID_DMX_START_ADDRESS,
   PID_IDENTIFY_DEVICE,
@@ -49,6 +61,7 @@ export function startServer(
   capture?: DmxCapture,
   osc?: OscServer,
   mqtt?: MqttController,
+  telegram?: TelegramNotifier,
 ): WebSocketServer {
   const port = engine.config.server.port;
   const wss = new WebSocketServer({ port });
@@ -61,6 +74,9 @@ export function startServer(
   };
 
   const broadcastPlayback = (): void => broadcast({ type: 'playback', state: engine.playbackState() });
+  // Уведомления сами узнают, что у бота включили темы или нашёлся получатель, —
+  // сразу показываем это в Настройках.
+  if (telegram) telegram.onStatusChange = () => broadcast({ type: 'telegram', state: telegram.status() });
   const configMessage = (): Extract<ServerMessage, { type: 'config' }> => ({
     type: 'config',
     tickMs: engine.config.timing.tickMs,
@@ -71,6 +87,8 @@ export function startServer(
   };
   if (net) net.onChange = broadcastNetwork;
   const broadcastModbus = (): void => broadcast({ type: 'modbus', state: engine.modbusState() });
+  // Аварийное отключение: показываем сразу, не дожидаясь следующего опроса.
+  engine.onFailsafeChange = (state) => broadcast({ type: 'failsafe', state });
   engine.pumps.onChange = broadcastModbus;
   const remoteStatus = (): Extract<ServerMessage, { type: 'remoteStatus' }> => ({
     type: 'remoteStatus',
@@ -118,7 +136,9 @@ export function startServer(
     ws.send(JSON.stringify({ type: 'project', project: store.project } satisfies ServerMessage));
     ws.send(JSON.stringify({ type: 'playback', state: engine.playbackState() } satisfies ServerMessage));
     if (net) ws.send(JSON.stringify({ type: 'network', state: net.state() } satisfies ServerMessage));
+    if (telegram) ws.send(JSON.stringify({ type: 'telegram', state: telegram.status() } satisfies ServerMessage));
     ws.send(JSON.stringify({ type: 'modbus', state: engine.modbusState() } satisfies ServerMessage));
+    ws.send(JSON.stringify({ type: 'failsafe', state: engine.failsafeState() } satisfies ServerMessage));
     ws.send(JSON.stringify(backupConfigMessage()));
     ws.send(JSON.stringify(backupListMessage()));
     ws.send(JSON.stringify({ type: 'logHistory', events: eventLog.list() } satisfies ServerMessage));
@@ -154,7 +174,7 @@ export function startServer(
           broadcastPlayback();
           break;
         case 'testPattern':
-          engine.setTestPattern(msg.mode);
+          engine.setTestPattern(msg.mode, msg.scope ?? 'all', msg.speedSec);
           break;
         case 'updateProject': {
           const project = sanitizeProject(msg.project);
@@ -240,6 +260,11 @@ export function startServer(
         case 'refreshNetwork':
           net?.poll();
           broadcastNetwork();
+          break;
+        case 'scanUsbDmx':
+          void scanUsbDmx().then((scan) => {
+            if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'usbDmxScan', scan } satisfies ServerMessage));
+          });
           break;
         case 'activateLicense': {
           // Рассылаем именно результат этой попытки, а не перечитанный с диска
@@ -329,10 +354,26 @@ export function startServer(
           break;
         }
         case 'exportProject': {
-          // §27 доработки — весь проект (project.json + папка audio/) одним
-          // файлом: перенос между ПК и передача заказчику в один клик.
+          // Весь проект одним файлом: перенос между ПК и передача заказчику.
+          //
+          // Вместе с проектом кладём и НАСТРОЙКИ ЛИНИЙ DMX (вселенные,
+          // протокол, номера выходов, шаг тика). Без них перенесённый на
+          // другой компьютер объект оставался немым: схема и адреса
+          // приезжали, а куда их слать — нет, и это приходилось
+          // восстанавливать руками по памяти.
           const entries = [
             { name: 'project.json', data: Buffer.from(JSON.stringify(store.project, null, 2), 'utf8') },
+            {
+              name: 'config.json',
+              data: Buffer.from(
+                JSON.stringify(
+                  { tickMs: engine.config.timing.tickMs, universes: engine.config.universes },
+                  null,
+                  2,
+                ),
+                'utf8',
+              ),
+            },
           ];
           if (fs.existsSync(audio.dir)) {
             for (const file of fs.readdirSync(audio.dir)) {
@@ -362,15 +403,54 @@ export function startServer(
               const name = e.name.slice('audio/'.length);
               if (name) audio.save(name, e.data.toString('base64'));
             }
+            /**
+             * Настройки линий DMX из архива применяем ДО проекта: калибровка и
+             * Modbus-насосы индексируются по вселенным, и setProject должен
+             * увидеть уже новый их состав. Архивы старых версий без config.json
+             * импортируются как раньше — линии остаются текущие.
+             */
+            const configEntry = entries.find((e) => e.name === 'config.json');
+            let linesApplied = 0;
+            if (configEntry) {
+              const raw = JSON.parse(configEntry.data.toString('utf8')) as {
+                tickMs?: number;
+                universes?: ConfigUniverse[];
+              };
+              const tickMs = Math.round(Number(raw.tickMs));
+              const universes = Array.isArray(raw.universes) ? raw.universes : [];
+              const ids = universes.map((u) => u.id);
+              const ok =
+                universes.length > 0 &&
+                new Set(ids).size === ids.length &&
+                ids.every((id) => Number.isInteger(id) && id >= 1) &&
+                Number.isFinite(tickMs) &&
+                tickMs >= 10 &&
+                tickMs <= 1000;
+              if (ok) {
+                engine.applyConfig(universes, tickMs);
+                persistConfig(engine, tickMs, universes);
+                linesApplied = universes.length;
+              }
+            }
             store.update(project);
             engine.setProject(project);
             broadcast({ type: 'project', project });
+            if (linesApplied > 0) {
+              broadcast({
+                type: 'hello',
+                version: ENGINE_VERSION,
+                tickMs: engine.config.timing.tickMs,
+                universes: engine.universeInfos(),
+              });
+              broadcast(configMessage());
+            }
             broadcastPlayback();
             ws.send(
               JSON.stringify({
                 type: 'importResult',
                 ok: true,
-                message: `Импортирован проект «${project.name}»`,
+                message: `Импортирован проект «${project.name}»`
+                  + (linesApplied > 0 ? `, линий DMX: ${linesApplied}` : ''),
               } satisfies ServerMessage),
             );
           } catch (err) {
@@ -401,9 +481,52 @@ export function startServer(
           break;
         case 'takeBackupNow':
           if (!backups) break;
-          backups.snapshot();
+          // Кнопкой снимок делается всегда, даже если ничего не менялось:
+          // человек нажал осознанно, значит хочет зафиксировать именно это.
+          backups.snapshot(true);
           broadcast(backupListMessage());
           break;
+        case 'setReferenceBackup':
+          if (!backups) break;
+          backups.setReference();
+          eventLog.log('server', 'эталонный снимок проекта обновлён');
+          broadcast(backupListMessage());
+          break;
+        case 'updateTelegram': {
+          if (!telegram) break;
+          const patch: Parameters<TelegramNotifier['setConfig']>[0] = {};
+          if (typeof msg.token === 'string') patch.token = msg.token.trim();
+          if (typeof msg.chatId === 'string') patch.chatId = msg.chatId.trim();
+          if (typeof msg.enabled === 'boolean') patch.enabled = msg.enabled;
+          if (typeof msg.dailyHour === 'number') patch.dailyHour = Math.max(0, Math.min(23, Math.round(msg.dailyHour)));
+          if (typeof msg.alarms === 'boolean') patch.alarms = msg.alarms;
+          const topic = (v: unknown): number | undefined =>
+            typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.round(v)) : undefined;
+          const ta = topic(msg.topicAlarm);
+          const tr = topic(msg.topicReport);
+          const ts = topic(msg.topicState);
+          if (ta !== undefined) patch.topicAlarm = ta;
+          if (tr !== undefined) patch.topicReport = tr;
+          if (ts !== undefined) patch.topicState = ts;
+          if (typeof msg.topicsBySite === 'boolean') patch.topicsBySite = msg.topicsBySite;
+          telegram.setConfig(patch);
+          // В журнал уходит только ФАКТ настройки: токен туда попасть не должен.
+          eventLog.log('server', 'настройки уведомлений в Telegram обновлены');
+          broadcast({ type: 'telegram', state: telegram.status() });
+          break;
+        }
+        case 'setTelegramQuiet':
+          telegram?.setQuiet(msg.hours);
+          if (telegram) broadcast({ type: 'telegram', state: telegram.status() });
+          break;
+        case 'testTelegram': {
+          if (!telegram) break;
+          void telegram.testNow().then((r) => {
+            ws.send(JSON.stringify({ type: 'telegramTest', ...r } satisfies ServerMessage));
+            broadcast({ type: 'telegram', state: telegram.status() });
+          });
+          break;
+        }
         case 'restoreBackup': {
           if (!backups) break;
           try {
@@ -464,7 +587,16 @@ export function startServer(
   setInterval(() => {
     if (wss.clients.size === 0) return;
     for (const u of engine.universes) {
-      broadcast({ type: 'frame', universe: u.id, data: Buffer.from(u.out).toString('base64') });
+      // Переадресованный кадр шлём только когда он отличается: иначе это
+      // ровно те же 512 байт второй раз, двадцать раз в секунду.
+      const remap = engine.addressRemapFor(u.id);
+      const wire = remap ? applyAddressRemap(u.out, remap) : undefined;
+      broadcast({
+        type: 'frame',
+        universe: u.id,
+        data: Buffer.from(u.out).toString('base64'),
+        ...(wire ? { wire: Buffer.from(wire).toString('base64') } : {}),
+      });
     }
   }, engine.config.timing.uiFrameMs);
 
@@ -559,6 +691,47 @@ async function handleRdmRequest(
         identify = parseIdentifyResponse(resp.paramData);
       }
       ws.send(JSON.stringify({ type: 'rdmResponse', uid: msg.uid, ok: true, action: msg.action, identify } satisfies ServerMessage));
+    } else if (msg.action === 'sensors') {
+      /**
+       * Опрос датчиков — УНИВЕРСАЛЬНЫЙ, без списка «поддерживаемых марок».
+       *
+       * Сколько датчиков у прибора, он сообщает сам в DEVICE_INFO; дальше на
+       * каждый номер спрашиваем описание и показание стандартными PID из
+       * ANSI E1.20. Прибор, который такой датчик не заводил, отвечает отказом —
+       * его пропускаем и идём дальше. Поэтому чужая или незнакомая марка ничего
+       * не ломает: либо отвечает по стандарту, либо отказывается, и оба случая
+       * разобраны. Никаких фирменных PID здесь нет намеренно — именно они у
+       * всех разные и именно на них ломаются опросы «под конкретный бренд».
+       */
+      const info = await net.rdmRequest(msg.uid, CC_GET_COMMAND, PID_DEVICE_INFO);
+      const parsed = parseDeviceInfoResponse(info.paramData);
+      const count = parsed?.sensorCount ?? 0;
+      const sensors: RdmSensorReading[] = [];
+      for (let i = 0; i < count; i++) {
+        try {
+          const [defResp, valResp] = await Promise.all([
+            net.rdmRequest(msg.uid, CC_GET_COMMAND, PID_SENSOR_DEFINITION, encodeSensorIndex(i)),
+            net.rdmRequest(msg.uid, CC_GET_COMMAND, PID_SENSOR_VALUE, encodeSensorIndex(i)),
+          ]);
+          const def = parseSensorDefinition(defResp.paramData);
+          const val = parseSensorValue(valResp.paramData);
+          if (!val) continue;
+          sensors.push({
+            index: i,
+            typeName: def ? sensorTypeName(def.type) : 'Датчик',
+            description: def?.description ?? '',
+            unit: def ? sensorUnitName(def.unit) : '',
+            value: sensorScaled(def ?? undefined, val.value),
+            lowest: sensorScaled(def ?? undefined, val.lowest),
+            highest: sensorScaled(def ?? undefined, val.highest),
+          });
+        } catch {
+          // Датчик под этим номером не поддержан — не повод рушить весь опрос.
+        }
+      }
+      ws.send(
+        JSON.stringify({ type: 'rdmResponse', uid: msg.uid, ok: true, action: 'sensors', sensors } satisfies ServerMessage),
+      );
     } else if (msg.action === 'getAddress' || msg.action === 'setAddress') {
       let address: number;
       if (msg.action === 'setAddress') {

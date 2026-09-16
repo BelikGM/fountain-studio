@@ -1,4 +1,11 @@
-import { profileMap, type ChannelRole, type Project } from '@fountain-studio/shared';
+import {
+  nozzlePump2Ids,
+  nozzlePumpIds,
+  nozzleValveIds,
+  profileMap,
+  type ChannelRole,
+  type Project,
+} from '@fountain-studio/shared';
 import type { SceneHooks } from './FountainScene';
 
 export interface DeviceIndexEntry {
@@ -35,29 +42,48 @@ export function createLiveHooks(
       let flow = 0;
       let cut = false;
       let bound = false;
-      const pump = n.pumpDeviceId ? map.get(n.pumpDeviceId) : undefined;
-      if (pump) {
+      // Насосов у форсунки может быть несколько (питание в две линии). Берём
+      // максимум: струю определяет тот, кто сейчас даёт больший напор, а не
+      // сумма — параллельные насосы не складывают высоту струи.
+      for (const id of nozzlePumpIds(n)) {
+        const pump = map.get(id);
+        if (!pump) continue;
         bound = true;
         const ci = Math.max(0, pump.roles.indexOf('intensity'));
-        flow = chan(pump, ci) / 255;
+        flow = Math.max(flow, chan(pump, ci) / 255);
       }
-      const valve = n.valveDeviceId ? map.get(n.valveDeviceId) : undefined;
-      if (valve) {
+      // Клапанов тоже может быть несколько. Вода идёт, если открыт хотя бы
+      // один: это параллельные подводы, а не последовательные отсечки.
+      const valveIds = nozzleValveIds(n);
+      let anyValve = false;
+      let anyOpen = false;
+      for (const id of valveIds) {
+        const valve = map.get(id);
+        if (!valve) continue;
+        anyValve = true;
         const ci = Math.max(0, valve.roles.indexOf('open'));
-        const open = chan(valve, ci) >= 128;
-        if (!bound) flow = open ? 1 : 0;
-        else if (!open) flow = 0;
-        if (!open) cut = true;
+        if (chan(valve, ci) >= 128) anyOpen = true;
+      }
+      if (anyValve) {
+        if (!bound) flow = anyOpen ? 1 : 0;
+        else if (!anyOpen) flow = 0;
+        if (!anyOpen) cut = true;
         bound = true;
       }
       return { flow: bound ? flow : 0, cut };
     },
     pump2Level: (n) => {
       const map = deviceIndexRef.current;
-      const pump2 = n.pump2DeviceId ? map.get(n.pump2DeviceId) : undefined;
-      if (!pump2) return 0;
-      const ci = Math.max(0, pump2.roles.indexOf('intensity'));
-      return chan(pump2, ci) / 255;
+      // Насосов раскрытия тоже может быть несколько — берём максимум, как и у
+      // насосов подачи: конус раскрывает тот, кто сейчас даёт больший напор.
+      let level = 0;
+      for (const id of nozzlePump2Ids(n)) {
+        const pump2 = map.get(id);
+        if (!pump2) continue;
+        const ci = Math.max(0, pump2.roles.indexOf('intensity'));
+        level = Math.max(level, chan(pump2, ci) / 255);
+      }
+      return level;
     },
     lightColor: (deviceId) => {
       if (!deviceId) return null;

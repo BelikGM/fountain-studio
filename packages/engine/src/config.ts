@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export interface OutputConfig {
-  type: 'artnet' | 'sacn' | 'usb-dmx';
+  type: 'artnet' | 'sacn' | 'usb-dmx' | 'open-dmx' | 'musidora';
   /** Адрес назначения. Для artnet обязателен (IP ноды или broadcast). Для sacn по умолчанию multicast. */
   host?: string;
   port?: number;
@@ -12,10 +12,22 @@ export interface OutputConfig {
   broadcast?: boolean;
   /** Приоритет источника (sacn, по умолчанию 100). */
   priority?: number;
-  /** COM-порт USB-DMX адаптера (usb-dmx), напр. "COM5". */
+  /** COM-порт USB-DMX адаптера (usb-dmx и open-dmx), напр. "COM5". */
   path?: string;
-  /** Скорость порта usb-dmx (по умолчанию 57600 — распространённое умолчание для клонов ENTTEC PRO API; не проверено на реальном адаптере). */
+  /**
+   * Скорость порта.
+   *
+   * usb-dmx (протокол ENTTEC DMX USB PRO): значение НИ НА ЧТО не влияет —
+   * адаптер работает через виртуальный COM-порт FTDI, и драйвер эту настройку
+   * игнорирует; тайминг DMX512 держит сам виджет. Оставлено для совместимости
+   * с экзотическими клонами на настоящем UART.
+   *
+   * open-dmx («свисток» без контроллера): здесь скорость РЕАЛЬНАЯ и менять её
+   * нельзя — 250000 задано стандартом DMX512.
+   */
   baudRate?: number;
+  /** fountanplay/musidora: выход интерфейса 1…3 (разъём DMX). */
+  musidoraOut?: number;
 }
 
 export interface UniverseConfig {

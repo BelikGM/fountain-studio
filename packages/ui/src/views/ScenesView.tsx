@@ -22,8 +22,9 @@ import {
   type WaveSceneOptions,
 } from '@fountain-studio/shared';
 import { ListFilter } from '../components/ListFilter';
-import { PencilIcon, TrashIcon } from '../components/Icons';
-import { COLOR_PRESETS, hexToRgb, rgbToHex } from '../colorPresets';
+import { PencilIcon, PlayIcon, StopIcon, TrashIcon } from '../components/Icons';
+import { hexToRgb, rgbToHex } from '../colorPresets';
+import { ColorPalette } from '../components/ColorPalette';
 import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
 
@@ -40,6 +41,8 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
   // примеру прежнего приложения пользователя) — id сцены в редактировании,
   // null — никто не редактируется.
   const [renamingId, setRenamingId] = useState<string | null>(null);
+  /** Какую сцену тащим — для подсветки строки и для самой перестановки. */
+  const [dragId, setDragId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
 
   // scenes — полный список (логика выбора/наименования не должна зависеть от
@@ -74,8 +77,8 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
     setSelectedId(copy.id);
   };
 
-  const removeSceneById = (scene: Scene): void => {
-    if (!confirmDelete('сцены', scene.name, sceneDependents(project, scene.id))) return;
+  const removeSceneById = async (scene: Scene): Promise<void> => {
+    if (!(await confirmDelete('сцены', scene.name, sceneDependents(project, scene.id)))) return;
     updateProject({
       ...project,
       scenes: project.scenes.filter((s) => s.id !== scene.id),
@@ -90,11 +93,31 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
 
   const removeScene = (): void => {
     if (!selected) return;
-    removeSceneById(selected);
+    void removeSceneById(selected);
   };
 
   const updateScene = (scene: Scene): void => {
     updateProject({ ...project, scenes: project.scenes.map((s) => (s.id === scene.id ? scene : s)) });
+  };
+
+  /**
+   * Порядок сцен мышью.
+   *
+   * Порядок в списке — это порядок в проекте, и он же виден везде, где сцены
+   * выбирают: в шагах секвенсора, в раскрывающихся списках, при генерации
+   * эффектов. Набирают сцены обычно не в том порядке, в каком потом нужны,
+   * поэтому переставлять их надо мышью, а не пересоздавать.
+   */
+  const reorderScene = (fromId: string, toId: string): void => {
+    if (fromId === toId) return;
+    const list = [...project.scenes];
+    const from = list.findIndex((s) => s.id === fromId);
+    const to = list.findIndex((s) => s.id === toId);
+    if (from < 0 || to < 0) return;
+    const [moved] = list.splice(from, 1);
+    if (!moved) return;
+    list.splice(to, 0, moved);
+    updateProject({ ...project, scenes: list });
   };
 
   const startRename = (scene: Scene): void => {
@@ -144,10 +167,27 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
               key={s.id}
               className={
                 (s.id === selectedId ? 'list-item selected' : 'list-item') +
-                (playback.activeSceneId === s.id ? ' playing' : '')
+                (playback.activeSceneId === s.id ? ' playing' : '') +
+                (dragId === s.id ? ' row-dragging' : '')
               }
               onClick={() => renamingId !== s.id && setSelectedId(s.id)}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (dragId) reorderScene(dragId, s.id);
+                setDragId(null);
+              }}
             >
+              <span
+                className="drag-handle"
+                data-hint="Перетащить, чтобы изменить порядок сцен"
+                draggable
+                onDragStart={() => setDragId(s.id)}
+                onDragEnd={() => setDragId(null)}
+                onClick={(e) => e.stopPropagation()}
+              >
+                ⠿
+              </span>
               <span className="list-item-label">
                 {renamingId === s.id ? (
                   <input
@@ -170,7 +210,7 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
               <span className="list-item-actions">
                 <button
                   className="icon-btn"
-                  title="Переименовать"
+                  data-hint="Переименовать"
                   onClick={(e) => {
                     e.stopPropagation();
                     startRename(s);
@@ -180,10 +220,10 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
                 </button>
                 <button
                   className="icon-btn icon-btn-danger"
-                  title="Удалить сцену"
+                  data-hint="Удалить сцену"
                   onClick={(e) => {
                     e.stopPropagation();
-                    removeSceneById(s);
+                    void removeSceneById(s);
                   }}
                 >
                   <TrashIcon />
@@ -206,18 +246,19 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
                 onChange={(e) => updateScene({ ...selected, name: e.target.value })}
               />
               <button
-                className={previewActive ? 'btn active' : 'btn'}
+                className={previewActive ? 'btn btn-icon active' : 'btn btn-icon'}
                 onClick={() => send({ type: 'setScene', sceneId: previewActive ? null : selected.id })}
               >
-                {previewActive ? '■ Снять с выхода' : '▶ Просмотр на выходе'}
+                {previewActive ? <StopIcon /> : <PlayIcon />}
+                {previewActive ? 'Снять с выхода' : 'Просмотр на выходе'}
               </button>
-              <button className="btn" onClick={captureFromConsole} title="Записать в сцену текущие значения консоли">
+              <button className="btn" onClick={captureFromConsole} data-hint="Записать в сцену текущие значения консоли">
                 Снять значения с пульта
               </button>
               <button
                 className={showGenerator ? 'btn btn-small active' : 'btn btn-small'}
                 onClick={() => setShowGenerator(!showGenerator)}
-                title="Генерация сцен от геометрии схемы: инверсия, зеркало, волна по кольцу"
+                data-hint="Генерация сцен от геометрии схемы: инверсия, зеркало, волна по кольцу"
               >
                 ⚡ Генератор
               </button>
@@ -245,7 +286,7 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
               />
             )}
             {project.devices.length === 0 ? (
-              <div className="dim">В патче нет устройств — добавьте их на вкладке «Приборы».</div>
+              <div className="dim">В патче нет устройств — добавьте их на вкладке «Оборудование».</div>
             ) : mode === 'addresses' ? (
               <AddressPages engine={engine} project={project} scene={selected} onChange={updateScene} />
             ) : (
@@ -261,6 +302,8 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
                       onChange={(vals) =>
                         updateScene({ ...selected, values: { ...selected.values, [d.id]: vals } })
                       }
+                      project={project}
+                      updateProject={updateProject}
                     />
                   ))}
               </div>
@@ -538,16 +581,16 @@ function GeneratorPanel({
         <span className="dim">
           Библиотека эффектов — те же «Шагов/Держать/Фейд» выше, секвенсор «по кругу»:
         </span>
-        <button className="btn" disabled={actors.length === 0} onClick={doRainbow} title="Только светильники RGB/RGBW — оттенок по фазе фигуры, вращается по шагам">
+        <button className="btn" disabled={actors.length === 0} onClick={doRainbow} data-hint="Только светильники RGB/RGBW — оттенок по фазе фигуры, вращается по шагам">
           🌈 Радуга
         </button>
-        <button className="btn" disabled={actors.length === 0} onClick={doBreathing} title="Одноканальные устройства — все разом плавно вдох-выдох">
+        <button className="btn" disabled={actors.length === 0} onClick={doBreathing} data-hint="Одноканальные устройства — все разом плавно вдох-выдох">
           🫁 Дыхание
         </button>
-        <button className="btn" disabled={actors.length === 0} onClick={doCascade} title="Одноканальные устройства — узкая бегущая полоса вдоль фигуры">
+        <button className="btn" disabled={actors.length === 0} onClick={doCascade} data-hint="Одноканальные устройства — узкая бегущая полоса вдоль фигуры">
           🌊 Каскад
         </button>
-        <button className="btn" disabled={actors.length === 0} onClick={doSalute} title="Одноканальные устройства — случайные вспышки">
+        <button className="btn" disabled={actors.length === 0} onClick={doSalute} data-hint="Одноканальные устройства — случайные вспышки">
           🎆 Салют
         </button>
         <label className="field">
@@ -580,7 +623,7 @@ function GeneratorPanel({
         <button className="btn" onClick={() => void doCaptureScene()}>
           Снять сцену с линии
         </button>
-        <button className="btn" onClick={() => void doMeasureCycle()} title="Период повторения T захваченного потока">
+        <button className="btn" onClick={() => void doMeasureCycle()} data-hint="Период повторения T захваченного потока">
           Измерить период цикла
         </button>
       </div>
@@ -681,7 +724,7 @@ function AddressPages({
             <div
               key={idx}
               className={slot ? (v > 0 ? 'addr-cell addr-set' : 'addr-cell') : 'addr-cell addr-free'}
-              title={slot ? `${slot.device.name} · ${slot.channelName}` : 'адрес свободен'}
+              data-hint={slot ? `${slot.device.name} · ${slot.channelName}` : 'адрес свободен'}
             >
               <span className="addr-num">{idx + 1}</span>
               <span className="addr-owner">{slot ? `${slot.device.name}·${slot.channelName}` : '—'}</span>
@@ -707,11 +750,16 @@ function DeviceCard({
   profile,
   values,
   onChange,
+  project,
+  updateProject,
 }: {
   device: PatchedDevice;
   profile: DeviceProfile;
   values: number[];
   onChange: (values: number[]) => void;
+  /** Нужен ради палитры объекта: свои цвета хранятся в проекте. */
+  project: Project;
+  updateProject: (p: Project) => void;
 }) {
   const val = (i: number): number => values[i] ?? 0;
   const setVal = (i: number, v: number): void => {
@@ -763,25 +811,18 @@ function DeviceCard({
                   onChange(next);
                 }}
               />
-              <div className="color-presets">
-                {COLOR_PRESETS.map((p) => (
-                  <button
-                    key={p.name}
-                    type="button"
-                    className="color-swatch"
-                    style={{ background: p.hex }}
-                    title={p.name}
-                    onClick={() => {
-                      const [r, g, b] = hexToRgb(p.hex);
-                      const next = profile.channels.map((_, k) => val(k));
-                      next[rgbIdx.r] = r;
-                      next[rgbIdx.g] = g;
-                      next[rgbIdx.b] = b;
-                      onChange(next);
-                    }}
-                  />
-                ))}
-              </div>
+              <ColorPalette
+                project={project}
+                updateProject={updateProject}
+                current={[val(rgbIdx.r), val(rgbIdx.g), val(rgbIdx.b)]}
+                onPick={([r, g, b]) => {
+                  const next = profile.channels.map((_, k) => val(k));
+                  next[rgbIdx.r] = r;
+                  next[rgbIdx.g] = g;
+                  next[rgbIdx.b] = b;
+                  onChange(next);
+                }}
+              />
             </>
           )}
           {profile.channels.map((c, i) => (

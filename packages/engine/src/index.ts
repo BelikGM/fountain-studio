@@ -1,9 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { sanitizeProject } from '@fountain-studio/shared';
+import { sanitizeProject,
+  namesForRdm,
+} from '@fountain-studio/shared';
 import { AudioStore } from './audio';
 import { AudioPlayer } from './audioplayer';
 import { BackupStore } from './backups';
+import { TelegramNotifier } from './telegram';
+import { buildSiteSnapshot } from './siteSnapshot';
 import { loadConfig } from './config';
 import { wireAlarmNotifications } from './alarms';
 import { generateDemoWav } from './demoaudio';
@@ -16,6 +20,7 @@ import { NetworkMonitor } from './netmonitor';
 import { OscServer } from './oscserver';
 import { ProjectStore } from './project';
 import { Scheduler } from './schedule';
+import { eventLog } from './eventlog';
 import { startServer } from './server';
 
 const config = loadConfig(process.argv);
@@ -33,10 +38,28 @@ if (isFirstRun) {
   store.flush();
   console.log('[project] демо-проект создан при первом запуске');
 }
+// Журнал событий пишем на диск рядом с проектом (logs/): иначе после
+// перезапуска суточный отчёт видел бы события только с момента запуска.
+eventLog.attachFile(projectDir);
+
 const backups = new BackupStore(
   path.join(projectDir, 'fountain.project.json'),
   () => JSON.stringify(store.project, null, 2),
   config.backup,
+);
+
+/**
+ * Уведомления в Telegram. Имя объекта и сводку состояния берём живьём из
+ * проекта и движка: иначе в сообщении окажется то, что было при запуске.
+ */
+const telegram = new TelegramNotifier(
+  path.join(projectDir, 'fountain.project.json'),
+  () => store.project.name,
+  // NetworkMonitor создаётся ниже по файлу — на момент ВЫЗОВА он уже есть.
+  () => buildSiteSnapshot({ engine, project: () => store.project, net: () => net?.state(), backups }),
+  // Имена приборов по RDM-UID: в сообщениях вместо «4950:00001234» встанет
+  // «Прожектор левый борт 3 (4950:00001234)», если прибор привязан в патче.
+  () => namesForRdm(store.project.devices),
 );
 
 // Автономный звук: плейлист сменил шоу — движок сам включает/глушит плеер.
@@ -84,7 +107,7 @@ const mqtt = config.mqtt?.enabled
 mqtt?.startTelemetry();
 if (mqtt) wireAlarmNotifications(mqtt);
 
-startServer(engine, store, audio, backups, net, capture, osc, mqtt);
+startServer(engine, store, audio, backups, net, capture, osc, mqtt, telegram);
 
 // Расписание по системному времени ПК — работает, пока запущен движок.
 const scheduler = new Scheduler(engine, () => store.project.schedule);
@@ -105,7 +128,9 @@ process.on('SIGINT', () => {
   osc?.stop();
   mqtt?.stop();
   backups.stop();
+  telegram.stop();
   store.flush();
+  void eventLog.flush();
   engine.stop();
   process.exit(0);
 });

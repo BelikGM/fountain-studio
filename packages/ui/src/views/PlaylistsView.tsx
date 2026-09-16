@@ -4,6 +4,7 @@ import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipbo
 import { ListFilter } from '../components/ListFilter';
 import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
+import { NextIcon, PlayIcon, PrevIcon, StopIcon } from '../components/Icons';
 
 /**
  * Плейлисты: последовательности шоу с паузами. Исполняет движок автономно
@@ -39,9 +40,9 @@ export function PlaylistsView({ engine }: { engine: EngineConnection }) {
     setSelectedId(p.id);
   };
 
-  const removePlaylist = (): void => {
+  const removePlaylist = async (): Promise<void> => {
     if (!selected) return;
-    if (!confirmDelete('плейлиста', selected.name, playlistDependents(project, selected.id))) return;
+    if (!(await confirmDelete('плейлиста', selected.name, playlistDependents(project, selected.id)))) return;
     if (playback.playlist?.playlistId === selected.id) send({ type: 'stopPlaylist' });
     updateProject({ ...project, playlists: project.playlists.filter((p) => p.id !== selected.id) });
   };
@@ -59,7 +60,7 @@ export function PlaylistsView({ engine }: { engine: EngineConnection }) {
           <button className="btn" onClick={addPlaylist}>
             + Плейлист
           </button>
-          <button className="btn" onClick={removePlaylist} disabled={!selected}>
+          <button className="btn" onClick={() => void removePlaylist()} disabled={!selected}>
             Удалить
           </button>
         </div>
@@ -160,7 +161,7 @@ function PlaylistEditor({
         </select>
         <select
           value={playlist.onStart}
-          title="Поведение при запуске: с начала или с места прошлой остановки"
+          data-hint="Поведение при запуске: с начала или с места прошлой остановки"
           onChange={(e) => onChange({ ...playlist, onStart: e.target.value as Playlist['onStart'] })}
         >
           <option value="restart">Старт: сначала</option>
@@ -172,22 +173,26 @@ function PlaylistEditor({
       <div className="form-row transport">
         {!live ? (
           <button
-            className="btn active"
+            className="btn btn-icon active"
             disabled={playlist.items.length === 0}
             onClick={() => send({ type: 'playPlaylist', playlistId: playlist.id })}
           >
-            ▶ Пуск
+            <PlayIcon />
+            Пуск
           </button>
         ) : (
           <>
-            <button className="btn" onClick={() => send({ type: 'skipPlaylist', dir: -1 })}>
-              ⏮ Пред.
+            <button className="btn btn-icon" onClick={() => send({ type: 'skipPlaylist', dir: -1 })}>
+              <PrevIcon />
+              Пред.
             </button>
-            <button className="btn" onClick={() => send({ type: 'skipPlaylist', dir: 1 })}>
-              ⏭ След.
+            <button className="btn btn-icon" onClick={() => send({ type: 'skipPlaylist', dir: 1 })}>
+              <NextIcon />
+              След.
             </button>
-            <button className="btn" onClick={() => send({ type: 'stopPlaylist' })}>
-              ■ Стоп
+            <button className="btn btn-icon" onClick={() => send({ type: 'stopPlaylist' })}>
+              <StopIcon />
+              Стоп
             </button>
             <span className="badge badge-live">
               {live.inGap ? 'пауза между шоу' : `играет №${live.itemIndex + 1}: ${showName(playlist.items[live.itemIndex]?.showId ?? '')}`}
@@ -230,7 +235,7 @@ function PlaylistEditor({
                   >
                     <td
                       className="drag-handle"
-                      title="Перетащить, чтобы изменить порядок"
+                      data-hint="Перетащить, чтобы изменить порядок"
                       draggable
                       onDragStart={() => setDragIndex(i)}
                       onDragEnd={() => setDragIndex(null)}
@@ -287,7 +292,7 @@ function PlaylistEditor({
                       </button>
                       <button
                         className="btn btn-small"
-                        title="Копировать пункт"
+                        data-hint="Копировать пункт"
                         onClick={() => {
                           copyToClipboard('playlistItem', item);
                           setHasItemClip(true);

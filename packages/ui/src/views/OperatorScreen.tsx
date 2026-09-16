@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { askConfirm } from '../components/ConfirmDialog';
+import { PauseIcon, PlayIcon, StopIcon } from '../components/Icons';
 import { checkOperatorPassword, unlockOperator } from '../operatorMode';
 import type { EngineConnection } from '../useEngine';
 
@@ -24,16 +26,17 @@ export function OperatorScreen({ engine, onUnlock }: { engine: EngineConnection;
     }
   };
 
-  const doBlackout = (): void => {
+  const doBlackout = async (): Promise<void> => {
     const running: string[] = [];
     if (playback.show !== null) running.push('шоу');
     if (playback.playlist !== null) running.push('плейлист');
     if (playback.activeSceneId !== null) running.push('сцена');
     if (playback.running.length > 0) running.push(`секвенсоры (${playback.running.length})`);
     if (running.length > 0) {
-      const ok = window.confirm(
-        `Сейчас идёт воспроизведение: ${running.join(', ')}.\n\nBLACKOUT остановит ВСЁ и погасит все каналы. Продолжить?`,
-      );
+      const ok = await askConfirm('Погасить фонтан?', {
+        detail: `Сейчас идёт воспроизведение: ${running.join(', ')}. BLACKOUT остановит его и погасит все каналы.`,
+        okLabel: 'BLACKOUT',
+      });
       if (!ok) return;
     }
     send({ type: 'blackout' });
@@ -78,15 +81,26 @@ export function OperatorScreen({ engine, onUnlock }: { engine: EngineConnection;
         <>
           <section className="operator-transport">
             <button
-              className={playback.pausedAll ? 'btn btn-big active' : 'btn btn-big btn-warn'}
+              className={playback.pausedAll ? 'btn btn-big btn-icon active' : 'btn btn-big btn-icon btn-warn'}
               onClick={() => send({ type: playback.pausedAll ? 'resumeAll' : 'pauseAll' })}
             >
-              {playback.pausedAll ? '▶ Продолжить' : '⏸ Пауза'}
+              {playback.pausedAll ? (
+                <>
+                  <PlayIcon />
+                  Продолжить
+                </>
+              ) : (
+                <>
+                  <PauseIcon />
+                  Пауза
+                </>
+              )}
             </button>
-            <button className="btn btn-big" onClick={() => send({ type: 'stopAllPlayback' })}>
-              ■ Стоп всё
+            <button className="btn btn-big btn-icon" onClick={() => send({ type: 'stopAllPlayback' })}>
+              <StopIcon />
+              Стоп всё
             </button>
-            <button className="btn btn-big btn-danger" onClick={doBlackout}>
+            <button className="btn btn-big btn-danger" onClick={() => void doBlackout()}>
               ⚠ BLACKOUT
             </button>
           </section>
@@ -100,10 +114,11 @@ export function OperatorScreen({ engine, onUnlock }: { engine: EngineConnection;
                 return (
                   <button
                     key={p.id}
-                    className={isLive ? 'btn btn-big active' : 'btn btn-big'}
+                    className={isLive ? 'btn btn-big btn-icon active' : 'btn btn-big btn-icon'}
                     onClick={() => send(isLive ? { type: 'stopPlaylist' } : { type: 'playPlaylist', playlistId: p.id })}
                   >
-                    {isLive ? `■ ${p.name}` : `▶ ${p.name}`}
+                    {isLive ? <StopIcon /> : <PlayIcon />}
+                    {p.name}
                   </button>
                 );
               })}
@@ -119,10 +134,11 @@ export function OperatorScreen({ engine, onUnlock }: { engine: EngineConnection;
                 return (
                   <button
                     key={s.id}
-                    className={isLive ? 'btn btn-big active' : 'btn btn-big'}
+                    className={isLive ? 'btn btn-big btn-icon active' : 'btn btn-big btn-icon'}
                     onClick={() => send({ type: 'setScene', sceneId: isLive ? null : s.id })}
                   >
-                    {isLive ? `■ ${s.name}` : `▶ ${s.name}`}
+                    {isLive ? <StopIcon /> : <PlayIcon />}
+                    {s.name}
                   </button>
                 );
               })}

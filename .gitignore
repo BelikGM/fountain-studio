@@ -7,11 +7,22 @@ build/
 Thumbs.db
 *.local
 
+# Секреты объекта: токен телеграм-бота и прочие пароли. В репозиторий не кладём
+# никогда — файл живёт только на машине объекта.
+fountain.secrets.json
+telegram-queue.json
+
 # Данные проекта фонтана (создаются движком в рабочей папке)
 fountain.project.json
 fountain.project.json.broken
 audio/
 backups/
+logs/
+
+# Лицензия конкретной установки (привязана к этому компьютеру) и реестр
+# выданных лицензий — это данные, а не код: в репозитории им не место.
+fountain.license.json
+packages/engine/license-keys/issued-licenses.json
 
 # Артефакты сборки настольного приложения (packages/app)
 packages/app/engine.cjs

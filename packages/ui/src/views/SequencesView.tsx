@@ -9,7 +9,7 @@ import {
 } from '@fountain-studio/shared';
 import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
 import { ListFilter } from '../components/ListFilter';
-import { PencilIcon, TrashIcon } from '../components/Icons';
+import { PauseIcon, PencilIcon, PlayIcon, StopIcon, TrashIcon } from '../components/Icons';
 import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
 import { SequenceMatrix } from './SequenceMatrix';
@@ -55,9 +55,9 @@ export function SequencesView({ engine }: { engine: EngineConnection }) {
     setSelectedId(copy.id);
   };
 
-  const removeSequence = (): void => {
+  const removeSequence = async (): Promise<void> => {
     if (!selected) return;
-    if (!confirmDelete('секвенсора', selected.name, sequenceDependents(project, selected.id))) return;
+    if (!(await confirmDelete('секвенсора', selected.name, sequenceDependents(project, selected.id)))) return;
     send({ type: 'stopSequence', sequenceId: selected.id });
     updateProject({ ...project, sequences: project.sequences.filter((q) => q.id !== selected.id) });
   };
@@ -78,12 +78,12 @@ export function SequencesView({ engine }: { engine: EngineConnection }) {
           <button className="btn" onClick={duplicateSequence} disabled={!selected}>
             Дублировать
           </button>
-          <button className="btn" onClick={removeSequence} disabled={!selected}>
+          <button className="btn" onClick={() => void removeSequence()} disabled={!selected}>
             Удалить
           </button>
           <button
             className={groupsOpen ? 'btn btn-small active' : 'btn btn-small'}
-            title="Группы секвенсоров — синхронный/параллельный запуск нескольких вместе"
+            data-hint="Группы секвенсоров — синхронный/параллельный запуск нескольких вместе"
             onClick={() => setGroupsOpen(!groupsOpen)}
           >
             Группы{project.sequenceGroups.length > 0 ? ` (${project.sequenceGroups.length})` : ''}
@@ -108,8 +108,9 @@ export function SequencesView({ engine }: { engine: EngineConnection }) {
           })}
         </ul>
         {playback.running.length > 0 && (
-          <button className="btn btn-danger" onClick={() => send({ type: 'stopAllPlayback' })}>
-            ■ Стоп всё
+          <button className="btn btn-icon btn-danger" onClick={() => send({ type: 'stopAllPlayback' })}>
+            <StopIcon />
+            Стоп всё
           </button>
         )}
       </aside>
@@ -156,8 +157,8 @@ function SequenceGroupsPanel({ engine }: { engine: EngineConnection }) {
     updateProject({ ...project, sequenceGroups: groups.map((x) => (x.id === g.id ? g : x)) });
   };
 
-  const removeGroup = (g: SequenceGroup): void => {
-    if (!confirmDelete('группы секвенсоров', g.name, sequenceGroupDependents(project, g.id))) return;
+  const removeGroup = async (g: SequenceGroup): Promise<void> => {
+    if (!(await confirmDelete('группы секвенсоров', g.name, sequenceGroupDependents(project, g.id)))) return;
     send({ type: 'stopSequenceGroup', groupId: g.id });
     updateProject({ ...project, sequenceGroups: groups.filter((x) => x.id !== g.id) });
   };
@@ -230,35 +231,39 @@ function SequenceGroupsPanel({ engine }: { engine: EngineConnection }) {
                   <span className="spacer" />
                   {!anyActive ? (
                     <button
-                      className="btn active"
+                      className="btn btn-icon active"
                       disabled={g.sequenceIds.length === 0}
                       onClick={() => send({ type: 'startSequenceGroup', groupId: g.id })}
                     >
-                      ▶ Пуск
+                      <PlayIcon />
+                      Пуск
                     </button>
                   ) : (
                     <>
                       {paused === 0 ? (
-                        <button className="btn" onClick={() => send({ type: 'pauseSequenceGroup', groupId: g.id })}>
-                          ⏸ Пауза
+                        <button className="btn btn-icon" onClick={() => send({ type: 'pauseSequenceGroup', groupId: g.id })}>
+                          <PauseIcon />
+                          Пауза
                         </button>
                       ) : (
                         <button
-                          className="btn active"
+                          className="btn btn-icon active"
                           onClick={() => send({ type: 'resumeSequenceGroup', groupId: g.id })}
                         >
-                          ▶ Продолжить
+                          <PlayIcon />
+                          Продолжить
                         </button>
                       )}
-                      <button className="btn" onClick={() => send({ type: 'stopSequenceGroup', groupId: g.id })}>
-                        ■ Стоп
+                      <button className="btn btn-icon" onClick={() => send({ type: 'stopSequenceGroup', groupId: g.id })}>
+                        <StopIcon />
+                        Стоп
                       </button>
                     </>
                   )}
-                  <button className="icon-btn" title="Переименовать" onClick={() => startRename(g)}>
+                  <button className="icon-btn" data-hint="Переименовать" onClick={() => startRename(g)}>
                     <PencilIcon />
                   </button>
-                  <button className="icon-btn icon-btn-danger" title="Удалить группу" onClick={() => removeGroup(g)}>
+                  <button className="icon-btn icon-btn-danger" data-hint="Удалить группу" onClick={() => void removeGroup(g)}>
                     <TrashIcon />
                   </button>
                 </div>
@@ -364,7 +369,7 @@ function SequenceEditor({
         </button>
         <button
           className={matrixOpen ? 'btn btn-small active' : 'btn btn-small'}
-          title="Сетка «шаг × прибор» — быстрая роспись значений на много приборов сразу"
+          data-hint="Сетка «шаг × прибор» — быстрая роспись значений на много приборов сразу"
           onClick={() => setMatrixOpen(true)}
         >
           Матрица
@@ -372,7 +377,7 @@ function SequenceEditor({
       </div>
 
       <div className="form-row">
-        <span className="dim" title="Отдельно от «Фейд, мс» шага — тот один фиксированный переход, это постоянный фильтр на весь выход секвенсора">
+        <span className="dim" data-hint="Отдельно от «Фейд, мс» шага — тот один фиксированный переход, это постоянный фильтр на весь выход секвенсора">
           Эффект плавности:
         </span>
         <select
@@ -413,26 +418,30 @@ function SequenceEditor({
       <div className="form-row transport">
         {!running && (
           <button
-            className="btn active"
+            className="btn btn-icon active"
             disabled={sequence.steps.length === 0}
             onClick={() => send({ type: 'startSequence', sequenceId: sequence.id })}
           >
-            ▶ Пуск
+            <PlayIcon />
+            Пуск
           </button>
         )}
         {running && !running.paused && (
-          <button className="btn" onClick={() => send({ type: 'pauseSequence', sequenceId: sequence.id })}>
-            ⏸ Пауза
+          <button className="btn btn-icon" onClick={() => send({ type: 'pauseSequence', sequenceId: sequence.id })}>
+            <PauseIcon />
+            Пауза
           </button>
         )}
         {running?.paused && (
-          <button className="btn active" onClick={() => send({ type: 'resumeSequence', sequenceId: sequence.id })}>
-            ▶ Продолжить
+          <button className="btn btn-icon active" onClick={() => send({ type: 'resumeSequence', sequenceId: sequence.id })}>
+            <PlayIcon />
+            Продолжить
           </button>
         )}
         {running && (
-          <button className="btn" onClick={() => send({ type: 'stopSequence', sequenceId: sequence.id })}>
-            ■ Стоп
+          <button className="btn btn-icon" onClick={() => send({ type: 'stopSequence', sequenceId: sequence.id })}>
+            <StopIcon />
+            Стоп
           </button>
         )}
       </div>
@@ -470,7 +479,7 @@ function SequenceEditor({
                 >
                   <td
                     className="drag-handle"
-                    title="Перетащить, чтобы изменить порядок"
+                    data-hint="Перетащить, чтобы изменить порядок"
                     draggable
                     onDragStart={() => setDragIndex(i)}
                     onDragEnd={() => setDragIndex(null)}
@@ -523,7 +532,7 @@ function SequenceEditor({
                     </button>
                     <button
                       className="btn btn-small"
-                      title="Копировать шаг"
+                      data-hint="Копировать шаг"
                       onClick={() => {
                         copyToClipboard('sequenceStep', step);
                         setHasStepClip(true);

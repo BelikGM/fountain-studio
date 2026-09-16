@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { DMX_UNIVERSE_SIZE, type ClientMessage, type NetworkState, type RdmAction } from '@fountain-studio/shared';
+import { DMX_UNIVERSE_SIZE, type ClientMessage, type NetworkState, type RdmAction, type RdmSensorReading } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
 
 /**
@@ -9,6 +9,29 @@ import type { EngineConnection } from '../useEngine';
 export function NetworkView({ engine }: { engine: EngineConnection }) {
   const { network, send } = engine;
   const [selectedUid, setSelectedUid] = useState<string | null>(null);
+
+  /**
+   * Привязать найденный на линии RDM-прибор к прибору из патча. Нужно ровно для
+   * одного: чтобы в уведомлениях и отчётах вместо «4950:00001234» стояло
+   * понятное имя. На сам RDM-обмен привязка не влияет.
+   */
+  const bindRdm = (uid: string, deviceId: string): void => {
+    const project = engine.project;
+    if (!project) return;
+    const key = uid.toLowerCase();
+    engine.updateProject({
+      ...project,
+      devices: project.devices.map((d) => {
+        // Один UID — один прибор: со всех остальных привязку снимаем.
+        if (d.id === deviceId) return { ...d, rdmUid: key };
+        if (d.rdmUid === key) {
+          const { rdmUid: _drop, ...rest } = d;
+          return rest;
+        }
+        return d;
+      }),
+    });
+  };
 
   if (!network) {
     return (
@@ -57,7 +80,7 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
               {network.nodes.map((n) => (
                 <tr key={n.ip} className={n.lost ? 'row-error' : undefined}>
                   <td>{n.lost ? '✖ потеряна' : '✔ на связи'}</td>
-                  <td title={n.longName}>{n.shortName}</td>
+                  <td data-hint={n.longName}>{n.shortName}</td>
                   <td>{n.ip}</td>
                   <td>{n.outputUniverses.join(', ') || '—'}</td>
                   <td>{formatAge(n.ageMs)}</td>
@@ -81,6 +104,9 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
               <tr>
                 <th>Статус</th>
                 <th>UID</th>
+                <th data-hint="Какой прибор из «Оборудования» это на самом деле. Нужно только для понятных уведомлений: в сообщениях и отчётах вместо UID встанет имя прибора.">
+                  Прибор в патче
+                </th>
                 <th>Вселенная</th>
                 <th>Нода</th>
                 <th>Последний ответ</th>
@@ -92,6 +118,19 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
                 <tr key={d.uid} className={d.lost ? 'row-error' : undefined}>
                   <td>{d.lost ? '✖ пропал' : '✔ на линии'}</td>
                   <td>{d.uid}</td>
+                  <td>
+                    <select
+                      value={engine.project?.devices.find((x) => x.rdmUid === d.uid.toLowerCase())?.id ?? ''}
+                      onChange={(e) => bindRdm(d.uid, e.target.value)}
+                    >
+                      <option value="">— не привязан —</option>
+                      {(engine.project?.devices ?? []).map((dev) => (
+                        <option key={dev.id} value={dev.id}>
+                          {dev.name}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
                   <td>{d.universe}</td>
                   <td>{d.nodeIp}</td>
                   <td>{formatAge(d.ageMs)}</td>
@@ -190,7 +229,7 @@ function DmxStreamPanel({ engine, hasInputCapture }: { engine: EngineConnection;
             className={mode === 'in' ? 'btn active' : 'btn'}
             onClick={() => setMode('in')}
             disabled={!hasInputCapture}
-            title={hasInputCapture ? 'Снято на линии Art-Net извне' : 'Нужен хотя бы один настроенный Art-Net-выход'}
+            data-hint={hasInputCapture ? 'Снято на линии Art-Net извне' : 'Нужен хотя бы один настроенный Art-Net-выход'}
           >
             Вход
           </button>
@@ -224,7 +263,7 @@ function DmxStreamPanel({ engine, hasInputCapture }: { engine: EngineConnection;
               <div
                 key={i}
                 className="dmx-stream-cell"
-                title={`Адрес ${i + 1}: ${v}`}
+                data-hint={`Адрес ${i + 1}: ${v}`}
                 style={{ background: `rgba(46, 157, 247, ${v / 255})` }}
               >
                 <span className="dmx-stream-addr">{i + 1}</span>
@@ -365,6 +404,7 @@ function RdmDetailPanel({ engine, uid }: { engine: EngineConnection; uid: string
   const [identify, setIdentify] = useState<boolean | null>(null);
   const [address, setAddress] = useState<number | null>(null);
   const [addressInput, setAddressInput] = useState('');
+  const [sensors, setSensors] = useState<RdmSensorReading[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -388,7 +428,7 @@ function RdmDetailPanel({ engine, uid }: { engine: EngineConnection; uid: string
       else if (resp.action === 'getAddress' || resp.action === 'setAddress') {
         setAddress(resp.address);
         setAddressInput(String(resp.address));
-      }
+      } else if (resp.action === 'sensors') setSensors(resp.sensors);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -400,6 +440,14 @@ function RdmDetailPanel({ engine, uid }: { engine: EngineConnection; uid: string
     <div className="trim-editor">
       <div className="form-row">
         <span className="dim">Прибор {uid} — параметры, одинаковые по спеке E1.20 для любой марки:</span>
+        <button
+          className="btn btn-small"
+          disabled={busy}
+          data-hint="Опрос датчиков прибора по стандарту E1.20: температура, напряжение, наработка — сколько их, прибор сообщает сам. Работает с любой маркой: чего прибор не поддерживает, то он честно отклоняет, а остальное отдаёт."
+          onClick={() => void run('sensors')}
+        >
+          Датчики
+        </button>
         <button className="btn btn-small" disabled={busy} onClick={() => void run('deviceInfo')}>
           DEVICE_INFO
         </button>
@@ -420,6 +468,41 @@ function RdmDetailPanel({ engine, uid }: { engine: EngineConnection; uid: string
           {labels.softwareVersion || '—'}
         </div>
       )}
+      {sensors !== null &&
+        (sensors.length === 0 ? (
+          <p className="dim">Датчиков у прибора нет (или он их не отдаёт).</p>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>№</th>
+                <th>Что меряет</th>
+                <th>Название прибора</th>
+                <th>Сейчас</th>
+                <th>Минимум</th>
+                <th>Максимум</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sensors.map((s) => (
+                <tr key={s.index}>
+                  <td>{s.index}</td>
+                  <td>{s.typeName}</td>
+                  <td className="dim">{s.description || '—'}</td>
+                  <td>
+                    {s.value} {s.unit}
+                  </td>
+                  <td className="dim">
+                    {s.lowest} {s.unit}
+                  </td>
+                  <td className="dim">
+                    {s.highest} {s.unit}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ))}
       {deviceInfo && (
         <div className="dim">
           Протокол RDM {deviceInfo.protocolVersion} · DMX-футпринт {deviceInfo.dmxFootprint} кан. · адрес по

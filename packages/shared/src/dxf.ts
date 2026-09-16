@@ -8,7 +8,7 @@
  * или вставки блоков (INSERT); контуры чаш — CIRCLE или замкнутые полилинии.
  */
 
-import type { Bowl } from './layout';
+import { BOWL_DEFAULTS, type Bowl } from './layout';
 
 /** «Точечная» сущность чертежа — кандидат в форсунки/прожекторы. */
 export interface DxfPoint {
@@ -232,6 +232,7 @@ export function layoutFromDxf(drawing: DxfDrawing, options: DxfImportOptions): D
         width: p.radius * 2 * s,
         length: p.radius * 2 * s,
         height: 0.3,
+        ...BOWL_DEFAULTS,
       });
     }
   }
@@ -257,6 +258,7 @@ export function layoutFromDxf(drawing: DxfDrawing, options: DxfImportOptions): D
       width: (maxX - minX) * s,
       length: (maxY - minY) * s,
       height: 0.3,
+      ...BOWL_DEFAULTS,
     });
   }
 

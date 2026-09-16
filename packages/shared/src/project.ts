@@ -13,6 +13,7 @@ import {
 import { sanitizeSequenceGroups, type SequenceGroup } from './sequencegroup';
 import { sanitizeShows, type Show } from './show';
 import { defaultUtilityLightConfig, sanitizeUtilityLightConfig, type UtilityLightConfig } from './utilitylight';
+import { defaultFailsafeConfig, sanitizeFailsafeConfig, type FailsafeConfig } from './failsafe';
 import { defaultWindLimitConfig, sanitizeWindLimitConfig, type WindLimitConfig } from './windlimit';
 
 /**
@@ -122,6 +123,39 @@ export interface PatchedDevice {
   trim?: ChannelTrim[];
   /** Прямое управление через Modbus TCP (насосы с ПЧ); отсутствует — обычный DMX→аналог. */
   modbus?: ModbusPumpConfig;
+  /**
+   * UID этого прибора в RDM (вида «4950:00001234»), если он найден на линии
+   * и привязан на вкладке «Диагностика». Нужен для одного: чтобы в
+   * уведомлениях и отчётах вместо голого UID стояло понятное имя прибора
+   * из патча. Сам RDM работает и без привязки.
+   */
+  rdmUid?: string;
+}
+
+/** Приводит UID к единому виду: строчные буквы, «манufacturer:device». */
+export function normalizeRdmUid(uid: string): string {
+  return uid.trim().toLowerCase();
+}
+
+/**
+ * Заменяет в тексте RDM-UID на «Имя прибора (uid)» по привязке из патча.
+ * Нужна уведомлениям и отчётам: «RDM-прибор 4950:00001234 ПРОПАЛ» читается
+ * плохо, «Прожектор левый борт 3 (4950:00001234)» — сразу понятно, куда идти.
+ */
+export function namesForRdm(devices: PatchedDevice[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const d of devices) {
+    if (d.rdmUid) map.set(normalizeRdmUid(d.rdmUid), d.name);
+  }
+  return map;
+}
+
+export function substituteRdmNames(text: string, names: Map<string, string>): string {
+  if (names.size === 0) return text;
+  return text.replace(/\b[0-9a-fA-F]{4}:[0-9a-fA-F]{8}\b/g, (uid) => {
+    const name = names.get(normalizeRdmUid(uid));
+    return name ? `${name} (${uid})` : uid;
+  });
 }
 
 /** Итоговое значение канала с учётом калибровки. */
@@ -275,6 +309,8 @@ export interface Project {
   dmxTriggers: DmxTrigger[];
   /** Безопасное снижение струй по ветру (§27 доработки, §4 п.1). */
   windLimit: WindLimitConfig;
+  /** Аварийное отключение при пропаже вывода на линию (см. failsafe.ts). */
+  failsafe: FailsafeConfig;
   /**
    * Холостая сцена (§27 доработки, по примеру прежнего приложения —
    * «Color Form») — держится на выходе, когда ничего не играет (нет активной
@@ -285,8 +321,104 @@ export interface Project {
   idleSceneId: string | null;
   /** Служебное освещение по времени суток, независимо от расписания шоу (§27 доработки, «Switches»). */
   utilityLight: UtilityLightConfig;
+  /**
+   * Переадресация каналов: universeId → { выходной адрес: адрес-источник }.
+   * Хранятся только изменённые адреса, остальные идут «сами в себя».
+   * См. applyAddressRemap — там же объяснено, почему источник справа.
+   */
+  addressRemap: AddressRemap;
+  /**
+   * Свои цвета объекта — рядом со встроенными пресетами.
+   *
+   * Живут в ПРОЕКТЕ, а не в настройках программы: фирменные цвета заказчика,
+   * подобранный оттенок подсветки чаши — всё это свойство конкретного фонтана
+   * и должно уезжать вместе с файлом проекта на другой компьютер.
+   */
+  colorPalette: ColorSwatch[];
   /** 3D-схема фонтана (вкладка «3D»). */
   layout: FountainLayout;
+}
+
+/** Сохранённый цвет пользовательской палитры. */
+export interface ColorSwatch {
+  name: string;
+  /** #rrggbb в нижнем регистре. */
+  hex: string;
+}
+
+/** Пропускаем только настоящие «#rrggbb» — цвет уходит прямо в разметку. */
+function sanitizeColorPalette(raw: unknown): ColorSwatch[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ColorSwatch[] = [];
+  for (const s of raw as ColorSwatch[]) {
+    if (!s || typeof s.hex !== 'string') continue;
+    const hex = s.hex.trim().toLowerCase();
+    if (!/^#[0-9a-f]{6}$/.test(hex)) continue;
+    const name = typeof s.name === 'string' && s.name.trim() !== '' ? s.name.trim().slice(0, 40) : hex;
+    if (out.some((x) => x.hex === hex)) continue;
+    out.push({ name, hex });
+    if (out.length >= 60) break;
+  }
+  return out;
+}
+
+/** universeId → { выходной адрес (1..512): адрес, откуда брать значение }. */
+export type AddressRemap = Record<number, Record<number, number>>;
+
+/**
+ * Переадресация каналов — для случая, когда смонтировали не так, как в схеме.
+ *
+ * Проект остаётся правильным: форсунка по-прежнему знает свой насос, сцены
+ * пишут в те же адреса. Меняется только то, что уходит в линию.
+ *
+ * Направление выбрано «тянущим»: в таблице СЛЕВА выходной адрес, СПРАВА адрес,
+ * откуда он берёт значение. Это не прихоть — так задача решается без узких
+ * мест:
+ *
+ *  · у каждого выходного адреса ровно один источник, значит конфликтов «двое
+ *    пишут в один адрес» не бывает в принципе;
+ *  · «многие к одному» получается само: поставьте адресам 1…10 источником 1 —
+ *    все десять повторят первый;
+ *  · обмен местами 1↔2 работает как ожидается, и цепочек-петель не возникает:
+ *    источники читаются из кадра ДО переадресации, поэтому «а берёт у б,
+ *    который берёт у в» невозможно — все берут из одного исходного кадра.
+ *
+ * Возвращает НОВЫЙ кадр; исходный не меняется.
+ */
+export function applyAddressRemap(frame: Uint8Array, map: Record<number, number> | undefined): Uint8Array {
+  if (!map) return frame;
+  const keys = Object.keys(map);
+  if (keys.length === 0) return frame;
+  const out = frame.slice();
+  for (const key of keys) {
+    const dst = Number(key);
+    const src = map[dst];
+    if (!Number.isFinite(dst) || !Number.isFinite(src)) continue;
+    if (dst < 1 || dst > frame.length || src === undefined || src < 1 || src > frame.length) continue;
+    out[dst - 1] = frame[src - 1]!;
+  }
+  return out;
+}
+
+/** Приводит переадресацию к корректному виду: только целые адреса 1..512, без «сам в себя». */
+export function sanitizeAddressRemap(raw: unknown, size = 512): AddressRemap {
+  const out: AddressRemap = {};
+  if (typeof raw !== 'object' || raw === null) return out;
+  for (const [uKey, table] of Object.entries(raw as Record<string, unknown>)) {
+    const universe = Number(uKey);
+    if (!Number.isInteger(universe) || typeof table !== 'object' || table === null) continue;
+    const clean: Record<number, number> = {};
+    for (const [dKey, sRaw] of Object.entries(table as Record<string, unknown>)) {
+      const dst = Number(dKey);
+      const src = Number(sRaw);
+      if (!Number.isInteger(dst) || !Number.isInteger(src)) continue;
+      if (dst < 1 || dst > size || src < 1 || src > size) continue;
+      if (dst === src) continue; // тождественное не храним
+      clean[dst] = src;
+    }
+    if (Object.keys(clean).length > 0) out[universe] = clean;
+  }
+  return out;
 }
 
 /** Встроенные профили — типовые устройства фонтана. */
@@ -295,14 +427,24 @@ export const BUILTIN_PROFILES: DeviceProfile[] = [
     id: 'pump',
     name: 'Насос (аналог 0–255)',
     kind: 'pump',
-    channels: [{ name: 'Мощность', role: 'intensity' }],
+    // «Скорость», а не «Мощность»: канал задаёт уставку оборотов (через ПЧ —
+    // частоту), а не потребляемую мощность в киловаттах. Мощность насос
+    // потребляет сам, в зависимости от режима, и в DMX её не задают. Тем же
+    // словом оперирует телеметрия Modbus (speedRpm), так что название сходится
+    // с тем, что видно на вкладке насоса.
+    channels: [{ name: 'Скорость', role: 'intensity' }],
     builtin: true,
   },
   {
     id: 'valve',
     name: 'Клапан (откр/закр)',
     kind: 'valve',
-    channels: [{ name: 'Открыт', role: 'open' }],
+    // «Положение» — имя КАНАЛА, а его значения уже «Открыт»/«Закрыт». Раньше
+    // канал назывался «Открыт», и в подписях выходило «Клапан 1 · Открыт» —
+    // читается как состояние прибора, хотя это столбец управления. С
+    // «Положением» строка становится «Клапан 1 · Положение», а открыт он или
+    // закрыт — показывает само значение.
+    channels: [{ name: 'Положение', role: 'open' }],
     twoState: true,
     builtin: true,
   },
@@ -355,8 +497,11 @@ export function emptyProject(name = 'Новый проект'): Project {
     mqttBindings: [],
     dmxTriggers: [],
     windLimit: defaultWindLimitConfig(),
+    failsafe: defaultFailsafeConfig(),
     idleSceneId: null,
     utilityLight: defaultUtilityLightConfig(),
+    addressRemap: {},
+    colorPalette: [],
     layout: emptyLayout(),
   };
 }
@@ -473,8 +618,11 @@ export function sanitizeProject(raw: unknown): Project {
     mqttBindings: [],
     dmxTriggers: [],
     windLimit: defaultWindLimitConfig(),
+    failsafe: defaultFailsafeConfig(),
     idleSceneId: null,
     utilityLight: defaultUtilityLightConfig(),
+    addressRemap: sanitizeAddressRemap(r.addressRemap),
+    colorPalette: sanitizeColorPalette(r.colorPalette),
     layout: emptyLayout(),
   };
   if (Array.isArray(r.profiles)) {
@@ -508,6 +656,9 @@ export function sanitizeProject(raw: unknown): Project {
         if (trim.every((t) => t.min === 0 && t.max === 255)) trim = undefined;
       }
       const modbus = sanitizeModbusConfig(d.modbus);
+      const rdmUid = typeof d.rdmUid === 'string' && /^[0-9a-fA-F]{4}:[0-9a-fA-F]{8}$/.test(d.rdmUid.trim())
+        ? normalizeRdmUid(d.rdmUid)
+        : undefined;
       project.devices.push({
         id: d.id,
         name: typeof d.name === 'string' ? d.name : d.id,
@@ -516,6 +667,7 @@ export function sanitizeProject(raw: unknown): Project {
         address: Number.isInteger(d.address) ? Math.max(1, Math.min(DMX_UNIVERSE_SIZE, d.address)) : 1,
         ...(trim ? { trim } : {}),
         ...(modbus ? { modbus } : {}),
+        ...(rdmUid ? { rdmUid } : {}),
       });
     }
   }
@@ -585,6 +737,7 @@ export function sanitizeProject(raw: unknown): Project {
   project.mqttBindings = sanitizeMqttBindings(r.mqttBindings, remoteIds);
   project.dmxTriggers = sanitizeDmxTriggers(r.dmxTriggers, remoteIds);
   project.windLimit = sanitizeWindLimitConfig(r.windLimit);
+  project.failsafe = sanitizeFailsafeConfig(r.failsafe);
   project.idleSceneId =
     typeof r.idleSceneId === 'string' && project.scenes.some((s) => s.id === r.idleSceneId) ? r.idleSceneId : null;
   project.utilityLight = sanitizeUtilityLightConfig(r.utilityLight, deviceIds);

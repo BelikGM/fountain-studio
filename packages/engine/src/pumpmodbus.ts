@@ -188,7 +188,7 @@ export class PumpModbusManager {
                 eventLog.log('modbus', `насос «${deviceId}»: код аварии ${code}`, 'error');
                 this.onAlarm?.(deviceId, code);
               } else if (prevCode) {
-                eventLog.log('modbus', `насос «${deviceId}»: авария снята (было ${prevCode})`);
+                eventLog.log('modbus', `насос «${deviceId}»: авария снята (было ${prevCode})`, 'info', 'recovery');
               }
               this.onChange?.();
             }

@@ -73,6 +73,8 @@ import {
   type Scene,
   type ClientMessage,
   type ServerMessage,
+  applyAddressRemap,
+  sanitizeAddressRemap,
 } from '@fountain-studio/shared';
 import { wireAlarmNotifications } from '../alarms';
 import { AudioStore } from '../audio';
@@ -803,7 +805,7 @@ async function main(): Promise<void> {
     await waitFor('ступени применились', () => ch(1) !== ch(2) || ch(2) !== ch(3), 2000);
     check(true, 'stairs: соседние адреса дают разные уровни — видна ступенчатая структура');
 
-    send({ type: 'testPattern', mode: 'random' });
+    send({ type: 'testPattern', mode: 'solo' });
     let sample: number[] = [];
     await waitFor(
       'шум применился и не «залипает» на одном уровне',
@@ -1096,7 +1098,8 @@ async function main(): Promise<void> {
       noz1.lightDeviceId === 'rgb1' &&
       noz2.kind === 'straight' &&
       noz2.x === 1000 &&
-      noz2.tiltDeg === 85 &&
+      // Наклон теперь допускается в обе стороны: предел ±90°, а не 0…85°.
+      noz2.tiltDeg === 90 &&
       sanitized.layout.lights[0]!.deviceId === 'rgb1',
     'sanitizeLayout: битые ссылки и значения приведены, элементы сохранены',
   );
@@ -1169,7 +1172,13 @@ async function main(): Promise<void> {
       pumpDeviceId: null,
       pump2DeviceId: null,
       valveDeviceId: null,
-      valveFollowsPump: false,
+      extraPumpDeviceIds: [],
+      extraValveDeviceIds: [],
+      extraLightDeviceIds: [],
+      extraPump2DeviceIds: [],
+      modelFile: null,
+      modelScale: 1,
+      sprayFactor: 0.3,
       lightDeviceId: null,
     });
     const geomNozzles = [base('a', 0, 0), base('b', 2, 0), base('outside', 100, 100)];
@@ -1224,7 +1233,13 @@ async function main(): Promise<void> {
       pumpDeviceId: a.deviceId,
       pump2DeviceId: null,
       valveDeviceId: null,
-      valveFollowsPump: false,
+      extraPumpDeviceIds: [],
+      extraValveDeviceIds: [],
+      extraLightDeviceIds: [],
+      extraPump2DeviceIds: [],
+      modelFile: null,
+      modelScale: 1,
+      sprayFactor: 0.3,
       lightDeviceId: null,
     })),
   };
@@ -1769,12 +1784,32 @@ async function main(): Promise<void> {
 
   console.log('— Датчик ветра → безопасное снижение струй (§27 доработки, §4 п.1) —');
   {
-    const testCfg = { enabled: true, warnSpeed: 8, maxSpeed: 15, minPercent: 20 };
-    check(computeWindLimitPercent(5, testCfg) === 100, 'computeWindLimitPercent: ниже порога — 100% (без ограничения)');
-    check(computeWindLimitPercent(15, testCfg) === 20, 'computeWindLimitPercent: на maxSpeed и выше — минимум (20%)');
+    /**
+     * Ограничение считается ПО ВЫСОТЕ струи: снос растёт линейно с высотой,
+     * поэтому одна и та же скорость ветра для двухметрового фонтанчика
+     * безобидна, а для пятнадцатиметровой струи уже недопустима.
+     */
+    const testCfg = { enabled: true, marginM: 0.6, tauSec: 4, minPercent: 20, stopSpeed: 12 };
     check(
-      computeWindLimitPercent(11.5, testCfg) === 60,
-      'computeWindLimitPercent: посередине диапазона — линейная интерполяция (60%)',
+      computeWindLimitPercent(0.5, testCfg, 6) === 100,
+      'ветер: слабый ветер шестиметровую струю не трогает (100%)',
+    );
+    check(
+      computeWindLimitPercent(2, testCfg, 2) === 100 && computeWindLimitPercent(2, testCfg, 15) < 60,
+      'ветер: при 2 м/с низкая струя цела, высокая срезана заметно',
+    );
+    {
+      const low = computeWindLimitPercent(4, testCfg, 2);
+      const high = computeWindLimitPercent(4, testCfg, 15);
+      check(high < low, `ветер: высокая струя режется сильнее низкой (15 м → ${high}%, 2 м → ${low}%)`);
+    }
+    check(
+      computeWindLimitPercent(12, testCfg, 6) === 0,
+      'ветер: выше stopSpeed фонтан глушится полностью (0%)',
+    );
+    check(
+      computeWindLimitPercent(11.9, testCfg, 6) >= testCfg.minPercent,
+      'ветер: до stopSpeed насос не опускается ниже заданного минимума',
     );
 
     // pump1 уже откалиброван (min:50,max:200) более ранним тестом — на время
@@ -1800,10 +1835,14 @@ async function main(): Promise<void> {
     await waitFor('каналы выставлены без ветра', () => ch(1) === 200 && ch(10) === 200);
     check(true, 'без показания ветра — насос и свет на полном значении (200/200)');
 
-    send({ type: 'setWindSpeed', speedMs: 15 }); // полное ограничение (minPercent=20)
-    await waitFor('насос снижен ветром', () => ch(1) === 40, 2000); // round(200×20/100)=40
+    send({ type: 'setWindSpeed', speedMs: 15 }); // выше stopSpeed — полное глушение
+    await waitFor('насос заглушен ветром', () => ch(1) === 0, 2000);
     check(ch(10) === 200, 'ветер не трогает свет — канал R rgb1 остался 200');
-    check(true, 'ветер 15 м/с (maxSpeed) → насос снижен со 200 до 40 (×20%)');
+    check(true, 'ветер 15 м/с (выше stopSpeed 12) → насос заглушен со 200 до 0');
+
+    send({ type: 'setWindSpeed', speedMs: 3 }); // умеренный — снижение, но не стоп
+    await waitFor('насос частично снижен', () => ch(1) > 0 && ch(1) < 200, 2000);
+    check(true, `ветер 3 м/с → насос снижен со 200 до ${ch(1)} (по высоте своей струи)`);
 
     send({ type: 'setWindSpeed', speedMs: null }); // сброс показания
     await waitFor('ограничение снято', () => ch(1) === 200, 2000);
@@ -1826,70 +1865,49 @@ async function main(): Promise<void> {
     await waitFor('каналы сброшены после теста', () => ch(1) === 0 && ch(10) === 0);
   }
 
-  console.log('— Клапан следует за насосом («Influence: Valve by Pump», §27 доработки) —');
+  console.log('— Переадресация каналов —');
   {
-    const layoutBefore = store.project.layout;
-    send({
-      type: 'updateProject',
-      project: {
-        ...store.project,
-        layout: {
-          ...layoutBefore,
-          nozzles: [
-            ...layoutBefore.nozzles,
-            {
-              id: 'noz-influence-test',
-              name: 'Тест-влияние',
-              kind: 'straight',
-              x: 0,
-              y: 0,
-              z: 0,
-              tiltDeg: 0,
-              headingDeg: 0,
-              maxHeightM: 3,
-              widthM: 0.03,
-              coneAngleDeg: 25,
-              rotationSpeedDegPerSec: 60,
-              riseMs: 0,
-              fallMs: 0,
-              pumpDeviceId: 'pump1',
-              pump2DeviceId: null,
-              valveDeviceId: 'valve1',
-              valveFollowsPump: true,
-              lightDeviceId: null,
-            },
-          ],
-        },
-      },
-    });
-    await waitFor(
-      'форсунка с valveFollowsPump применена',
-      () => (projectEcho?.layout.nozzles.length ?? 0) > layoutBefore.nozzles.length,
+    const frame = new Uint8Array(512);
+    frame[0] = 10; // адрес 1
+    frame[1] = 20; // адрес 2
+    frame[2] = 30; // адрес 3
+    frame[9] = 99; // адрес 10
+
+    const same = applyAddressRemap(frame, undefined);
+    check(same === frame, 'пустая переадресация возвращает тот же кадр, без копирования');
+
+    const swapped = applyAddressRemap(frame, { 1: 2, 2: 1 });
+    check(swapped[0] === 20 && swapped[1] === 10, 'обмен 1↔2: адреса поменялись значениями');
+    check(frame[0] === 10 && frame[1] === 20, 'исходный кадр не изменился — переадресация не портит расчёт');
+    check(swapped[2] === 30, 'не тронутые адреса остались как были');
+
+    // Главное свойство «тянущего» направления: источники читаются из кадра ДО
+    // переадресации, поэтому цепочек и петель не бывает.
+    const chain = applyAddressRemap(frame, { 1: 2, 2: 3 });
+    check(
+      chain[0] === 20 && chain[1] === 30,
+      'цепочки не возникает: 1 берёт исходное значение 2, а не уже переадресованное',
+    );
+    const loop = applyAddressRemap(frame, { 1: 1 + 0, 2: 2 });
+    check(loop[0] === 10 && loop[1] === 20, 'тождественная запись ничего не меняет');
+
+    const many = applyAddressRemap(frame, { 1: 10, 2: 10, 3: 10 });
+    check(
+      many[0] === 99 && many[1] === 99 && many[2] === 99,
+      'многие к одному: три адреса повторяют один источник',
     );
 
-    // pump1 к этому месту уже несёт калибровку min:50/max:200 (восстановлена
-    // предыдущим тестом ветра) — сырое значение 150 придёт откалиброванным,
-    // не ровно 150, поэтому проверяем «> 0», а не точное число.
-    send({ type: 'setChannel', universe: 1, channel: 1, value: 150 }); // pump1 > 0
-    await waitFor('клапан открылся вслед за насосом', () => ch(1) > 0 && ch(2) === 255, 2000);
-    check(true, 'valveFollowsPump: насос>0 → клапан автоматически 255, без явной записи в сцену');
+    const bad = applyAddressRemap(frame, { 0: 5, 513: 5, 4: 0, 5: 513 });
+    check(bad[3] === 0 && bad[4] === 0, 'адреса вне 1..512 игнорируются, кадр не портится');
 
-    send({ type: 'setChannel', universe: 1, channel: 1, value: 0 }); // pump1 = 0
-    await waitFor('клапан закрылся вслед за насосом', () => ch(1) === 0 && ch(2) === 0, 2000);
-    check(true, 'valveFollowsPump: насос=0 → клапан автоматически закрыт (0)');
-
-    send({ type: 'setChannel', universe: 1, channel: 2, value: 255 }); // попытка вручную открыть клапан
-    await waitFor('ручное открытие клапана переопределено флагом (насос всё ещё 0)', () => ch(2) === 0, 2000);
-    check(true, 'valveFollowsPump переопределяет ручное управление клапаном, пока флаг включён');
-
-    send({ type: 'updateProject', project: { ...store.project, layout: layoutBefore } });
-    await waitFor(
-      'тестовая форсунка убрана',
-      () => (projectEcho?.layout.nozzles.length ?? 0) === layoutBefore.nozzles.length,
+    // Санитайзер: из проекта приходит текст, правленный руками.
+    const clean = sanitizeAddressRemap({ 1: { '5': 7, '7': 7, '600': 3, '3': 900, x: 2 }, bad: { 1: 2 } });
+    check(
+      JSON.stringify(clean) === JSON.stringify({ 1: { 5: 7 } }),
+      'sanitizeAddressRemap: оставлен только корректный переход, «сам в себя» и мусор отброшены',
     );
-    send({ type: 'setChannel', universe: 1, channel: 1, value: 0 });
-    send({ type: 'setChannel', universe: 1, channel: 2, value: 0 });
-    await waitFor('каналы сброшены после теста', () => ch(1) === 0 && ch(2) === 0);
+    const empty = sanitizeAddressRemap({ 1: { '4': 4 } });
+    check(Object.keys(empty).length === 0, 'вселенная без реальных переходов в таблице не хранится');
   }
 
   console.log('— Служебное освещение по времени («Switches», §27 доработки) —');

@@ -20,7 +20,11 @@
   --warn-text: #ffd699;
   --border: #30343e;
   /* Цвет фейдера/адреса по типу прибора (§27 доработки). */
-  --fader-pump: #eaeaea;
+  /* Насосы — нейтральный серый, ОДИН И ТОТ ЖЕ в обеих темах: раньше здесь был
+     почти белый #eaeaea, который на светлой теме не читался, и её приходилось
+     перебивать серым — из-за чего насосы выглядели по-разному в тёмной и
+     светлой. Этот серый различим и на тёмной дорожке, и на светлой. */
+  --fader-pump: #8a8a8a;
   --fader-valve: #a682e8;
   --fader-red: #ff5c5c;
   --fader-green: #4ade80;
@@ -51,9 +55,9 @@
   --warn-bg: #fbeed3;
   --warn-text: #7a5400;
   --border: #cfd6e0;
-  /* Белый DMX-канал (и насосы — теперь тоже белые) светлым не видно на светлой теме — серый вместо него. */
+  /* Белый DMX-канал светлым не видно на светлой теме — серый вместо него.
+     Насосы здесь НЕ переопределяем: их серый один на обе темы (см. :root). */
   --fader-white: #8a8a8a;
-  --fader-pump: #8a8a8a;
 }
 
 * {
@@ -185,6 +189,27 @@ body {
   max-height: calc(100vh - 48px);
 }
 .license-modal { width: min(520px, calc(100vw - 48px)); }
+
+/* Подтверждение действия — своё окно вместо window.confirm (см. ConfirmDialog).
+   Узкое, по центру, с вопросом крупно и пояснением помельче. */
+.confirm-modal {
+  width: min(420px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.confirm-text { font-size: 15px; line-height: 1.45; }
+.confirm-detail { margin: 0; font-size: 13px; line-height: 1.5; }
+/* Кнопки окна подтверждения — по разным краям, а не обе справа.
+   Так их не перепутать в спешке: «Отмена» всегда слева, действие — справа,
+   и чтобы нажать опасное, руку надо перевести через всё окно. */
+.confirm-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 8px;
+}
+.confirm-actions .btn { min-width: 120px; }
 .license-machine-id {
   background: var(--bg-track);
   border-radius: 3px;
@@ -365,6 +390,23 @@ body {
   font-size: 13px;
 }
 
+/* Кнопка со значком транспорта: флекс центрует SVG и подпись по вертикали
+   независимо от шрифта. Прежние символы ▶ ⏸ ■ в тексте выравнивались по
+   базовой линии шрифта эмодзи и садились ниже подписи — см. Icons.tsx. */
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+/* Флекс центрует значок по СТРОЧНОМУ боксу (15px при шрифте 13px), а глаз
+   сравнивает его с полосой заглавных букв — она на полпикселя выше, потому что
+   строчный бокс несимметричен: снизу в нём место под выносные элементы («у» в
+   «Пауза»), сверху — нет. Отсюда и остаточное ощущение, что значок ниже
+   подписи. Сдвиг ровно на эти 0.5px совмещает верх и низ значка с верхом и
+   низом букв (проверено замером: deltaTop = deltaBottom = 0). */
+.btn-icon > svg { flex: none; transform: translateY(-0.5px); }
+
 .btn:hover { border-color: var(--accent); }
 .btn.active {
   background: var(--accent);
@@ -475,7 +517,28 @@ select {
   left: 0;
   right: 0;
   background: var(--accent-fill);
+  /* Кадры DMX приходят двадцать раз в секунду, и без сглаживания полоса
+     дёргалась ступеньками — особенно когда общий ползунок насосов двигает
+     сразу все фейдеры. */
+  transition: height 0.1s linear;
 }
+.fader-dragging .fader-fill { transition: height 0.03s linear; }
+
+/* Двухпозиционный канал (клапан): дорожка — кнопка-тумблер, а не ползунок.
+   Промежуточных значений у клапана не бывает, поэтому и тянуть нечего —
+   клик переключает 0 ↔ 255, заливка либо пустая, либо полная. */
+.fader-toggle {
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  appearance: none;
+}
+.fader-toggle:hover { border-color: var(--accent); }
+.fader-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.fader-two-state .fader-fill { transition: height 0.12s ease; }
+.fader-two-state .fader-value { font-size: 10px; letter-spacing: 0.02em; }
 
 .fader-channel {
   font-size: 11px;
@@ -566,16 +629,22 @@ select {
   flex-direction: row;
   align-items: stretch;
   overflow: hidden;
-  gap: 14px;
+  /* Зазор между колонкой и схемой меньше: полоса прокрутки теперь накладывается
+     поверх содержимого, и широкий отступ под неё больше не нужен. */
+  gap: 8px;
 }
 
 .sidebar {
-  width: 230px;
+  /* Шире, чем было (230): в колонку должны без тесноты помещаться и строка
+     поиска, и полоса прокрутки-струя поверх неё. */
+  width: 264px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
   overflow-y: auto;
+  /* Справа — место под струю прокрутки, чтобы она не легла на текст. */
+  padding-right: 4px;
 }
 
 .sidebar-actions {
@@ -678,6 +747,357 @@ select {
   font-size: 15px;
 }
 
+/* Рамка выделения блоков на таймлайне. Живёт в body, поверх всего: так её
+   видно и когда она выходит за пределы одной дорожки. */
+.tl-band {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  border: 1px solid var(--accent);
+  background: rgba(255, 179, 71, 0.14);
+  border-radius: 2px;
+}
+/* Блок в наборе: подсвечен, но слабее активного — как и выделение на схеме. */
+.block.block-marked {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* Свои цвета объекта — рядом со встроенными, через разделитель. */
+.color-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 0 4px;
+  background: var(--border);
+}
+.color-swatch-own {
+  display: inline-flex;
+}
+.color-add {
+  padding: 0 7px;
+  line-height: 1.4;
+}
+
+/* Ветер в 3D-виде: полоска поверх сцены, слева вверху. Нарочно поверх, а не
+   в боковой панели — крутить её надо, глядя на воду. */
+.canvas3d-wind {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  z-index: 5;
+  /* Строчная раскладка, а не флекс: у вложенной флекс-строки Chromium
+     недосчитывал ширину по содержимому на ~12 px, и раскрытая панель обрезала
+     кнопку сброса. У строчных блоков ширина считается точно. */
+  display: block;
+  height: 30px;
+  line-height: 28px;
+  /* Свёрнута в кружок со значком; растёт по ширине, как поиск. */
+  max-width: 30px;
+  overflow: hidden;
+  white-space: nowrap;
+  border-radius: 15px;
+  background: rgba(13, 17, 22, 0.72);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  transition: max-width 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+}
+/* Ветер дует — к значку добавляется скорость, а сам значок подсвечен. */
+.canvas3d-wind.active { max-width: 110px; border-color: var(--accent); }
+.canvas3d-wind.open { max-width: 520px; background: rgba(13, 17, 22, 0.86); }
+.canvas3d-wind-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  vertical-align: top;
+  color: var(--text-dim, #9aa3ad);
+}
+.canvas3d-wind.active .canvas3d-wind-icon,
+.canvas3d-wind.open .canvas3d-wind-icon { color: var(--accent); }
+.canvas3d-wind-now {
+  display: inline-block;
+  vertical-align: top;
+  padding-right: 10px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+/* Ползунки есть всегда, но в свёрнутом виде спрятаны за краем и не ловят мышь. */
+.canvas3d-wind-body {
+  /* Ряд — флексом по центру: у строчных блоков ползунки и текст садились на
+     базовую линию и уезжали на 2–3 px ниже середины панели. */
+  display: inline-flex;
+  align-items: center;
+  vertical-align: top;
+  height: 28px;
+  /* Свёрнутая — нулевой ширины: иначе плашка «значок + скорость» тянулась
+     бы на ширину спрятанных ползунков и пустовала справа. */
+  width: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.canvas3d-wind.open .canvas3d-wind-body {
+  width: auto;
+  overflow: visible;
+  /* Кнопка сброса концентрична скруглению панели: ровный зазор по дуге. */
+  padding-right: 3px;
+  opacity: 1;
+  pointer-events: auto;
+}
+.canvas3d-wind-body > * { flex: 0 0 auto; margin: 0; }
+.canvas3d-wind-body > * + * { margin-left: 8px; }
+.canvas3d-wind input[type='range'] { width: 96px; height: 16px; }
+.canvas3d-wind-val { line-height: 1; }
+/* Сброс — круглая кнопка меньше высоты панели: прежняя стандартная кнопка
+   почти касалась нижней кромки и заходила на скругление справа. */
+.canvas3d-wind-body .btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  font-size: 12px;
+}
+.canvas3d-wind-val {
+  width: 56px;
+  font-variant-numeric: tabular-nums;
+}
+.canvas3d-wind-deg { width: 36px; }
+
+/* ── Поток DMX/RDM ───────────────────────────────────────────────────────
+   Столбики по 512 адресам: высота — значение, цвет — вид прибора. Ширина
+   считается долей, чтобы вся вселенная влезала в экран любой ширины. */
+.stream-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+  height: 132px;
+  padding: 6px 4px;
+  margin: 8px 0;
+  background: var(--bg-track);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.stream-bar {
+  flex: 1 1 0;
+  min-width: 0;
+  border-radius: 1px 1px 0 0;
+}
+.stream-bar:hover { outline: 1px solid var(--accent); }
+.stream-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(34px, 1fr));
+  gap: 2px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  margin: 8px 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.stream-cell {
+  text-align: right;
+  padding: 1px 3px;
+  border-radius: 2px;
+}
+.stream-cell.on { background: var(--bg-track); }
+.stream-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.stream-readout {
+  font-variant-numeric: tabular-nums;
+  margin: 4px 0 0;
+}
+.stream-block { margin-top: 10px; }
+.stream-log { max-height: 260px; overflow-y: auto; }
+.row-lost { opacity: 0.6; }
+
+/* Порядок видов при перенумерации: названия и одна кнопка-обменник на стык.
+   Стрелка стоит ровно по центру кнопки — раньше знак съезжал ниже середины,
+   потому что у строчных стрелок своя базовая линия. */
+.readdress-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.readdress-kind-name {
+  font-size: 13px;
+  min-width: 76px;
+  text-align: center;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.readdress-swap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  line-height: 1;
+}
+.readdress-swap > span {
+  display: block;
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* Заголовок панели с лупой в одной строке: значок стоит с отступом справа от
+   текста, а не отдельной строкой под ним. */
+.panel-head-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.panel-head-search {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 12px;
+}
+h2.panel-head-search {
+  margin: 0 0 8px;
+  padding: 2px 2px 0;
+}
+/* Раскрытая строка поиска в узкой колонке: не во всю ширину впритык, а с
+   полями по краям — иначе она прижимается к рамке панели и к полосе прокрутки. */
+.panel-head-search .smart-search.open { width: calc(100% - 8px); max-width: 220px; }
+
+/* Поиск в духе Windows: в покое — только значок без рамок и фона, при
+   наведении элемент РАСТЁТ в овальное поле, а лупа остаётся его частью.
+   Одно тело, а не кнопка плюс поле: курсору некуда соскочить по дороге. */
+.smart-search {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  height: 26px;
+  width: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: transparent;
+  cursor: text;
+  transition: width 0.14s ease, background 0.14s ease, border-color 0.14s ease;
+  vertical-align: middle;
+}
+.smart-search.open {
+  width: 210px;
+  background: var(--bg-track);
+  border-color: var(--border);
+}
+.smart-search-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  flex: 0 0 26px;
+  color: var(--text-dim, #9aa3ad);
+}
+.smart-search.open .smart-search-icon { color: var(--accent); }
+/* Поле есть всегда, но в свёрнутом виде схлопнуто в ноль — так значок и поле
+   остаются ОДНИМ элементом, и наведение не теряется при переходе к вводу. */
+.smart-search-input {
+  width: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.smart-search.open .smart-search-input {
+  width: auto;
+  opacity: 1;
+  padding-right: 6px;
+}
+.smart-search-count {
+  font-size: 11px;
+  padding-right: 8px;
+  white-space: nowrap;
+}
+/* Выдача ложится ПОВЕРХ содержимого, в том числе поверх 3D-схемы: пусть лучше
+   на секунду закроет картинку, чем обрежет длинные названия типов. */
+.smart-search-drop {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 60;
+  margin-top: 6px;
+  min-width: 280px;
+  max-width: 420px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 8px 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5);
+}
+.smart-search-group > summary {
+  cursor: pointer;
+  padding: 4px 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+.smart-search-val {
+  white-space: nowrap;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.smart-search-group .list-item {
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+/* Заголовок группового режима: серая строчка вместо абзаца с объяснением.
+   Объяснение — в подсказке по наведению (data-hint); курсор обычный, как у
+   подписей свойств. */
+.group-mode {
+  margin: 0 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  display: inline-block;
+}
+
+/* Свойства активного элемента при групповом выделении: свёрнутый блок под
+   групповыми свойствами — видно и общее, и отдельное. Внутренняя панель уже
+   имеет свою рамку, поэтому у обёртки её убираем, чтобы не было рамки в рамке. */
+.props-active {
+  padding: 0;
+  border-color: var(--accent);
+  background: transparent;
+}
+.props-active > summary {
+  cursor: pointer;
+  padding: 10px 14px;
+  font-size: 13px;
+  border-radius: 6px;
+  background: var(--bg-panel);
+  user-select: none;
+}
+.props-active > summary:hover { background: var(--bg-track); }
+.props-active[open] > summary { border-bottom: 1px solid var(--border); border-radius: 6px 6px 0 0; }
+.props-active > p { margin: 8px 14px 0; }
+.props-active > .panel { border: none; background: transparent; }
+
 .panel h3 {
   margin: 14px 0 8px;
   font-size: 13px;
@@ -708,13 +1128,32 @@ select {
  */
 .field-grid {
   display: grid;
-  grid-template-columns: max-content 1fr;
+  /*
+   * minmax(0, …) у ОБЕИХ колонок — без него колонка max-content не может стать
+   * уже своего содержимого, и одна длинная строка (пояснение, предупреждение)
+   * распирает всю панель, а поля ввода уезжают за правый край с горизонтальной
+   * прокруткой. С minmax колонка ужимается, а текст переносится.
+   */
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
   column-gap: 10px;
   row-gap: 8px;
   align-items: center;
   margin-bottom: 10px;
 }
 .field-grid > .field { display: contents; }
+
+/*
+ * Всё, что не пара «подпись + поле» — пояснения, предупреждения, блоки
+ * привязок — занимает строку целиком. Иначе такой элемент становится ячейкой
+ * ПЕРВОЙ колонки и тянет её под свою длину (та же причина, что и у .bind-group
+ * ниже).
+ */
+.field-grid > p {
+  grid-column: 1 / -1;
+  margin: 2px 0;
+  /* Длинные имена файлов и путей не должны распирать панель. */
+  overflow-wrap: anywhere;
+}
 .field-grid input,
 .field-grid select { justify-self: end; }
 .field-grid h3 { grid-column: 1 / -1; margin: 4px 0 0; }
@@ -749,6 +1188,100 @@ select {
 .badge-live {
   color: var(--ok);
   border-color: var(--ok-border);
+}
+/* Значок-плашка (идёт/пауза): тот же приём, что и .btn-icon — центрируем
+   SVG флексом, а не подбором vertical-align под метрики шрифта. */
+.badge-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+}
+
+/* Поле темпа генератора: значения короткие (100, 2, 6), широкое поле тут ни к
+   чему — панель и так впритык укладывается в одну строку. Единица рядом
+   отдельной подписью, чтобы в подпись поля не лезла запятая с буквой. */
+.input-speed { width: 58px; }
+.unit { color: var(--fg-dim); font-size: 11px; margin-left: 3px; }
+
+/* Множественное выделение на 3D: отмеченные строки видны рядом с обычным
+   «выбранным» (у того открыты свойства справа) — поэтому разная подача:
+   выбранный красится фоном, отмеченные помечаются полосой слева. */
+.list-item.marked {
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: var(--bg-track);
+}
+.list-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* Привязка устройств к форсунке: одна строка на устройство — подпись, список,
+   маленький «+» справа. Дополнительные строки идут ниже без подписи, с одним
+   отступом, чтобы читались как продолжение той же роли. */
+.bind-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+/* Блок привязок — не .field, поэтому display:contents из .field-grid на него не
+   действует и он становится обычным элементом ПЕРВОЙ колонки (max-content).
+   Из-за этого колонка растягивалась под всю ширину блока, панель переставала
+   помещаться и появлялась горизонтальная прокрутка: подписи оставались слева,
+   поля уезжали вправо. Растягиваем блок на обе колонки — он живёт своей строкой. */
+.field-grid > .bind-group { grid-column: 1 / -1; }
+.bind-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.bind-row select {
+  flex: 1 1 60px;
+  min-width: 0;
+}
+.bind-label {
+  flex: 0 0 auto;
+  width: 120px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Живое управление форсункой прямо на 3D — отбивка от свойств выше. */
+.nozzle-live {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.nozzle-live h3 { margin-top: 0; }
+
+/* Действия над самим элементом (дублировать/удалить) — отдельным отсеком внизу
+   панели, отбитым линией: они меняют состав схемы, а не свойства выбранного,
+   и не должны читаться как продолжение полей выше. */
+.element-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+/* Кнопка-состояние: показывает, как сейчас, и переключает по нажатию. Цвет —
+   чтобы состояние читалось не только словом (открыт/закрыт, горит/погашен). */
+.state-on {
+  background: var(--ok-bg);
+  border-color: var(--ok-border);
+  color: var(--ok);
+  font-weight: 600;
+}
+.state-off {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+  color: var(--danger-text);
+  font-weight: 600;
 }
 
 .btn-small { padding: 2px 8px; font-size: 12px; }
@@ -972,13 +1505,38 @@ select {
   right: 10px;
   top: 10px;
 }
-.sidebar-props { width: 280px; }
+/* Панель свойств шире боковой: в ней и подпись, и поле, и (у привязок) кнопка.
+   280px хватало, пока не появились строки привязки с выпадающим списком. */
+.sidebar-props { width: 330px; }
+/* Ничто в панели не должно вылезать за её ширину и включать горизонтальную
+   прокрутку — при 200+ элементах это самая раздражающая мелочь. */
+.sidebar-props .field-grid { min-width: 0; }
+.sidebar-props .input,
+.sidebar-props select { max-width: 100%; }
 
 /* ── Вкладка «Шоу»: таймлайн ─────────────────────────────── */
 .content-show { overflow-y: auto; }
 .spacer { flex: 1; }
 .warn { color: var(--warn); font-size: 12px; }
 .ok-text { color: var(--ok); font-weight: 600; }
+
+/* ── Настройки: состояние USB-DMX (драйвер FTDI, интерфейсы Musidora) ── */
+.usb-status {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.usb-status-title { font-weight: 600; }
+.usb-status-row { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.usb-status-name { color: var(--fg-dim); min-width: 200px; }
+.usb-status .error-text { margin-left: 0; }
+.usb-status .ok-text { font-weight: 500; }
+.usb-dev { margin-right: 14px; }
 .time-display {
   font-variant-numeric: tabular-nums;
   font-size: 15px;
@@ -1277,3 +1835,203 @@ select {
   white-space: nowrap;
 }
 .addr-value { width: 100%; }
+
+/* Отбивка перед кнопкой «+ Контур»: она прилипала к последнему контуру в списке. */
+.form-row-spaced { margin-top: 12px; }
+
+/* ── Переадресация каналов ───────────────────────────────── */
+.remap-modal { width: min(1100px, calc(100vw - 48px)); }
+.remap-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 14px;
+  min-height: 0;
+}
+.remap-list {
+  max-height: 52vh;
+  overflow-y: auto;
+  background: var(--bg);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.remap-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 16px 74px 40px 28px;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 0;
+  font-size: 13px;
+}
+/* Переадресованная строка видна сразу — иначе её пришлось бы искать глазами. */
+.remap-row.moved { background: color-mix(in srgb, var(--warn) 16%, transparent); border-radius: 3px; }
+.remap-addr { font-variant-numeric: tabular-nums; text-align: right; font-weight: 600; }
+.remap-arrow { text-align: center; color: var(--fg-dim); }
+.remap-val { font-variant-numeric: tabular-nums; text-align: right; }
+.remap-who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.remap-report { min-width: 0; overflow-y: auto; max-height: 52vh; }
+.remap-pre {
+  background: var(--bg);
+  border-radius: 4px;
+  padding: 8px;
+  margin: 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.modal-actions { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+
+/* ── Ползунки ────────────────────────────────────────────────
+   Стандартный ползунок в тёмной теме почти не виден: бегунок сливается с
+   панелью, а в крайних положениях его вообще не найти. Рисуем сами — светлая
+   дорожка, залитая часть цветом акцента и крупный бегунок с обводкой и тенью,
+   который читается на любом фоне и в любой позиции. */
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  min-width: 90px;
+  height: 20px;
+  background: transparent;
+  cursor: pointer;
+}
+input[type='range']::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-track);
+  border: 1px solid var(--border);
+}
+input[type='range']::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-track);
+  border: 1px solid var(--border);
+}
+/* Заполненная часть — только Firefox умеет сам; в webkit её заменяет тень. */
+input[type='range']::-moz-range-progress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-panel);
+  box-shadow: 0 0 0 1px var(--fg-dim), 0 1px 3px rgba(0, 0, 0, 0.55);
+}
+input[type='range']::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-panel);
+  box-shadow: 0 0 0 1px var(--fg-dim), 0 1px 3px rgba(0, 0, 0, 0.55);
+}
+input[type='range']:hover::-webkit-slider-thumb { background: var(--accent-bright, var(--accent)); }
+input[type='range']:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px var(--accent), 0 1px 3px rgba(0, 0, 0, 0.55); }
+input[type='range']:disabled { opacity: 0.4; cursor: default; }
+
+/* ── Блок «Расставить фигурой» ───────────────────────────────
+   Панель узкая, поэтому подсказка и кнопки-количества занимают всю ширину
+   строки сетки, а не лезут в колонку подписей. */
+.shape-presets {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.shape-presets .btn { min-width: 34px; padding: 2px 6px; }
+
+/* Рамка выделения на схеме — обычный div поверх холста. */
+.canvas3d-band {
+  position: absolute;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  pointer-events: none;
+  z-index: 5;
+}
+.canvas3d { position: relative; }
+
+/* ── Подсказки ────────────────────────────────────────────────
+   Один общий ярлык на всё приложение (см. hints.tsx). Живёт над всем, поэтому
+   не обрезается панелями с прокруткой, в отличие от родного title. */
+.hint-bubble {
+  position: fixed;
+  z-index: 200;
+  transform: translate(-50%, -100%);
+  max-width: 320px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-line;
+  pointer-events: none;
+}
+.hint-bubble.hint-below { transform: translate(-50%, 0); }
+/* Хвостик к элементу — чтобы было видно, к чему подсказка. */
+.hint-bubble::after {
+  content: '';
+  position: absolute;
+  /* Хвостик держится под элементом даже когда ярлык сдвинут от края экрана. */
+  left: calc(50% + var(--tail-dx, 0px));
+  margin-left: -5px;
+  border: 5px solid transparent;
+  border-top-color: var(--border);
+  top: 100%;
+}
+.hint-bubble.hint-below::after {
+  top: auto;
+  bottom: 100%;
+  border-top-color: transparent;
+  border-bottom-color: var(--border);
+}
+/* Курсор не трогаем: подсказки висят на половине элементов, и знак вопроса
+   мельтешил бы по всему экрану — в том числе между фейдерами Пульта. */
+
+/* ── Быстрые команды Пульта ──────────────────────────────────
+   Ползунок насосов и палитра света должны кончаться на одной вертикали:
+   иначе строки выглядят разной длины, хотя делают одно и то же — команду
+   всем приборам вида. Ширина = 9 плашек по 18 px и 8 промежутков по 4 px. */
+.quick-controls { --quick-control-width: 194px; }
+.quick-row .color-presets { width: var(--quick-control-width); }
+.quick-row input[type='range'] {
+  width: var(--quick-control-width);
+  flex: 0 0 auto;
+}
+
+/* ── Полосы прокрутки ──────────────────────────────────────────────────────
+
+   Сама полоса здесь только РОДНАЯ и прозрачная: за неё тянут мышью, щёлкают
+   по дорожке, крутят колесо — всё как у обычной. Струю поверх рисует
+   scrollHint.ts на канве: градиентами в фоне бегунка настоящую воду не
+   нарисовать (ни размытия, ни сотен мелких капель), и выходила крашеная палка.
+
+   Толщина 16 px и наименьшая длина бегунка 40 px продублированы в
+   scrollHint.ts (BAR и MIN_THUMB): по ним считается, где сейчас бегунок.
+   Меняете здесь — меняйте и там, иначе струя разойдётся с бегунком.
+
+   ВАЖНО: здесь НЕТ scrollbar-color и scrollbar-width. Chromium, увидев любое
+   из них, переходит на стандартную полосу, игнорирует ::-webkit-scrollbar-* —
+   и серый системный бегунок вылезает поверх струи. */
+*::-webkit-scrollbar {
+  width: 16px;
+  height: 16px;
+  background: transparent;
+}
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: transparent;
+  min-height: 40px;
+  min-width: 40px;
+}

@@ -1,11 +1,19 @@
 import { useMemo, useState } from 'react';
+import { ReaddressPanel } from '../components/ReaddressPanel';
+import { RemapDialog } from '../components/RemapDialog';
 import {
   DMX_UNIVERSE_SIZE,
   allProfiles,
+  VFD_PRESETS,
+  vfdPreset,
+  type SearchRecord,
   deviceDependents,
   deviceRange,
   findPatchIssues,
   nextFreeAddress,
+  nozzleLightIds,
+  nozzlePumpIds,
+  nozzleValveIds,
   planDeviceWizard,
   profileMap,
   shiftDeviceAddresses,
@@ -22,7 +30,16 @@ import {
   type PumpModbusStatus,
   type WizardRow,
 } from '@fountain-studio/shared';
+import { SmartSearch } from '../components/SmartSearch';
+/** Подписи видов оборудования — ими же ищем по типу. */
+const DEVICE_KIND_NAMES: Record<string, string> = {
+  pump: 'Насос',
+  valve: 'Клапан',
+  lamp: 'Светильник',
+  other: 'Прочее',
+};
 import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
+import { askConfirm } from '../components/ConfirmDialog';
 import { confirmDelete } from '../confirmDelete';
 import { requestTab } from '../navigate';
 import type { EngineConnection } from '../useEngine';
@@ -46,16 +63,51 @@ const ROLE_LABEL: Record<ChannelRole, string> = {
 
 /** Патч: профили устройств и расстановка по адресам с авто-адресацией и контролем коллизий. */
 export function PatchView({ engine }: { engine: EngineConnection }) {
-  const { project, universes, updateProject } = engine;
+  const { project, universes, updateProject, frames } = engine;
+  // Переадресация живёт в окне поверх вкладки, а не отдельным разделом:
+  // лезть туда каждый день не надо, и случайно перепутать адреса всему объекту
+  // не должно быть просто.
+  const [remapOpen, setRemapOpen] = useState(false);
 
   if (!project) return <main className="view">Ожидание проекта от движка…</main>;
 
+  const remapped = Object.values(project.addressRemap ?? {}).reduce((s, t) => s + Object.keys(t).length, 0);
+
   return (
     <main className="view">
+      <section className="panel">
+        <h2>Переадресация каналов</h2>
+        <p className="dim">
+          Если монтаж не совпал со схемой — не правьте схему. Здесь задаётся, откуда каждый адрес линии
+          берёт значение; проект, сцены и 3D-вид остаются как есть.
+        </p>
+        <div className="form-row">
+          <button className="btn btn-small" onClick={() => setRemapOpen(true)}>
+            Открыть переадресацию
+          </button>
+          {remapped > 0 ? (
+            <span className="warn">переадресовано адресов: {remapped}</span>
+          ) : (
+            <span className="dim">переадресация не используется</span>
+          )}
+        </div>
+      </section>
+      {remapOpen && (
+        <RemapDialog
+          project={project}
+          frames={frames}
+          onClose={() => setRemapOpen(false)}
+          onApply={(remap) => {
+            updateProject({ ...project, addressRemap: remap });
+            setRemapOpen(false);
+          }}
+        />
+      )}
       <ProjectHeader engine={engine} />
       <AddDevices engine={engine} />
       <DeviceWizard engine={engine} />
       <DevicesTable engine={engine} />
+      <ReaddressPanel project={project} universes={universes} updateProject={updateProject} />
       <Profiles project={project} updateProject={updateProject} universesCount={universes.length} />
     </main>
   );
@@ -422,6 +474,29 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
   const { project, universes, updateProject } = engine;
   const profiles = useMemo(() => profileMap(project!), [project]);
   const issues = useMemo(() => findPatchIssues(project!), [project]);
+  /**
+   * Сколько элементов 3D-схемы использует каждый прибор. Один и тот же прибор
+   * можно осознанно привязать в нескольких местах — например, посадить кольцо
+   * светильников на общий адрес, когда 512 адресов на объект не хватает. Само
+   * по себе это не ошибка, но раньше об этом нигде не сообщалось: привязал в
+   * одном месте, забыл, что он уже занят в другом, и получил неожиданную
+   * засветку. Считаем по каждой роли, включая дополнительные привязки.
+   */
+  const layoutUses = useMemo(() => {
+    const map = new Map<string, number>();
+    const bump = (id: string | null): void => {
+      if (id) map.set(id, (map.get(id) ?? 0) + 1);
+    };
+    const layout = project!.layout;
+    for (const n of layout.nozzles) {
+      for (const id of nozzlePumpIds(n)) bump(id);
+      for (const id of nozzleValveIds(n)) bump(id);
+      for (const id of nozzleLightIds(n)) bump(id);
+      bump(n.pump2DeviceId);
+    }
+    for (const l of layout.lights) bump(l.deviceId);
+    return map;
+  }, [project]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [shiftBy, setShiftBy] = useState(1);
   const [trimOpenId, setTrimOpenId] = useState<string | null>(null);
@@ -470,7 +545,7 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
   // Сдвиг адресов — «с разрешения» (обсуждение мастера объекта, §27 п.11):
   // сам сдвиг не запрещаем, но если он создаёт пересечение адресов, которого
   // не было — сначала явное подтверждение с именами пострадавших приборов.
-  const doShift = (): void => {
+  const doShift = async (): Promise<void> => {
     if (selectedIds.length === 0 || shiftBy === 0) return;
     const shifted = shiftDeviceAddresses(project!, selectedIds, shiftBy);
     const before = findPatchIssues(project!).collisions;
@@ -478,15 +553,18 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
     const newlyColliding = [...after].filter((id) => !before.has(id));
     if (newlyColliding.length > 0) {
       const names = newlyColliding.map((id) => shifted.devices.find((d) => d.id === id)?.name ?? id).join(', ');
-      const ok = window.confirm(`Сдвиг создаст пересечение адресов: ${names}.\n\nВсё равно сдвинуть?`);
+      const ok = await askConfirm('Сдвинуть адреса с пересечением?', {
+        detail: `После сдвига пересекутся адреса: ${names}. Приборы на пересечении будут получать чужие значения.`,
+        okLabel: 'Сдвинуть',
+      });
       if (!ok) return;
     }
     updateProject(shifted);
   };
 
-  const removeDevice = (id: string): void => {
+  const removeDevice = async (id: string): Promise<void> => {
     const device = project!.devices.find((d) => d.id === id);
-    if (device && !confirmDelete('прибора', device.name, deviceDependents(project!, id))) return;
+    if (device && !(await confirmDelete('прибора', device.name, deviceDependents(project!, id)))) return;
     const scenes = project!.scenes.map((s) => {
       if (!(id in s.values)) return s;
       const values = { ...s.values };
@@ -496,13 +574,40 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
     updateProject({ ...project!, devices: project!.devices.filter((d) => d.id !== id), scenes });
   };
 
+  /**
+   * Записи для поиска: всё, чем прибор вообще может быть найден.
+   *
+   * Раньше фильтр смотрел только на имя, да и поле показывалось лишь когда
+   * приборов больше пяти — на маленьком объекте поиска просто не было видно.
+   * Теперь ищется и по типу, и по профилю, и по адресу со вселенной.
+   */
+  const searchRecords: SearchRecord[] = project!.devices.map((d) => {
+    const p = profiles.get(d.profileId);
+    return {
+      id: d.id,
+      kind: p?.name ?? 'Прибор',
+      label: d.name,
+      fields: [
+        { field: 'Имя', value: d.name },
+        { field: 'Тип', value: DEVICE_KIND_NAMES[p?.kind ?? 'other'] ?? 'Прочее' },
+        { field: 'Профиль', value: p?.name ?? '' },
+        { field: 'Адрес', value: String(d.address) },
+        { field: 'Вселенная', value: String(d.universe) },
+      ],
+    };
+  });
+  const q = filter.trim().toLowerCase();
   const sorted = [...project!.devices]
     .sort((a, b) => a.universe - b.universe || a.address - b.address)
-    .filter((d) => d.name.toLowerCase().includes(filter.trim().toLowerCase()));
+    .filter((d) => {
+      if (q === '') return true;
+      const rec = searchRecords.find((r) => r.id === d.id);
+      return rec ? rec.fields.some((f) => f.value.toLowerCase().includes(q)) : false;
+    });
 
   return (
     <section className="panel">
-      <h2>
+      <h2 className="panel-head-row">
         Устройства <span className="dim">({project!.devices.length})</span>
         {issues.collisions.size > 0 && (
           <span className="error-text"> ⚠ пересечения адресов: {issues.collisions.size}</span>
@@ -511,16 +616,19 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
           <span className="error-text"> ⚠ за пределами 1–512: {issues.outOfRange.size}</span>
         )}
       </h2>
-      {project!.devices.length > 5 && (
-        <div className="form-row">
-          <input
-            className="input"
-            style={{ width: 220 }}
-            placeholder="Поиск по имени…"
+      {project!.devices.length > 0 && (
+        <span className="panel-head-search">
+          <SmartSearch
+            records={searchRecords}
             value={filter}
-            onChange={(e) => setFilter(e.target.value)}
+            onValue={setFilter}
+            hint="Поиск по всем свойствам прибора: имя, тип, профиль, адрес, вселенная. Находки разложены по тому полю, в котором совпало."
+            onPick={(id) => {
+              const d = project!.devices.find((x) => x.id === id);
+              if (d) setFilter(d.name);
+            }}
           />
-        </div>
+        </span>
       )}
       {project!.devices.length === 0 ? (
         <div className="dim">Пока пусто — добавьте устройства выше.</div>
@@ -529,11 +637,13 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
       ) : (
         <>
           <div className="form-row">
-            <span className="dim">Переадресация (физически перепутаны/заменены приборы): отметьте устройства →</span>
+            <span className="dim" data-hint="Меняет адреса в самом проекте. Если схема верна, а перепутан монтаж — это не сюда, а в «Переадресацию каналов» выше">
+              Перепутаны или заменены приборы — обменять и сдвинуть адреса в проекте: отметьте устройства →
+            </span>
             <button
               className="btn"
               disabled={selectedIds.length !== 2}
-              title="Обменять адреса и вселенные двух отмеченных устройств"
+              data-hint="Обменять адреса и вселенные двух отмеченных устройств"
               onClick={doSwap}
             >
               ⇄ Обменять адреса{selectedIds.length === 2 ? '' : ' (нужно 2)'}
@@ -547,7 +657,7 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                 onChange={(e) => setShiftBy(Math.round(Number(e.target.value)) || 0)}
               />
             </label>
-            <button className="btn" disabled={selectedIds.length === 0 || shiftBy === 0} onClick={doShift}>
+            <button className="btn" disabled={selectedIds.length === 0 || shiftBy === 0} onClick={() => void doShift()}>
               Сдвинуть адреса ({selectedIds.length} выбр.)
             </button>
             {selectedIds.length > 0 && (
@@ -566,10 +676,15 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
               <tr>
                 <th></th>
                 <th>Имя</th>
-                <th>Профиль</th>
+                <th data-hint="Тип оборудования — он задаёт набор каналов прибора. Раньше колонка называлась «профиль»: слово из мира светового оборудования, здесь оно только путало">
+                  Тип
+                </th>
                 <th>Вселенная</th>
                 <th>Адрес</th>
                 <th>Диапазон</th>
+                <th data-hint="Сколько элементов 3D-схемы (форсунок и прожекторов) используют этот прибор. Больше одного — прибор работает сразу в нескольких местах: так бывает намеренно, когда группу светильников сажают на общий адрес, но об этом лучше знать">
+                  Привязок
+                </th>
                 <th></th>
               </tr>
             </thead>
@@ -620,10 +735,22 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                       {issues.collisions.has(d.id) && <span className="error-text"> пересечение</span>}
                       {issues.outOfRange.has(d.id) && <span className="error-text"> вне 1–512</span>}
                     </td>
+                    <td
+                      className={(layoutUses.get(d.id) ?? 0) > 1 ? 'warn' : 'dim'}
+                      data-hint={
+                        (layoutUses.get(d.id) ?? 0) > 1
+                          ? 'Прибор привязан к нескольким элементам схемы — он звучит сразу во всех'
+                          : (layoutUses.get(d.id) ?? 0) === 0
+                            ? 'Прибор не привязан ни к одному элементу 3D-схемы'
+                            : 'Прибор привязан к одному элементу схемы'
+                      }
+                    >
+                      {layoutUses.get(d.id) ?? 0}
+                    </td>
                     <td>
                       <button
                         className={d.trim ? 'btn btn-small active' : 'btn btn-small'}
-                        title="Калибровка min/max по каналам"
+                        data-hint="Калибровка min/max по каналам"
                         onClick={() => setTrimOpenId(trimOpen ? null : d.id)}
                       >
                         ⚙
@@ -631,7 +758,7 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                       {profile?.kind === 'pump' && (
                         <button
                           className={d.modbus ? 'btn btn-small active' : 'btn btn-small'}
-                          title="Прямое управление через Modbus (ПЧ), в обход DMX→аналог"
+                          data-hint="Прямое управление через Modbus (ПЧ), в обход DMX→аналог"
                           onClick={() => setModbusOpenId(modbusOpen ? null : d.id)}
                         >
                           ПЧ
@@ -639,7 +766,7 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                       )}{' '}
                       <button
                         className="btn btn-small"
-                        title="Копировать прибор"
+                        data-hint="Копировать прибор"
                         onClick={() => {
                           copyToClipboard('device', d);
                           setHasDeviceClip(true);
@@ -647,7 +774,7 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                       >
                         ⧉
                       </button>{' '}
-                      <button className="btn btn-small" onClick={() => removeDevice(d.id)}>
+                      <button className="btn btn-small" onClick={() => void removeDevice(d.id)}>
                         ✕
                       </button>
                     </td>
@@ -769,6 +896,8 @@ function ModbusEditor({
 }) {
   const enabled = device.modbus !== undefined;
   const config = device.modbus ?? defaultModbusConfig();
+  const [presetId, setPresetId] = useState('custom');
+  const preset = vfdPreset(presetId);
 
   const set = (patch: Partial<ModbusPumpConfig>): void => onChange({ ...config, ...patch });
   const setTcp = (patch: Partial<Extract<ModbusConnection, { kind: 'tcp' }>>): void => {
@@ -778,6 +907,18 @@ function ModbusEditor({
   const setRtu = (patch: Partial<Extract<ModbusConnection, { kind: 'rtu' }>>): void => {
     if (config.connection.kind !== 'rtu') return;
     onChange({ ...config, connection: { ...config.connection, ...patch } });
+  };
+
+  /**
+   * Пресет заполняет адреса регистров разом. Подключение (порт, скорость,
+   * адрес прибора) при этом не трогаем — оно про монтаж, а не про модель ПЧ.
+   */
+  const applyPreset = (id: string): void => {
+    const p = vfdPreset(id);
+    if (!p) return;
+    setPresetId(id);
+    if (id === 'custom') return;
+    onChange({ ...config, ...p.map });
   };
 
   return (
@@ -790,6 +931,37 @@ function ModbusEditor({
         />{' '}
         Управлять «{device.name}» напрямую по Modbus (ПЧ), в обход DMX→аналог
       </label>
+      {enabled && (
+        <>
+          <div className="form-row">
+            <label className="field" data-hint="Заполняет адреса регистров под выбранную серию. Любое поле потом правится руками — список не закрытый.">
+              Модель ПЧ:{' '}
+              <select className="input" value={presetId} onChange={(e) => applyPreset(e.target.value)}>
+                {VFD_PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {preset && <span className="dim">{preset.note}</span>}
+          </div>
+          {status && (
+            <p className="dim">
+              Здоровье насоса:{' '}
+              <b className={status.connected ? '' : 'error-text'}>{status.connected ? 'на связи' : 'нет связи'}</b>
+              {' · '}уставка {status.lastFreqHz} Гц
+              {status.currentA !== null && ` · ток ${status.currentA.toFixed(1)} А`}
+              {status.speedRpm !== null && ` · выход ${status.speedRpm.toFixed(1)} Гц`}
+              {status.tempC !== null && ` · ${status.tempC.toFixed(1)} °C`}
+              {status.faultCode !== null && status.faultCode !== 0 && (
+                <span className="error-text"> · авария, код {status.faultCode}</span>
+              )}
+              {status.lastError && <span className="warn"> · {status.lastError}</span>}
+            </p>
+          )}
+        </>
+      )}
       {enabled && (
         <>
           {status && (
@@ -1078,7 +1250,7 @@ function Profiles({
                     <button
                       className="btn btn-small"
                       disabled={used}
-                      title={used ? 'Профиль используется устройствами' : 'Удалить'}
+                      data-hint={used ? 'Профиль используется устройствами' : 'Удалить'}
                       onClick={() => removeProfile(p.id)}
                     >
                       ✕

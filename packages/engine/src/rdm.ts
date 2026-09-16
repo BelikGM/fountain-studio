@@ -30,6 +30,134 @@ export const PID_MANUFACTURER_LABEL = 0x0081;
 export const PID_SOFTWARE_VERSION_LABEL = 0x00c0;
 export const PID_DMX_START_ADDRESS = 0x00f0;
 export const PID_IDENTIFY_DEVICE = 0x1000;
+/**
+ * Датчики прибора — температура лампы, напряжение, наработка.
+ *
+ * Эти два PID стандартные (ANSI E1.20), а не «фирменные»: их формат один и тот
+ * же у любого производителя, поэтому опрос получается УНИВЕРСАЛЬНЫМ. Разница
+ * между брендами не в протоколе, а в том, сколько датчиков прибор заводит и как
+ * их называет — а это он сам и сообщает в SENSOR_DEFINITION.
+ *
+ * Отсюда и правило обработки: сколько датчиков есть, столько и спрашиваем
+ * (число приходит в DEVICE_INFO), а на неподдерживаемый номер прибор отвечает
+ * NACK — его мы просто пропускаем. Незнакомая марка не ломает опрос: она либо
+ * ответит по стандарту, либо откажется, и оба случая обработаны.
+ */
+export const PID_SENSOR_DEFINITION = 0x0200;
+export const PID_SENSOR_VALUE = 0x0201;
+
+/** Что за датчик: единицы, диапазон, человекочитаемое имя. */
+export interface RdmSensorDef {
+  index: number;
+  /** Тип по E1.20 (температура, напряжение, ток, наработка…). */
+  type: number;
+  /** Единицы измерения по E1.20. */
+  unit: number;
+  /** Десятичный префикс: значение умножается на 10^prefix. */
+  prefix: number;
+  rangeMin: number;
+  rangeMax: number;
+  description: string;
+}
+
+/** Текущее показание датчика. */
+export interface RdmSensorValue {
+  index: number;
+  value: number;
+  lowest: number;
+  highest: number;
+  recorded: number;
+}
+
+/** Подписи типов датчиков по ANSI E1.20 — то, что встречается на практике. */
+const SENSOR_TYPE_NAMES: Record<number, string> = {
+  0x00: 'Температура',
+  0x01: 'Напряжение',
+  0x02: 'Ток',
+  0x03: 'Частота',
+  0x04: 'Сопротивление',
+  0x05: 'Мощность',
+  0x06: 'Масса',
+  0x07: 'Давление',
+  0x08: 'Наработка',
+  0x09: 'Длина',
+  0x0d: 'Угол',
+  0x11: 'Скорость',
+  0x19: 'Освещённость',
+};
+
+/** Подписи единиц по ANSI E1.20. */
+const SENSOR_UNIT_NAMES: Record<number, string> = {
+  0x00: '',
+  0x01: '°C',
+  0x02: 'В',
+  0x03: 'А',
+  0x04: 'Гц',
+  0x05: 'Ом',
+  0x06: 'Вт',
+  0x07: 'кг',
+  0x08: 'Па',
+  0x09: 'м',
+  0x0b: 'с',
+  0x10: 'об/мин',
+};
+
+export function sensorTypeName(type: number): string {
+  return SENSOR_TYPE_NAMES[type] ?? `тип 0x${type.toString(16)}`;
+}
+
+export function sensorUnitName(unit: number): string {
+  return SENSOR_UNIT_NAMES[unit] ?? '';
+}
+
+/**
+ * Разбор ответа SENSOR_DEFINITION.
+ *
+ * Формат фиксирован стандартом: номер, тип, единицы, префикс, диапазоны,
+ * нормальные значения, флаги и дальше ASCII-описание переменной длины.
+ */
+export function parseSensorDefinition(data: Buffer): RdmSensorDef | null {
+  if (data.length < 13) return null;
+  return {
+    index: data.readUInt8(0),
+    type: data.readUInt8(1),
+    unit: data.readUInt8(2),
+    // Префикс — знаковый: 0xFF это 10⁻¹, то есть десятые доли.
+    prefix: data.readInt8(3),
+    rangeMin: data.readInt16BE(4),
+    rangeMax: data.readInt16BE(6),
+    description: data
+      .subarray(13)
+      .toString('ascii')
+      .replace(/\u0000+$/, '')
+      .trim(),
+  };
+}
+
+/** Разбор ответа SENSOR_VALUE: текущее, минимум, максимум за время работы. */
+export function parseSensorValue(data: Buffer): RdmSensorValue | null {
+  if (data.length < 9) return null;
+  return {
+    index: data.readUInt8(0),
+    value: data.readInt16BE(1),
+    lowest: data.readInt16BE(3),
+    highest: data.readInt16BE(5),
+    recorded: data.readInt16BE(7),
+  };
+}
+
+/** Показание с учётом десятичного префикса — в человеческих единицах. */
+export function sensorScaled(def: RdmSensorDef | undefined, raw: number): number {
+  const p = def?.prefix ?? 0;
+  return raw * Math.pow(10, p);
+}
+
+/** Запрос одного датчика по номеру — тело из одного байта. */
+export function encodeSensorIndex(index: number): Buffer {
+  const b = Buffer.alloc(1);
+  b.writeUInt8(Math.max(0, Math.min(0xff, index)), 0);
+  return b;
+}
 
 export const OP_RDM = 0x8300;
 

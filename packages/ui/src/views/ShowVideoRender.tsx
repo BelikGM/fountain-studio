@@ -3,6 +3,7 @@ import { keptSegments, type Show } from '@fountain-studio/shared';
 import { FountainScene } from '../three/FountainScene';
 import { buildDeviceIndex, createLiveHooks, type DeviceIndexEntry } from '../three/liveHooks';
 import type { EngineConnection } from '../useEngine';
+import { StopIcon } from '../components/Icons';
 
 const CANVAS_W = 960;
 const CANVAS_H = 540;
@@ -82,6 +83,8 @@ export function ShowVideoRender({
     if (!containerRef.current) return;
     const scene = new FountainScene(containerRef.current, {
       onSelect: () => {},
+      onToggleMark: () => {},
+      onMarkArea: () => {},
       onMove: () => {},
       onMoveEnd: () => {},
       live: createLiveHooks(deviceIndexRef, framesRef),
@@ -230,8 +233,9 @@ export function ShowVideoRender({
               <span className="dim">
                 {(elapsedMs / 1000).toFixed(1)} / {(show.durationMs / 1000).toFixed(1)} с
               </span>
-              <button className="btn btn-danger" onClick={stop}>
-                ■ Остановить
+              <button className="btn btn-icon btn-danger" onClick={stop}>
+                <StopIcon />
+                Остановить
               </button>
             </>
           )}

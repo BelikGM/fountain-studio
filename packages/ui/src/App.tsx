@@ -5,6 +5,8 @@ import { isOperatorLocked } from './operatorMode';
 import { useEngine } from './useEngine';
 import { KeysView, keyLabel } from './views/KeysView';
 import { ConsoleView } from './views/ConsoleView';
+import { ConfirmHost } from './components/ConfirmDialog';
+import { HintHost } from './hints';
 import { TourOverlay, type TourStepDef } from './components/TourOverlay';
 import { HelpView } from './views/HelpView';
 import { LicenseView } from './views/LicenseView';
@@ -15,11 +17,13 @@ import { PatchView } from './views/PatchView';
 import { ScenesView } from './views/ScenesView';
 import { SequencesView } from './views/SequencesView';
 import { ShowView } from './views/ShowView';
+import { StreamView } from './views/StreamView';
 import { NetworkView } from './views/NetworkView';
 import { PlaylistsView } from './views/PlaylistsView';
 import { RemoteView } from './views/RemoteView';
 import { ScheduleView } from './views/ScheduleView';
 import { SettingsView } from './views/SettingsView';
+import { lastManual, subscribeManual } from './manualActivity';
 
 type Tab =
   | 'console'
@@ -30,6 +34,7 @@ type Tab =
   | 'show'
   | 'playlists'
   | 'schedule'
+  | 'stream'
   | 'network'
   | 'remote'
   | 'keys'
@@ -43,26 +48,71 @@ type Tab =
 const UNLICENSED_TABS: Tab[] = ['playlists', 'schedule'];
 
 const TABS: { id: Tab; label: string; full: string }[] = [
-  { id: 'console', label: 'Пульт', full: 'Пульт — ручное управление: фейдеры адресов и тест-сигналы DMX' },
-  { id: 'patch', label: 'Приборы', full: 'Приборы — список оборудования объекта и его DMX-адреса' },
+  {
+    id: 'console',
+    label: 'Отладка',
+    full: 'Отладка — ручное управление на пусконаладке и тестах: фейдеры адресов и тест-сигналы DMX',
+  },
+  // id остаётся 'patch' — он внутренний (data-tour, сохранённая вкладка,
+  // ссылки в коде); меняется только то, что видит пользователь.
+  {
+    id: 'patch',
+    label: 'Оборудование',
+    full: 'Оборудование — из чего состоит фонтан: насосы, клапаны, светильники и их DMX-адреса',
+  },
   { id: 'layout', label: '3D', full: '3D — схема фонтана и живая визуализация струй/света' },
   { id: 'scenes', label: 'Сцены', full: 'Сцены — статичные картины по приборам (заготовки для остального)' },
   { id: 'sequences', label: 'Секвенсоры', full: 'Секвенсоры — сцены друг за другом по кругу или один раз' },
   { id: 'show', label: 'Шоу', full: 'Шоу — таймлайн под музыку: одна музыкальная программа' },
   { id: 'playlists', label: 'Плейлисты', full: 'Плейлисты — несколько шоу подряд: программа целого вечера' },
   { id: 'schedule', label: 'Расписание', full: 'Расписание — автозапуск по времени и дням недели' },
+  {
+    id: 'stream',
+    label: 'Поток',
+    full: 'Поток — что уходит в линию и что приходит: DMX по участкам пути и обмен RDM в обе стороны',
+  },
   { id: 'network', label: 'Диагностика', full: 'Диагностика — исправность оборудования: живы ли ноды и приборы на линии' },
   { id: 'remote', label: 'Внешние пульты', full: 'Внешние пульты — планшет (OSC/TouchOSC) и умный дом (MQTT)' },
   { id: 'keys', label: 'Клавиатура', full: 'Клавиатура — запуск сцен/шоу нажатием клавиш компьютера' },
   { id: 'settings', label: 'Настройки', full: 'Настройки — DMX-линии (вселенные) и частота обновления' },
 ];
 
+/**
+ * Открытая вкладка переживает перезагрузку страницы.
+ *
+ * Раньше она была обычным состоянием и после F5 всегда сбрасывалась на Отладку:
+ * настраиваешь 3D, обновляешь страницу — и снова ищи, где был. Хранится на этом
+ * компьютере, в проект не попадает: это не свойство фонтана, а то, чем человек
+ * сейчас занят.
+ */
+const TAB_STORAGE_KEY = 'fs-tab';
+
+function loadTab(): Tab {
+  try {
+    const saved = localStorage.getItem(TAB_STORAGE_KEY);
+    // Сверяем со списком: в сохранённом значении может лежать вкладка из старой
+    // версии, которой больше нет.
+    if (saved && TABS.some((t) => t.id === saved)) return saved as Tab;
+  } catch {
+    // Приватный режим браузера — просто начинаем с Отладки.
+  }
+  return 'console';
+}
+
 /** Короткий маршрут по мотивам docs/MANUAL.md §4 — полные 8 шагов остаются в Справке. */
 const TOUR_STEPS: TourStepDef[] = [
   {
+    tabId: 'console',
+    // Нулевой шаг — не часть маршрута постройки, а ответ на вопрос «что я
+    // сейчас вижу»: приложение открывается именно на Отладке, и раньше тур
+    // молча уводил с него на «Оборудование», ничего про него не сказав.
+    title: 'Отладка',
+    text: 'Вкладка, на которой открывается программа: ручное управление линией — фейдеры по адресам, тест-сигналы и аварийный СТОП. Нужна на пусконаладке; чтобы собрать шоу, идите дальше.',
+  },
+  {
     tabId: 'patch',
-    title: 'Приборы',
-    text: 'Начните здесь: заведите оборудование объекта — насосы, клапаны, светильники — с адресацией по DMX.',
+    title: 'Оборудование',
+    text: 'Начните здесь: заведите состав объекта — насосы, клапаны, светильники — с адресацией по DMX.',
   },
   {
     tabId: 'layout',
@@ -94,7 +144,28 @@ export function App() {
     const t = window.setTimeout(() => setShowSaved(false), 2000);
     return () => window.clearTimeout(t);
   }, [savedAtMs]);
-  const [tab, setTab] = useState<Tab>('console');
+  const [tab, setTab] = useState<Tab>(loadTab);
+  /**
+   * Последнее ручное вмешательство и «сейчас» для подписи «сколько назад».
+   * Минутного тика хватает: строка и меряется минутами.
+   */
+  const [manual, setManual] = useState(lastManual);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const off = subscribeManual((a) => setManual(a));
+    const t = window.setInterval(() => setNowMs(Date.now()), 30000);
+    return () => {
+      off();
+      window.clearInterval(t);
+    };
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem(TAB_STORAGE_KEY, tab);
+    } catch {
+      // Не сохранилось — вкладка просто не переживёт перезагрузку.
+    }
+  }, [tab]);
   // Если лицензии нет, а сохранённая/текущая вкладка недоступна — подменяем показ,
   // не трогая tab, чтобы вернуться на неё же после активации лицензии.
   const effectiveTab: Tab = unlicensed && !UNLICENSED_TABS.includes(tab) ? 'playlists' : tab;
@@ -252,7 +323,7 @@ export function App() {
           Fountain Studio <span className="brand-version">{version ? `версия ${version}` : ''}</span>
           <button
             className={theme === 'dark' ? 'theme-toggle theme-dark' : 'theme-toggle theme-light'}
-            title={theme === 'dark' ? 'Тёмная тема — нажмите для светлой' : 'Светлая тема — нажмите для тёмной'}
+            data-hint={theme === 'dark' ? 'Тёмная тема — нажмите для светлой' : 'Светлая тема — нажмите для тёмной'}
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
           >
             <span className="theme-knob">
@@ -274,7 +345,7 @@ export function App() {
               key={t.id}
               data-tour={t.id}
               className={effectiveTab === t.id ? 'tab active' : 'tab'}
-              title={t.full}
+              data-hint={t.full}
               onClick={() => setTab(t.id)}
             >
               {t.label}
@@ -283,18 +354,20 @@ export function App() {
         </nav>
         <button
           className={unlicensed ? 'help-btn license-btn license-btn-warn' : 'help-btn license-btn'}
-          title={unlicensed ? 'Лицензия не активирована — нажмите для активации' : 'Лицензия'}
+          data-hint={unlicensed ? 'Лицензия не активирована — нажмите для активации' : 'Лицензия'}
           onClick={() => setLicenseOpen(true)}
         >
           {unlicensed ? '🔒' : '🔑'}
         </button>
-        <button className="help-btn" title="Справка" onClick={() => setHelpOpen(true)}>
+        <button className="help-btn" data-hint="Справка" onClick={() => setHelpOpen(true)}>
           ?
         </button>
         <div className={connected ? 'conn conn-on' : 'conn conn-off'}>
           {connected ? 'движок подключён' : 'нет связи с движком…'}
         </div>
       </header>
+      <ConfirmHost />
+      <HintHost />
       {helpOpen && <HelpView onClose={() => setHelpOpen(false)} />}
       {licenseOpen && <LicenseView engine={engine} onClose={() => setLicenseOpen(false)} />}
       {tourStep !== null && !unlicensed && (
@@ -314,6 +387,7 @@ export function App() {
       {effectiveTab === 'show' && <ShowView engine={engine} />}
       {effectiveTab === 'playlists' && <PlaylistsView engine={engine} />}
       {effectiveTab === 'schedule' && <ScheduleView engine={engine} />}
+      {effectiveTab === 'stream' && <StreamView engine={engine} />}
       {effectiveTab === 'network' && <NetworkView engine={engine} />}
       {effectiveTab === 'remote' && <RemoteView engine={engine} />}
       {effectiveTab === 'keys' && <KeysView engine={engine} />}
@@ -323,16 +397,16 @@ export function App() {
         {showSaved && <span className="ok-text">✔ сохранено</span>}
         {stats ? (
           <>
-            <span title="Шаг обновления: движок шлёт новый DMX-кадр каждые 50 мс — 20 раз в секунду">
+            <span data-hint="Шаг обновления: движок шлёт новый DMX-кадр каждые 50 мс — 20 раз в секунду">
               тик {stats.intervalMs} мс
             </span>
-            <span title="Средняя погрешность такта: насколько движок отклоняется от ровных 50 мс. Единицы мс — норма">
+            <span data-hint="Средняя погрешность такта: насколько движок отклоняется от ровных 50 мс. Единицы мс — норма">
               джиттер avg {stats.avgJitterMs} мс
             </span>
-            <span title="Максимальное разовое отклонение такта с момента запуска движка">
+            <span data-hint="Максимальное разовое отклонение такта с момента запуска движка">
               max {stats.maxJitterMs} мс
             </span>
-            <span title="Сколько DMX-кадров движок отправил на оборудование с момента запуска (все вселенные вместе)">
+            <span data-hint="Сколько DMX-кадров движок отправил на оборудование с момента запуска (все вселенные вместе)">
               кадров {stats.framesSent.toLocaleString('ru-RU')}
             </span>
             {(() => {
@@ -341,11 +415,24 @@ export function App() {
                 playback.running.length > 0 ||
                 playback.show !== null ||
                 playback.playlist !== null;
+      /**
+       * Когда шоу не играет, строка всё равно должна отвечать на вопрос «а
+       * почему фонтан работает». Показываем последнее ручное вмешательство:
+       * фейдер на Отладке или отладку прибора в 3D — коротко, с указанием, где
+       * это было и как давно.
+       */
+      const manualText = (): string => {
+        if (!manual) return 'воспроизведение остановлено';
+        const mins = Math.floor((nowMs - manual.atMs) / 60000);
+        const when = mins < 1 ? 'только что' : mins < 60 ? `${mins} мин назад` : `${Math.floor(mins / 60)} ч назад`;
+        const where = manual.where === 'console' ? 'вкладка Отладка' : 'отладка прибора в 3D';
+        return `шоу не играет · вручную: ${where}, ${manual.what} — ${when}`;
+      };
               const text = active
                 ? `воспроизведение: ${playback.running.length} секв.${playback.activeSceneId !== null ? ' + сцена' : ''}${
                     playback.show !== null ? ` + шоу (${playback.show.playing ? 'играет' : 'пауза'})` : ''
                   }${playback.playlist !== null ? ` + плейлист №${playback.playlist.itemIndex + 1}` : ''}`
-                : 'воспроизведение остановлено';
+                : manualText();
               // Приоритет перехода — от самого «внешнего» уровня автоматизации к
               // самому конкретному: плейлист уже включает в себя шоу и т.д.
               const target: Tab | null = playback.playlist
@@ -356,17 +443,21 @@ export function App() {
                     ? 'sequences'
                     : playback.activeSceneId !== null
                       ? 'scenes'
-                      : null;
+                      : manual
+                        ? manual.where === 'console'
+                          ? 'console'
+                          : 'layout'
+                        : null;
               return target ? (
                 <button
                   className="statusbar-link"
-                  title="Что сейчас исполняет движок — клик переносит на вкладку с этим воспроизведением"
+                  data-hint="Что сейчас исполняет движок — клик переносит на вкладку с этим воспроизведением"
                   onClick={() => setTab(target)}
                 >
                   {text}
                 </button>
               ) : (
-                <span title="«Остановлено» — движок ничего не играет, каналы держат ручные значения пульта">{text}</span>
+                <span data-hint="«Остановлено» — движок ничего не играет, каналы держат ручные значения пульта">{text}</span>
               );
             })()}
           </>

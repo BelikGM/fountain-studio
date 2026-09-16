@@ -201,7 +201,7 @@ export function SequenceMatrix({
         </button>
         <button
           className={tool === 'fill' ? 'btn btn-small active' : 'btn btn-small'}
-          title="Клик по двум ячейкам — прямоугольник заливается значением левого столбца выделения (в каждой строке своим)"
+          data-hint="Клик по двум ячейкам — прямоугольник заливается значением левого столбца выделения (в каждой строке своим)"
           onClick={() => {
             setTool('fill');
             setRangeStart(null);
@@ -211,7 +211,7 @@ export function SequenceMatrix({
         </button>
         <button
           className={tool === 'ramp' ? 'btn btn-small active' : 'btn btn-small'}
-          title="Клик по двум ячейкам ОДНОЙ строки — плавный переход между их текущими значениями"
+          data-hint="Клик по двум ячейкам ОДНОЙ строки — плавный переход между их текущими значениями"
           onClick={() => {
             setTool('ramp');
             setRangeStart(null);

@@ -1,14 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  DMX_MAX_VALUE,
   DMX_UNIVERSE_SIZE,
+  DEFAULT_PATTERN_SPEED_SEC,
+  STEP_PATTERNS,
   profileMap,
   type ChannelRole,
   type DeviceKind,
   type DeviceProfile,
   type TestPatternMode,
+  type TestPatternScope,
 } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
 import { Fader } from '../components/Fader';
+import { PauseIcon, PlayIcon, StopIcon } from '../components/Icons';
+import { askConfirm } from '../components/ConfirmDialog';
+import { noteManual } from '../manualActivity';
 import { hexToRgb } from '../colorPresets';
 
 /** Варианты числа адресов на странице; 512 — вся вселенная одной лентой. */
@@ -18,20 +25,32 @@ const PATTERNS: { mode: TestPatternMode; label: string }[] = [
   { mode: 'off', label: 'Выкл' },
   { mode: 'sine', label: 'Синус' },
   { mode: 'chase', label: 'Бегущая' },
-  { mode: 'ramp', label: 'Пила' },
+  { mode: 'ramp', label: 'Подъём' },
   { mode: 'strobe', label: 'Строб' },
   { mode: 'stairs', label: 'Ступени' },
-  { mode: 'random', label: 'Шум' },
+  { mode: 'oddeven', label: 'Чёт/нечёт' },
+  { mode: 'solo', label: 'По очереди' },
+];
+
+/** Область применения генератора (§27 доработки) — см. TestPatternScope. */
+const SCOPES: { scope: TestPatternScope; label: string }[] = [
+  { scope: 'all', label: 'Всё' },
+  { scope: 'pump', label: 'Насосы' },
+  { scope: 'valve', label: 'Клапаны' },
+  { scope: 'lamp', label: 'Свет' },
 ];
 
 const PATTERN_HINT: Record<TestPatternMode, string> = {
   off: 'Выключить тест-генератор: линия возвращается к обычному управлению (сцены и ручные фейдеры продолжают работать)',
-  sine: 'Плавная волна яркости по всем каналам со сдвигом фазы',
-  chase: 'Бегущий огонёк: группа из 8 соседних адресов пробегает всю вселенную по кругу — проверка порядка адресов',
-  ramp: 'Пила: все каналы одновременно плавно растут 0→255 и резко сбрасываются',
-  strobe: 'Строб: все каналы разом мигают 0/255 (2 Гц) — проверка синхронности отклика',
-  stairs: 'Ступени по возрастанию адреса с медленным сдвигом — виден порядок адресации на глаз',
-  random: 'Псевдослучайный шум по каналам — стресс-тест, наглядно видно «залипшие» адреса',
+  sine: 'Плавная волна яркости со сдвигом фазы по приборам. Период — поле справа',
+  chase: 'Бегущий огонёк: группа из 8 приборов подряд пробегает по кругу — проверка порядка адресов. Шаг — поле справа',
+  ramp: 'Подъём: все приборы одновременно плавно растут 0→255 за период и сбрасываются. Видно, при каком значении насос трогается с места — это и есть min для калибровки. Клапаны открыты всё время, иначе нижней половины хода не увидеть',
+  strobe: 'Строб: все каналы разом мигают 0/255 — проверка синхронности отклика. Период — поле справа',
+  stairs:
+    'Статичная лестница: первый прибор 0, последний 255, значение растёт строго по адресу — порядок адресации виден целиком и сразу. Картина неподвижна, темп ей не нужен. Клапаны открыты всё время',
+  oddeven:
+    'Приборы через одного, смена каждый шаг. Перепутанные местами или сдвинутые на единицу адреса видно сразу — «шахматка» ломается',
+  solo: 'По одному прибору за раз, по порядку адресов — обход линии без беготни к щиту и без второго человека. Сколько держать каждый — поле справа',
 };
 
 /** Только чистые цвета — по требованию §27 доработки: R/G/B, их полные комбинации, белый и чёрный. */
@@ -68,27 +87,30 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
   const [pageSize, setPageSize] = useState(32);
   const [page, setPage] = useState(0);
   const [customColor, setCustomColor] = useState<string | null>(null);
+  /** Область применения тест-генератора — местная, движку уходит вместе с режимом. */
+  const [scope, setScope] = useState<TestPatternScope>('all');
+  /** Темп текущего режима: шаг для шаговых, период для циклических. Хранится и уходит движку в секундах. */
+  const [speedSec, setSpeedSec] = useState<number>(DEFAULT_PATTERN_SPEED_SEC.off);
 
   const profiles = useMemo(
     () => (project ? profileMap(project) : new Map<string, DeviceProfile>()),
     [project],
   );
 
-  // Пульт — экран наладки: если идёт воспроизведение (шоу по расписанию,
+  // Отладка — экран наладки: если идёт воспроизведение (шоу по расписанию,
   // плейлист на публике), случайное нажатие СТОП не должно гасить фонтан
   // молча — сначала подтверждение с перечислением того, что остановится.
-  const doBlackout = (): void => {
+  const doBlackout = async (): Promise<void> => {
     const running: string[] = [];
     if (playback.show !== null) running.push('шоу');
     if (playback.playlist !== null) running.push('плейлист');
     if (playback.activeSceneId !== null) running.push('сцена');
     if (playback.running.length > 0) running.push(`секвенсоры (${playback.running.length})`);
     if (running.length > 0) {
-      const ok = window.confirm(
-        `Сейчас идёт воспроизведение: ${running.join(', ')}.\n\n` +
-          'СТОП принудительно остановит ВСЁ и погасит все каналы всех вселенных.\n' +
-          'Продолжить?',
-      );
+      const ok = await askConfirm('Остановить всё и погасить линию?', {
+        detail: `Сейчас идёт воспроизведение: ${running.join(', ')}. СТОП остановит его и погасит все каналы всех вселенных.`,
+        okLabel: 'СТОП',
+      });
       if (!ok) return;
     }
     send({ type: 'blackout' });
@@ -117,22 +139,23 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
     }
   };
 
-  // Текущее агрегатное состояние клапанов — открыт кнопкой-тогглом, только
-  // когда ВСЕ клапаны патча сейчас открыты (>= 128 на реальном выходе).
-  const valveState = useMemo(() => {
-    if (!project) return { has: false, allOpen: false };
-    let has = false;
-    let allOpen = true;
-    for (const d of project.devices) {
+  // Есть ли в патче клапаны вообще — только чтобы не показывать мёртвую кнопку.
+  // Раньше здесь ещё считалось «все ли клапаны сейчас открыты» по живым кадрам,
+  // и подпись кнопки прыгала ОТКРЫТЫ/ЗАКРЫТЫ на каждом кадре тест-генератора:
+  // кнопка выглядела индикатором, хотя это команда. Состояние линии показывают
+  // сами фейдеры, кнопке оно не нужно.
+  const hasValves = useMemo(() => {
+    if (!project) return false;
+    return project.devices.some((d) => {
       const profile = profiles.get(d.profileId);
-      if (!profile || profile.kind !== 'valve') continue;
-      const ci = profile.channels.findIndex((c) => c.role === 'open');
-      if (ci < 0) continue;
-      has = true;
-      if ((frames[d.universe]?.[d.address - 1 + ci] ?? 0) < 128) allOpen = false;
-    }
-    return { has, allOpen: has && allOpen };
-  }, [project, profiles, frames]);
+      return !!profile && profile.kind === 'valve' && profile.channels.some((c) => c.role === 'open');
+    });
+  }, [project, profiles]);
+
+  // Что сделает следующее нажатие. Это НЕ состояние линии: сцена, шоу или
+  // тест-генератор могут двигать клапаны сами, и подстраиваться под них
+  // кнопка-команда не должна — иначе снова начнёт прыгать.
+  const [valveNextOpen, setValveNextOpen] = useState(true);
 
   // При первом hello выбираем первую вселенную.
   useEffect(() => {
@@ -143,7 +166,7 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
 
   // адрес-1 → «Имя прибора · Канал» + цвет по роли (для фейдера).
   const owners = useMemo(() => {
-    const map = new Map<number, { label: string; roleClass: string }>();
+    const map = new Map<number, { label: string; roleClass: string; twoState: boolean }>();
     if (!project || universeId === null) return map;
     for (const d of project.devices) {
       if (d.universe !== universeId) continue;
@@ -155,6 +178,7 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
           map.set(idx, {
             label: `${d.name} · ${profile.channels[k]!.name}`,
             roleClass: classifyChannel(profile.kind, profile.channels[k]!.role),
+            twoState: profile.twoState === true,
           });
         }
       }
@@ -172,6 +196,13 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
 
   const frame = universeId !== null ? frames[universeId] : undefined;
   const pattern = stats?.pattern ?? 'off';
+  // Единица показа. «Бегущая» живёт в сотых долях секунды — «0.1 с» читается
+  // хуже, чем «100 мс», и требует возни с дробями в поле. Остальные режимы
+  // считаются секундами. В движок в любом случае уходят секунды.
+  const unit =
+    pattern === 'chase'
+      ? { label: 'мс', factor: 1000, min: 10, step: 10 }
+      : { label: 'сек', factor: 1, min: 0.1, step: 0.5 };
   const pageCount = Math.ceil(DMX_UNIVERSE_SIZE / pageSize);
 
   const changePageSize = (size: number): void => {
@@ -189,7 +220,7 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
             <button
               key={u.id}
               className={u.id === universeId ? 'btn active' : 'btn'}
-              title={u.outputs.join('\n')}
+              data-hint={u.outputs.join('\n')}
               onClick={() => setUniverseId(u.id)}
             >
               {u.label}
@@ -198,7 +229,7 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
         </div>
 
         <div className="group">
-          <label className="field" title="Показывать только адреса, занятые приборами из патча — без пустых">
+          <label className="field" data-hint="Показывать только адреса, занятые приборами из патча — без пустых">
             <input
               type="checkbox"
               checked={onlyUsed}
@@ -209,7 +240,7 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
           </label>
           <label
             className={filterActive ? 'dim' : undefined}
-            title={filterActive ? 'Не влияет, пока включён фильтр «только занятые» — настройка сохраняется' : undefined}
+            data-hint={filterActive ? 'Не влияет, пока включён фильтр «только занятые» — настройка сохраняется' : undefined}
           >
             По:{' '}
             <select disabled={filterActive} value={pageSize} onChange={(e) => changePageSize(Number(e.target.value))}>
@@ -223,7 +254,7 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
           {pageCount > 1 && (
             <label
               className={filterActive ? 'dim' : undefined}
-              title={filterActive ? 'Не влияет, пока включён фильтр «только занятые» — настройка сохраняется' : undefined}
+              data-hint={filterActive ? 'Не влияет, пока включён фильтр «только занятые» — настройка сохраняется' : undefined}
             >
               Адреса:{' '}
               <select disabled={filterActive} value={page} onChange={(e) => setPage(Number(e.target.value))}>
@@ -238,26 +269,73 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
         </div>
 
         <div className="group">
-          <span className="group-label">Тест-генератор:</span>
-          {PATTERNS.map((p) => (
-            <button
-              key={p.mode}
-              className={
-                pattern === p.mode ? (p.mode === 'off' ? 'btn btn-off-active' : 'btn active') : 'btn'
-              }
-              title={PATTERN_HINT[p.mode]}
-              onClick={() => send({ type: 'testPattern', mode: p.mode })}
-            >
-              {p.label}
-            </button>
-          ))}
+          <span className="group-label">Генератор:</span>
+          <select
+            value={scope}
+            data-hint="К чему применять генератор. «Всё» подменяет собой весь кадр вселенной; остальные варианты трогают только приборы выбранного вида, а прочие продолжают играть сцену или шоу"
+            onChange={(e) => {
+              const next = e.target.value as TestPatternScope;
+              setScope(next);
+              // Генератор уже идёт — переключаем область на лету, не выключая.
+              if (pattern !== 'off') send({ type: 'testPattern', mode: pattern, scope: next });
+            }}
+          >
+            {SCOPES.map((s) => (
+              <option key={s.scope} value={s.scope}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+          {/* Режимы списком, а не рядом кнопок: их стало девять, и кнопками
+              они переносили строку — «Пауза» и «СТОП» уезжали на второй ряд. */}
+          <select
+            value={pattern}
+            data-hint={PATTERN_HINT[pattern]}
+            onChange={(e) => {
+              const mode = e.target.value as TestPatternMode;
+              const sec = DEFAULT_PATTERN_SPEED_SEC[mode];
+              setSpeedSec(sec);
+              send({ type: 'testPattern', mode, scope, speedSec: sec });
+            }}
+          >
+            {PATTERNS.map((p) => (
+              <option key={p.mode} value={p.mode}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+          <label
+            className="field"
+            data-hint={
+              STEP_PATTERNS.includes(pattern)
+                ? `Время одного шага: сколько держится каждый прибор перед переходом к следующему (${unit.label})`
+                : `Длительность полного цикла генератора (${unit.label})`
+            }
+          >
+            {STEP_PATTERNS.includes(pattern) ? 'шаг' : 'период'}
+            <input
+              className="input input-num input-speed"
+              type="number"
+              min={unit.min}
+              step={unit.step}
+              disabled={pattern === 'off' || pattern === 'stairs'}
+              value={Math.round(speedSec * unit.factor * 1000) / 1000}
+              onChange={(e) => {
+                const shown = Number(e.target.value);
+                const sec = shown / unit.factor;
+                setSpeedSec(sec);
+                if (pattern !== 'off' && sec > 0) send({ type: 'testPattern', mode: pattern, scope, speedSec: sec });
+              }}
+            />
+            <span className="unit">{unit.label}</span>
+          </label>
         </div>
 
         {project?.windLimit.enabled && (
           <div className="group">
             <label
               className="field"
-              title="Ручной ввод — пока нет датчика по Modbus/MQTT. Пороги настраиваются на вкладке «Настройки»"
+              data-hint="Ручной ввод — пока нет датчика по Modbus/MQTT. Пороги настраиваются на вкладке «Настройки»"
             >
               Ветер, м/с:{' '}
               <input
@@ -283,28 +361,39 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
 
         <div className="group">
           <button
-            className={playback.pausedAll ? 'btn active' : 'btn btn-warn'}
-            title={
+            className={playback.pausedAll ? 'btn btn-icon active' : 'btn btn-icon btn-warn'}
+            data-hint={
               playback.pausedAll
                 ? 'Продолжить: снять паузу и вернуть воспроизведение с той же точки'
                 : 'Пауза: заморозить текущую картину света и воды как есть, без гашения в 0. Таймеры шоу/секвенсоров останавливаются до повторного нажатия'
             }
             onClick={togglePause}
           >
-            {playback.pausedAll ? '▶ Продолжить' : '⏸ Пауза'}
+            {playback.pausedAll ? (
+              <>
+                <PlayIcon />
+                Продолжить
+              </>
+            ) : (
+              <>
+                <PauseIcon />
+                Пауза
+              </>
+            )}
           </button>
         </div>
         <button
-          className="btn btn-danger btn-blackout"
-          title="Полная остановка: гасит ВСЕ каналы всех вселенных и останавливает всё воспроизведение — сцены, секвенсоры, шоу, плейлист. Если сейчас что-то играет, сначала спросит подтверждения. Используйте в нештатной ситуации."
-          onClick={doBlackout}
+          className="btn btn-icon btn-danger btn-blackout"
+          data-hint="Полная остановка: гасит ВСЕ каналы всех вселенных и останавливает всё воспроизведение — сцены, секвенсоры, шоу, плейлист. Если сейчас что-то играет, сначала спросит подтверждения. Используйте в нештатной ситуации."
+          onClick={() => void doBlackout()}
         >
-          ■ СТОП
+          <StopIcon />
+          СТОП
         </button>
       </div>
 
       <div className="quick-controls">
-        <div className="quick-controls-title" title="Пишет сразу во все приборы этого вида из патча — для пусконаладки">
+        <div className="quick-controls-title" data-hint="Пишет сразу во все приборы этого вида из патча — для пусконаладки">
           Все приборы по типу
         </div>
 
@@ -317,7 +406,7 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
                 type="button"
                 className="color-swatch"
                 style={{ background: p.hex }}
-                title={p.name}
+                data-hint={p.name}
                 onClick={() => {
                   const [r, g, b] = hexToRgb(p.hex);
                   setAllOfKind('lamp', { red: r, green: g, blue: b });
@@ -327,7 +416,7 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
             <label
               className="color-swatch color-swatch-custom"
               style={customColor ? { background: customColor } : undefined}
-              title="Свой цвет — нажмите, чтобы выбрать"
+              data-hint="Свой цвет — нажмите, чтобы выбрать"
             >
               <input
                 type="color"
@@ -360,11 +449,15 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
         <div className="quick-row">
           <span className="quick-row-label">Клапана:</span>
           <button
-            className={valveState.allOpen ? 'btn toggle-open' : 'btn toggle-closed'}
-            disabled={!valveState.has}
-            onClick={() => setAllOfKind('valve', { open: valveState.allOpen ? 0 : 255 })}
+            className={valveNextOpen ? 'btn toggle-open' : 'btn toggle-closed'}
+            disabled={!hasValves}
+            data-hint="Команда всем клапанам патча разом. Подпись — что произойдёт по нажатию; текущее положение видно на фейдерах"
+            onClick={() => {
+              setAllOfKind('valve', { open: valveNextOpen ? DMX_MAX_VALUE : 0 });
+              setValveNextOpen(!valveNextOpen);
+            }}
           >
-            {valveState.allOpen ? 'ОТКРЫТЫ' : 'ЗАКРЫТЫ'}
+            {valveNextOpen ? 'Открыть' : 'Закрыть'}
           </button>
         </div>
       </div>
@@ -383,8 +476,11 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
             value={frame?.[channel - 1] ?? 0}
             owner={owners.get(channel - 1)?.label}
             roleClass={owners.get(channel - 1)?.roleClass}
+            twoState={owners.get(channel - 1)?.twoState}
             onChange={(value) =>
-              universeId !== null && send({ type: 'setChannel', universe: universeId, channel, value })
+              universeId !== null &&
+              (noteManual('console', `адрес ${channel}`),
+              send({ type: 'setChannel', universe: universeId, channel, value }))
             }
           />
         ))}
