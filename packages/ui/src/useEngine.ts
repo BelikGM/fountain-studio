@@ -12,6 +12,7 @@ import type {
   TelegramStatus,
   PlaybackState,
   Project,
+  ProjectsState,
   ServerMessage,
   UniverseInfo,
   UsbDmxScan,
@@ -80,6 +81,10 @@ export interface EngineConnection {
   modbus: ModbusState | null;
   /** Аварийное отключение: сработало ли и почему (null — движок ещё не прислал). */
   failsafe: FailsafeState | null;
+  /** Какой объект открыт и какие открывали раньше (null — движок ещё не прислал). */
+  projects: ProjectsState | null;
+  /** Итог последней попытки открыть/создать объект. */
+  projectResult: { ok: boolean; message: string } | null;
   /** Статус OSC/MQTT (null — движок ещё не прислал). Включение — в fountain.config.json. */
   remote: RemoteStatus | null;
   /** Редактируемая конфигурация движка: вселенные и тик (вкладка «Настройки»). */
@@ -152,6 +157,8 @@ export function useEngine(): EngineConnection {
   const [telegramTest, setTelegramTest] = useState<{ ok: boolean; error?: string } | null>(null);
   const [modbus, setModbus] = useState<ModbusState | null>(null);
   const [failsafe, setFailsafe] = useState<FailsafeState | null>(null);
+  const [projects, setProjects] = useState<ProjectsState | null>(null);
+  const [projectResult, setProjectResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [remote, setRemote] = useState<RemoteStatus | null>(null);
   const [engineConfig, setEngineConfig] = useState<EngineConfigState | null>(null);
   const [backupConfig, setBackupConfig] = useState<{ enabled: boolean; intervalMin: number } | null>(null);
@@ -257,6 +264,12 @@ export function useEngine(): EngineConnection {
             break;
           case 'failsafe':
             setFailsafe(msg.state);
+            break;
+          case 'projects':
+            setProjects(msg.state);
+            break;
+          case 'projectResult':
+            setProjectResult({ ok: msg.ok, message: msg.message });
             break;
           case 'usbDmxScan':
             setUsbScan(msg.scan);
@@ -489,6 +502,8 @@ export function useEngine(): EngineConnection {
     telegramTest,
     modbus,
     failsafe,
+    projects,
+    projectResult,
     remote,
     engineConfig,
     backupConfig,

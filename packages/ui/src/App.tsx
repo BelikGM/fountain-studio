@@ -22,6 +22,7 @@ import { NetworkView } from './views/NetworkView';
 import { PlaylistsView } from './views/PlaylistsView';
 import { RemoteView } from './views/RemoteView';
 import { ScheduleView } from './views/ScheduleView';
+import { ProjectsView } from './views/ProjectsView';
 import { SettingsView } from './views/SettingsView';
 import { lastManual, subscribeManual } from './manualActivity';
 
@@ -138,6 +139,23 @@ export function App() {
   const unlicensed = licenseStatus !== null && !licenseStatus.licensed;
   const [showSaved, setShowSaved] = useState(false);
   const [licenseOpen, setLicenseOpen] = useState(false);
+  /**
+   * Экран выбора объекта. Показывается сам, когда проект не открыт (первый
+   * запуск, объект закрыли), и по кнопке в шапке — чтобы переключиться на
+   * другой фонтан, не перезапуская программу.
+   */
+  const [projectsOpen, setProjectsOpen] = useState(false);
+  const noProject = engine.projects !== null && engine.projects.current === null;
+
+  /**
+   * Объект открыли из Проводника, пока программа уже работала: главный процесс
+   * прислал путь (см. preload.cjs), а просит движок открыть его окно — так же,
+   * как если бы объект выбрали в списке.
+   */
+  useEffect(() => {
+    const api = (window as unknown as { fountainApp?: { onOpenProject(h: (dir: string) => void): void } }).fountainApp;
+    api?.onOpenProject((dir) => send({ type: 'openProject', dir }));
+  }, [send]);
   useEffect(() => {
     if (savedAtMs === null) return;
     setShowSaved(true);
@@ -339,8 +357,20 @@ export function App() {
             </span>
           </button>
         </div>
+        <button
+          className={projectsOpen || noProject ? 'btn btn-small active' : 'btn btn-small'}
+          style={{ marginLeft: 10 }}
+          data-hint="Объекты: открыть другой фонтан, создать новый или посмотреть, где лежит текущий."
+          onClick={() => setProjectsOpen(!projectsOpen)}
+        >
+          {engine.projects?.current ? `🏛 ${engine.projects.current.name}` : '🏛 Проекты'}
+        </button>
+        {/*
+          Объект не открыт — переключать нечего: вкладки вели бы на пустые
+          экраны. Оставляем только выбор объекта, лицензию и справку.
+        */}
         <nav className="tabs">
-          {(unlicensed ? TABS.filter((t) => UNLICENSED_TABS.includes(t.id)) : TABS).map((t) => (
+          {(noProject ? [] : unlicensed ? TABS.filter((t) => UNLICENSED_TABS.includes(t.id)) : TABS).map((t) => (
             <button
               key={t.id}
               data-tour={t.id}
@@ -379,6 +409,15 @@ export function App() {
         />
       )}
 
+      {/*
+        Пока объект не открыт, работать не с чем: вместо вкладок показываем
+        выбор проекта. Тот же экран открывается кнопкой в шапке — переключить
+        фонтан можно не перезапуская программу.
+      */}
+      {noProject || projectsOpen ? (
+        <ProjectsView engine={engine} {...(noProject ? {} : { onClose: () => setProjectsOpen(false) })} />
+      ) : (
+        <>
       {effectiveTab === 'console' && <ConsoleView engine={engine} />}
       {effectiveTab === 'patch' && <PatchView engine={engine} />}
       {effectiveTab === 'layout' && <LayoutView engine={engine} />}
@@ -392,10 +431,20 @@ export function App() {
       {effectiveTab === 'remote' && <RemoteView engine={engine} />}
       {effectiveTab === 'keys' && <KeysView engine={engine} />}
       {effectiveTab === 'settings' && <SettingsView engine={engine} />}
+        </>
+      )}
 
       <footer className="statusbar">
         {showSaved && <span className="ok-text">✔ сохранено</span>}
-        {stats ? (
+        {/*
+          Без открытого объекта цифры тика и кадров остались бы от прошлого
+          фонтана и врали бы: на линию сейчас ничего не уходит.
+        */}
+        {noProject ? (
+          <span data-hint="Объект не открыт: на линию ничего не отправляется. Выберите объект в списке.">
+            объект не открыт — вывод на линию остановлен
+          </span>
+        ) : stats ? (
           <>
             <span data-hint="Шаг обновления: движок шлёт новый DMX-кадр каждые 50 мс — 20 раз в секунду">
               тик {stats.intervalMs} мс

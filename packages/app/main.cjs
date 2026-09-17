@@ -7,10 +7,17 @@
  * бандла engine.cjs. Закрытие окна гасит только тот движок, который запустили
  * мы: фонтан под службой продолжает работать без редактора.
  *
- * Данные (fountain.config.json, fountain.project.json, audio/) живут в
- * «Документы\Fountain Studio» — обновление приложения их не трогает.
+ * Данные разложены на две части:
+ *  · объекты («проекты») — папками в «Документы\Fountain Studio\Проекты»,
+ *    каждая самодостаточна и переносится на другой компьютер целиком;
+ *  · настройки самой программы (недавние проекты, лицензия, секреты) — в
+ *    папке данных приложения, они с объектом не путешествуют.
+ *
+ * Объект можно открыть тремя способами: выбрать в программе, передать путь
+ * аргументом `--project <папка>` или дважды щёлкнуть файл .fsproj в папке
+ * объекта — Windows запустит приложение и передаст путь сюда.
  */
-const { app, BrowserWindow, dialog, net: enet, protocol, utilityProcess } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, net: enet, protocol, utilityProcess } = require('electron');
 const fs = require('node:fs');
 const net = require('node:net');
 const path = require('node:path');
@@ -23,6 +30,20 @@ const isDev = !app.isPackaged && !process.env.FOUNTAIN_LOCAL_UI;
 
 /** @type {import('electron').UtilityProcess | null} */
 let engineProc = null;
+
+/**
+ * Какой объект просят открыть: `--project <путь>` или просто путь к файлу
+ * .fsproj / папке (так Windows передаёт двойной щелчок по файлу).
+ */
+function projectFromArgs(argv) {
+  const i = argv.indexOf('--project');
+  if (i >= 0 && argv[i + 1]) return argv[i + 1];
+  for (const a of argv.slice(1)) {
+    if (typeof a !== 'string' || a.startsWith('-')) continue;
+    if (a.toLowerCase().endsWith('.fsproj')) return a;
+  }
+  return '';
+}
 
 function dataDir() {
   const dir = path.join(app.getPath('documents'), 'Fountain Studio');
@@ -84,11 +105,11 @@ function serveModels() {
   });
 }
 
-/** Первый запуск: кладём конфиг по умолчанию (Art-Net на 127.0.0.1, 3 вселенных). */
-function ensureConfig(dir) {
-  const file = path.join(dir, 'fountain.config.json');
-  if (!fs.existsSync(file)) fs.copyFileSync(path.join(__dirname, 'default-config.json'), file);
-  return file;
+/** Где по умолчанию лежат объекты. Движку передаём явно, чтобы совпадало. */
+function projectsRoot() {
+  const dir = path.join(dataDir(), 'Проекты');
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
 }
 
 function portInUse(port) {
@@ -121,12 +142,22 @@ async function startEngineIfNeeded() {
     );
     return;
   }
-  const cfg = ensureConfig(dataDir());
-  engineProc = utilityProcess.fork(bundle, ['--config', cfg], {
+  const args = [
+    '--app-data',
+    app.getPath('userData'),
+    '--projects-root',
+    projectsRoot(),
+  ];
+  // Старый конфиг — только чтобы движок один раз перенёс прежний единственный
+  // проект в новую раскладку; дальше он не нужен.
+  const legacy = path.join(dataDir(), 'fountain.config.json');
+  if (fs.existsSync(legacy)) args.push('--config', legacy);
+  const wanted = projectFromArgs(process.argv);
+  if (wanted) args.push('--project', wanted);
+  engineProc = utilityProcess.fork(bundle, args, {
     serviceName: 'fountain-engine',
     stdio: 'inherit',
-    // Движок работает в папке данных: fountain.project.json и audio/ лягут рядом с конфигом.
-    cwd: path.dirname(cfg),
+    cwd: dataDir(),
   });
   engineProc.on('exit', (code) => {
     console.log(`[app] движок завершился (код ${code})`);
@@ -141,6 +172,11 @@ function createWindow() {
     backgroundColor: '#0e1116',
     autoHideMenuBar: true,
     title: 'Fountain Studio',
+    webPreferences: {
+      // Мостик на один случай: пришёл путь к объекту из Проводника, и окно
+      // должно попросить движок его открыть.
+      preload: path.join(__dirname, 'preload.cjs'),
+    },
   });
   if (isDev) {
     // Vite может подняться позже Electron — пробуем, пока не откроется.
@@ -162,14 +198,46 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
-app.whenReady().then(async () => {
-  serveModels();
-  await startEngineIfNeeded();
-  createWindow();
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+/**
+ * Вторую копию программы поднимать нельзя: движок займёт тот же порт 9520, и
+ * на одной линии DMX окажется два хозяина. Поэтому вторая копия только
+ * передаёт путь к объекту первой и закрывается, а первая открывает его у себя.
+ */
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', (_e, argv) => {
+    const dir = projectFromArgs(argv);
+    const win = BrowserWindow.getAllWindows()[0];
+    if (!win) return;
+    if (win.isMinimized()) win.restore();
+    win.focus();
+    if (dir) win.webContents.send('open-project', dir);
   });
-});
+
+  // Выбор папки объекта обычным окном Windows: путь руками никто вводить не должен.
+  ipcMain.handle('choose-project-folder', async (_e, startIn) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    const opts = {
+      title: 'Выберите папку объекта',
+      properties: ['openDirectory'],
+      buttonLabel: 'Открыть объект',
+      ...(typeof startIn === 'string' && startIn !== '' ? { defaultPath: startIn } : {}),
+    };
+    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    return r.canceled || r.filePaths.length === 0 ? '' : r.filePaths[0];
+  });
+
+  app.whenReady().then(async () => {
+    serveModels();
+    await startEngineIfNeeded();
+    createWindow();
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
+}
 
 app.on('window-all-closed', () => {
   // Гасим только свой движок; служба-watchdog остаётся работать.

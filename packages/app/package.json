@@ -26,15 +26,33 @@
     },
     "files": [
       "main.cjs",
+      "preload.cjs",
       "engine.cjs",
-      "default-config.json",
       "ui/**",
-      { "from": "../../node_modules/serialport", "to": "node_modules/serialport" },
-      { "from": "../../node_modules/@serialport", "to": "node_modules/@serialport" },
-      { "from": "../../node_modules/debug", "to": "node_modules/debug" },
-      { "from": "../../node_modules/node-gyp-build", "to": "node_modules/node-gyp-build" },
-      { "from": "../../node_modules/koffi", "to": "node_modules/koffi" },
-      { "from": "../../node_modules/@koromix/koffi-win32-x64", "to": "node_modules/@koromix/koffi-win32-x64" }
+      {
+        "from": "../../node_modules/serialport",
+        "to": "node_modules/serialport"
+      },
+      {
+        "from": "../../node_modules/@serialport",
+        "to": "node_modules/@serialport"
+      },
+      {
+        "from": "../../node_modules/debug",
+        "to": "node_modules/debug"
+      },
+      {
+        "from": "../../node_modules/node-gyp-build",
+        "to": "node_modules/node-gyp-build"
+      },
+      {
+        "from": "../../node_modules/koffi",
+        "to": "node_modules/koffi"
+      },
+      {
+        "from": "../../node_modules/@koromix/koffi-win32-x64",
+        "to": "node_modules/@koromix/koffi-win32-x64"
+      }
     ],
     "asarUnpack": [
       "node_modules/@serialport/bindings-cpp/**",
@@ -49,6 +67,14 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "artifactName": "FountainStudio-Setup-${version}.exe"
-    }
+    },
+    "fileAssociations": [
+      {
+        "ext": "fsproj",
+        "name": "Проект Fountain Studio",
+        "description": "Объект Fountain Studio",
+        "role": "Editor"
+      }
+    ]
   }
 }
