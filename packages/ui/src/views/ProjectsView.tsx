@@ -124,9 +124,46 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
         </p>
 
         {projects.current && (
-          <p className="ok-text">
-            ✔ Открыт: <b>{projects.current.name}</b> <span className="dim">· {projects.current.dir}</span>
-          </p>
+          <>
+            <p className="ok-text">
+              ✔ Открыт: <b>{projects.current.name}</b> <span className="dim">· {projects.current.dir}</span>
+            </p>
+            {/*
+              Действия над ТЕКУЩИМ объектом — отдельно и сразу сверху, а не
+              внизу вперемешку с формой создания НОВОГО: это разные объекты
+              разговора, и раньше «Закрыть объект» стояла рядом с «Создать
+              проект», хотя относится к тому, что уже открыто.
+            */}
+            <div className="form-row">
+              <button
+                className="btn btn-small"
+                data-hint="Копия открытого объекта под другим именем: попробовать второй вариант шоу, не трогая рабочий."
+                onClick={() => {
+                  setName(`${projects.current?.name ?? ''} — вариант 2`);
+                  setDestDir('');
+                  setCopying(true);
+                }}
+              >
+                Сохранить как…
+              </button>
+              <button
+                className="btn btn-small"
+                data-hint="Закрыть объект: вывод на линию прекратится, программа вернётся к выбору проекта."
+                onClick={() => {
+                  void (async () => {
+                    if (await askIfPlaying('Закрыть объект')) closeProject();
+                  })();
+                }}
+              >
+                Закрыть объект
+              </button>
+              {onClose && (
+                <button className="btn btn-small" onClick={onClose}>
+                  ← Вернуться к работе
+                </button>
+              )}
+            </div>
+          </>
         )}
 
         {projectResult && (
@@ -287,37 +324,6 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
             >
               + Создать проект
             </button>
-            {projects.current && (
-              <>
-                <button
-                  className="btn btn-small"
-                  data-hint="Копия открытого объекта под другим именем: попробовать второй вариант шоу, не трогая рабочий."
-                  onClick={() => {
-                    setName(`${projects.current?.name ?? ''} — вариант 2`);
-                    setDestDir('');
-                    setCopying(true);
-                  }}
-                >
-                  Сохранить как…
-                </button>
-                <button
-                  className="btn btn-small"
-                  data-hint="Закрыть объект: вывод на линию прекратится, программа вернётся к выбору проекта."
-                  onClick={() => {
-                    void (async () => {
-                      if (await askIfPlaying('Закрыть объект')) closeProject();
-                    })();
-                  }}
-                >
-                  Закрыть объект
-                </button>
-                {onClose && (
-                  <button className="btn btn-small" onClick={onClose}>
-                    ← Вернуться к работе
-                  </button>
-                )}
-              </>
-            )}
           </div>
         )}
 
