@@ -18,6 +18,7 @@ import type { DmxCapture } from './dmxcapture';
 import { eventLog } from './eventlog';
 import type { Engine } from './engine';
 import { activateLicense, loadLicenseStatus } from './license';
+import { refreshRevocationList } from './licenseRevocation';
 import type { MqttController } from './mqttcontroller';
 import type { NetworkMonitor } from './netmonitor';
 import type { OscServer } from './oscserver';
@@ -143,6 +144,26 @@ export function startServer(
     type: 'license',
     status: loadLicenseStatus(licenseDir),
   });
+  /*
+   * Отзыв лицензии (см. licenseRevocation.ts): если издатель указал
+   * revocationUrl, раз в час подтягиваем список отозванных и, если статус
+   * поменялся, сразу говорим об этом уже подключённым редакторам — не нужно
+   * ждать переподключения. Без revocationUrl блок ничего не делает.
+   */
+  const revocationUrl = engine.config.license?.revocationUrl;
+  if (revocationUrl) {
+    const checkRevocation = (): void => {
+      void refreshRevocationList(licenseDir, revocationUrl).then((r) => {
+        if (!r.ok) {
+          console.log(`[лицензия] список отозванных не обновлён (нет сети?): ${r.error}`);
+          return;
+        }
+        broadcast(licenseMessage());
+      });
+    };
+    checkRevocation();
+    setInterval(checkRevocation, 60 * 60 * 1000);
+  }
   // Журнал событий (§27 доработки, §3 п.1): новое событие — сразу всем
   // подключённым клиентам (не только тому, кто его вызвал).
   eventLog.subscribe((event) => broadcast({ type: 'logEvent', event }));

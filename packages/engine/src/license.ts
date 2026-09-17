@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { LicenseFile, LicensePayload, LicenseStatus } from '@fountain-studio/shared';
+import { isMachineRevoked } from './licenseRevocation';
 
 /**
  * Лицензия, привязанная к 1 ПК (§27 доработки, раздел «Продукт»). Офлайн:
@@ -88,6 +89,12 @@ function licenseFilePath(projectDir: string): string {
 
 export function loadLicenseStatus(projectDir: string): LicenseStatus {
   const machineId = machineFingerprint();
+  // Отзыв проверяем ПЕРВЫМ и безусловно: отозванный компьютер не лицензирован,
+  // даже если файл лицензии сам по себе настоящий и ещё не истёк (см.
+  // licenseRevocation.ts — список подтягивается сам, когда есть интернет).
+  if (isMachineRevoked(projectDir, machineId)) {
+    return { licensed: false, licenseeName: null, expiresAt: null, machineId, reason: 'Лицензия отозвана' };
+  }
   const file = licenseFilePath(projectDir);
   if (!fs.existsSync(file)) {
     return { licensed: false, licenseeName: null, expiresAt: null, machineId, reason: 'Лицензия не активирована' };

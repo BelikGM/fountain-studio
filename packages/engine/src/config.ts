@@ -57,6 +57,12 @@ export interface EngineConfig {
   backup: { enabled: boolean; intervalMin: number };
   /** OSC-пульт (TouchOSC и т.п.): слушаем адрес/действие из project.oscBindings. Выключено по умолчанию. */
   osc?: { enabled: boolean; port: number };
+  /**
+   * Отзыв лицензии (§27 доработки, «Продукт») — необязательный слой поверх
+   * офлайн-проверки подписи, см. licenseRevocation.ts. Без revocationUrl
+   * ничего никуда не стучится: по умолчанию выключено.
+   */
+  license?: { revocationUrl?: string };
   /** MQTT: телеметрия/удалённые команды через брокер. Выключено по умолчанию. */
   mqtt?: {
     enabled: boolean;
@@ -104,6 +110,7 @@ export function loadAppConfig(appDataDir: string): EngineConfig & { configFile: 
     configFile: file,
     ...(raw.osc ? { osc: raw.osc } : {}),
     ...(raw.mqtt ? { mqtt: raw.mqtt } : {}),
+    ...(raw.license ? { license: raw.license } : {}),
   };
 }
 
