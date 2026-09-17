@@ -3,49 +3,89 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { LicenseFile, LicensePayload } from '@fountain-studio/shared';
-import { canonicalPayload } from '../license';
+import { canonicalPayload, PUBLIC_KEY_PEM } from '../license';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * Инструмент вендора для выпуска и учёта лицензий (§27 доработки) — НЕ
- * входит в собираемое приложение, запускается вручную разработчиком/продавцом:
+ * Инструмент вендора для выпуска и учёта лицензий — НЕ входит в собираемое
+ * приложение, запускается вручную из терминала (PowerShell), из папки
+ * репозитория (`cd C:\fountain-studio`, дальше все команды ниже):
  *
- *   npx tsx src/tools/issue-license.ts keygen
- *   npx tsx src/tools/issue-license.ts issue --machine <id> --name "ООО Ромашка" --duration trial
- *   npx tsx src/tools/issue-license.ts issue --machine <id> --name "ООО Ромашка" --duration year --device "Комп на объекте"
- *   npx tsx src/tools/issue-license.ts issue --machine <id> --name "ООО Ромашка" --duration forever --out license.json
- *   npx tsx src/tools/issue-license.ts list
- *   npx tsx src/tools/issue-license.ts rename --machine <id> --device "Ноутбук прораба"
- *   npx tsx src/tools/issue-license.ts revoke --machine <id> --note "не заплатили"
- *   npx tsx src/tools/issue-license.ts unrevoke --machine <id>
- *   npx tsx src/tools/issue-license.ts export-revocations revoked.json
+ *   npx tsx packages/engine/src/tools/issue-license.ts <команда> [параметры]
  *
- * Приватный ключ — license-keys/private.pem рядом с этим пакетом (см.
- * .gitignore — никогда не в репозитории). «machine» — отпечаток компьютера
- * покупателя, показывается ему в приложении в панели активации лицензии;
- * его нужно получить от покупателя (письмом/сообщением) перед выпуском.
+ * Команды — что каждая делает:
  *
- * Три срока:
- *  · trial   — 30 дней, пробный период;
- *  · year    — 365 дней;
- *  · forever — бессрочно.
+ *  · keygen                 — один раз в жизни проекта: создаёт пару ключей
+ *                              (приватный + публичный). Если приватный ключ
+ *                              уже есть, отказывается — не перезаписывает
+ *                              молча (иначе все выданные раньше лицензии
+ *                              перестанут проверяться).
+ *  · issue                  — ВЫПУСКАЕТ лицензию: подписывает privateKey'ом
+ *                              файл для конкретного --machine и печатает его
+ *                              на диск (--out, по умолчанию рядом, в текущей
+ *                              папке). Этот файл и отправляется покупателю —
+ *                              он и есть «доступ», больше ничего передавать
+ *                              не нужно. Заодно дописывает строку в журнал
+ *                              (issued-licenses.json), чтобы `list` видел.
+ *  · list                   — НИЧЕГО не меняет, только печатает: все
+ *                              выданные лицензии (из журнала) и все отозванные
+ *                              компьютеры разом.
+ *  · rename                 — даёт компьютеру человекочитаемое имя (или меняет
+ *                              его), не трогая уже выпущенные лицензии.
+ *  · import                 — если у вас СОХРАНИЛСЯ файл лицензии, который
+ *                              выпустили ДО того, как появился журнал
+ *                              (issue-license.ts начал вести list только с
+ *                              16.09.2026 — раньше выпущенное в журнал не
+ *                              попало и само туда не попадёт), эта команда
+ *                              читает такой файл и дописывает по нему запись
+ *                              задним числом. Файла нет — восстановить нечем,
+ *                              никакого другого следа лицензия не оставляет.
+ *  · revoke                 — помечает компьютер «отозван» в ВАШЕМ локальном
+ *                              списке (revoked.json, у вас на диске, не
+ *                              публикуется). Само по себе ни на что не влияет —
+ *                              см. export-revocations.
+ *  · unrevoke                — снимает пометку «отозван» (передумали/ошиблись).
+ *  · export-revocations      — печатает из revoked.json ПУБЛИЧНУЮ версию: только
+ *                              ID компьютеров, без имён и пометок. Это тот
+ *                              файл, который нужно куда-то выложить в
+ *                              интернет (адрес — в app-config.json →
+ *                              license.revocationUrl), чтобы движки покупателей
+ *                              сами его скачивали и проверяли себя.
  *
- * Учёт выданного (issued-licenses.json рядом с ключом): каждый выпуск
- * дописывается в журнал, `list` показывает кому, на какой ПК, с какого по
- * какое число и что с лицензией сейчас. Журнал нужен именно потому, что
- * лицензии офлайновые: после отправки файла покупателю никакого другого
- * следа не остаётся.
+ * Примеры:
  *
- * Имя компьютера (devices.json) — отдельно от журнала выпусков: один и тот
- * же компьютер может получать лицензию не раз (продление), а имя — это
- * подпись «чей это комп», проставляется один раз и правится командой rename.
+ *   npx tsx packages/engine/src/tools/issue-license.ts keygen
+ *   npx tsx packages/engine/src/tools/issue-license.ts issue --machine <id> --name "ООО Ромашка" --duration trial
+ *   npx tsx packages/engine/src/tools/issue-license.ts issue --machine <id> --name "ООО Ромашка" --duration year --device "Комп на объекте"
+ *   npx tsx packages/engine/src/tools/issue-license.ts issue --machine <id> --name "ООО Ромашка" --duration forever --out "C:\...\license.json"
+ *   npx tsx packages/engine/src/tools/issue-license.ts list
+ *   npx tsx packages/engine/src/tools/issue-license.ts rename --machine <id> --device "Ноутбук прораба"
+ *   npx tsx packages/engine/src/tools/issue-license.ts import старая-лицензия.json --device "Комп клиента"
+ *   npx tsx packages/engine/src/tools/issue-license.ts revoke --machine <id> --note "не заплатили"
+ *   npx tsx packages/engine/src/tools/issue-license.ts unrevoke --machine <id>
+ *   npx tsx packages/engine/src/tools/issue-license.ts export-revocations revoked.json
  *
- * Отзыв (revoked.json + export-revocations) — см. licenseRevocation.ts:
- * офлайн-подпись отозвать саму по себе нельзя, поэтому это отдельный список,
- * который движок подтягивает по сети, когда она есть. export-revocations
- * готовит из него файл БЕЗ имён и пометок — то, что можно спокойно выложить
- * куда угодно (Gist, свой сайт): это просто список ID, ничего личного.
+ * Где что лежит (ВСЕГДА эти пути, независимо от того, из какой папки
+ * запущена команда — они привязаны к расположению САМОГО ФАЙЛА
+ * issue-license.ts на диске, а не к текущей папке терминала):
+ *
+ *   packages/engine/license-keys/private.pem              приватный ключ — НИКОГДА не в git
+ *   packages/engine/license-keys/issued-licenses.json      журнал: кто, какой ПК, когда, до какого числа
+ *   packages/engine/license-keys/devices.json              имена компьютеров (rename)
+ *   packages/engine/license-keys/revoked.json               ваш рабочий список отозванных (с пометками — не публикуется)
+ *
+ * «machine» — отпечаток компьютера покупателя, показывается ему в приложении
+ * в панели активации лицензии; его нужно получить от покупателя (письмом/
+ * сообщением) перед выпуском.
+ *
+ * Три срока: trial — 30 дней (пробный), year — 365 дней, forever — бессрочно.
+ *
+ * Отзыв — по устройству офлайн-лицензию саму по себе не отозвать (файл с
+ * подписью не перестаёт быть подлинным), поэтому это отдельный, необязательный
+ * слой: движок сам подтягивает по сети опубликованный список отозванных
+ * ID, если в app-config.json указан license.revocationUrl (разбор решения —
+ * docs/ARCHITECTURE.md §28, код проверки — licenseRevocation.ts).
  */
 
 const KEY_DIR = process.env.FS_LICENSE_KEYS_DIR ?? path.join(__dirname, '..', '..', 'license-keys');
@@ -176,6 +216,23 @@ function deviceLabel(machineId: string): string {
   return d ? d.name : '(без имени — issue-license.ts rename)';
 }
 
+/**
+ * Проверка подписи БЕЗ сверки с текущим компьютером — в отличие от
+ * verifyLicenseFile в license.ts (та рассчитана на движок покупателя и всегда
+ * сверяет machineId с СОБСТВЕННЫМ отпечатком). Здесь, на машине издателя, мы
+ * импортируем чужую, уже выданную лицензию — сверять с этим компьютером
+ * нечего, важно только что подпись настоящая (значит, файл действительно
+ * выпущен ЭТИМ приватным ключом, а не подделан или испорчен).
+ */
+function verifySignatureOnly(file: LicenseFile): boolean {
+  try {
+    const publicKey = crypto.createPublicKey(PUBLIC_KEY_PEM);
+    return crypto.verify(null, canonicalPayload(file.payload), publicKey, Buffer.from(file.signature, 'base64'));
+  } catch {
+    return false;
+  }
+}
+
 function issue(argv: string[]): void {
   const args = parseArgs(argv);
   const machineId = args.machine;
@@ -245,6 +302,62 @@ function issue(argv: string[]): void {
   console.log(`  действует:  ${expiresAt ? `до ${formatDate(expiresAt)}` : 'бессрочно'}`);
   if (args.note) console.log(`  пометка:    ${args.note}`);
   console.log(`  записано в журнал: ${JOURNAL_FILE}`);
+}
+
+/**
+ * Восстановить запись в журнале по СОХРАНИВШЕМУСЯ файлу старой лицензии —
+ * для тех, что выпущены до 16.09.2026, когда журнала ещё не было (см. шапку
+ * файла). Ничего не подписывает и не меняет саму лицензию — только читает и
+ * дописывает строку в issued-licenses.json, как будто issue сделал это сразу.
+ */
+function importLicense(argv: string[]): void {
+  const [file, ...rest] = argv;
+  const args = parseArgs(rest);
+  if (!file) {
+    console.error('Нужен путь к файлу лицензии: import <файл.json> [--device "<комп>"] [--note "<пометка>"]');
+    process.exit(1);
+  }
+  let parsed: LicenseFile;
+  try {
+    parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as LicenseFile;
+  } catch (err) {
+    console.error(`Не удалось прочитать файл: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+  if (!parsed?.payload || typeof parsed.signature !== 'string') {
+    console.error('Это не файл лицензии (нет payload/signature).');
+    process.exit(1);
+  }
+  if (!verifySignatureOnly(parsed)) {
+    console.error('Подпись не сходится с нашим публичным ключом — это не настоящая лицензия (или файл повреждён).');
+    process.exit(1);
+  }
+  const already = readJournal().some(
+    (e) => e.machineId === parsed.payload.machineId && e.issuedAt === parsed.payload.issuedAt,
+  );
+  if (already) {
+    console.log('Эта лицензия уже есть в журнале — ничего не добавляю.');
+    return;
+  }
+  // До 16.09.2026 duration в файле не хранился (его и сейчас там нет — это
+  // поле только журнала). Различить старый trial/year по факту нечем, но
+  // trial появился только 17.09.2026 — то есть все более ранние срочные
+  // лицензии были годовыми, отсюда и вывод.
+  const duration: Duration = parsed.payload.expiresAt === null ? 'forever' : 'year';
+  const entry: JournalEntry = {
+    licenseeName: parsed.payload.licenseeName,
+    machineId: parsed.payload.machineId,
+    issuedAt: parsed.payload.issuedAt,
+    expiresAt: parsed.payload.expiresAt,
+    duration,
+    file: path.resolve(file),
+    ...(args.note ? { note: args.note } : {}),
+  };
+  appendJournal(entry);
+  if (args.device) setDeviceName(parsed.payload.machineId, args.device);
+  console.log(`Восстановлено в журнале: «${entry.licenseeName}», компьютер ${entry.machineId}.`);
+  console.log(`  выдана: ${formatDate(entry.issuedAt)}, действует: ${entry.expiresAt ? `до ${formatDate(entry.expiresAt)}` : 'бессрочно'}`);
+  console.log('(срок определён по наличию expiresAt — trial появился позже этой лицензии, поэтому это не он)');
 }
 
 /** Задать/сменить имя компьютера — не переиздавая лицензию. */
@@ -356,19 +469,28 @@ if (cmd === 'keygen') keygen();
 else if (cmd === 'issue') issue(rest);
 else if (cmd === 'list') list();
 else if (cmd === 'rename') rename(rest);
+else if (cmd === 'import') importLicense(rest);
 else if (cmd === 'revoke') revoke(rest);
 else if (cmd === 'unrevoke') unrevoke(rest);
 else if (cmd === 'export-revocations') exportRevocations(rest);
 else {
-  console.log('Использование:');
-  console.log('  npx tsx src/tools/issue-license.ts keygen');
-  console.log(
-    '  npx tsx src/tools/issue-license.ts issue --machine <id> --name "<имя>" --duration <trial|year|forever> [--device "<комп>"] [--out <файл>] [--note "<пометка>"]',
-  );
-  console.log('  npx tsx src/tools/issue-license.ts list                              — все выданные лицензии и отозванные');
-  console.log('  npx tsx src/tools/issue-license.ts rename --machine <id> --device "<имя>"   — назвать/переименовать компьютер');
-  console.log('  npx tsx src/tools/issue-license.ts revoke --machine <id> [--note "<причина>"]');
-  console.log('  npx tsx src/tools/issue-license.ts unrevoke --machine <id>');
-  console.log('  npx tsx src/tools/issue-license.ts export-revocations <файл>          — публичный список для публикации');
+  const P = 'npx tsx packages/engine/src/tools/issue-license.ts';
+  console.log('Запускать из папки репозитория (cd C:\\fountain-studio), команда:\n');
+  console.log(`  ${P} keygen`);
+  console.log('    — один раз в жизни проекта: создать пару ключей.\n');
+  console.log(`  ${P} issue --machine <id> --name "<имя>" --duration <trial|year|forever> [--device "<комп>"] [--out <файл>] [--note "<пометка>"]`);
+  console.log('    — выпустить лицензию: файл в --out (или в текущей папке) и отдать покупателю.\n');
+  console.log(`  ${P} list`);
+  console.log('    — показать все выданные лицензии и все отозванные компьютеры (ничего не меняет).\n');
+  console.log(`  ${P} rename --machine <id> --device "<имя>"`);
+  console.log('    — назвать/переименовать компьютер, не переиздавая лицензию.\n');
+  console.log(`  ${P} import <файл.json> [--device "<комп>"] [--note "<пометка>"]`);
+  console.log('    — вписать в журнал лицензию, выпущенную до появления журнала (см. шапку файла).\n');
+  console.log(`  ${P} revoke --machine <id> [--note "<причина>"]`);
+  console.log('    — пометить компьютер отозванным у себя (само по себе ни на что не влияет).\n');
+  console.log(`  ${P} unrevoke --machine <id>`);
+  console.log('    — снять пометку «отозван».\n');
+  console.log(`  ${P} export-revocations <файл>`);
+  console.log('    — публичный список отозванных (только ID) — его выкладывать в интернет.');
   process.exit(1);
 }

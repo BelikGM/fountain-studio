@@ -22,7 +22,7 @@ import { isMachineRevoked } from './licenseRevocation';
  * может патчить бинарник. Это защита от случайного/небрежного
  * распространения ключей, не от целенаправленного взлома.
  */
-const PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
+export const PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
 MCowBQYDK2VwAyEAvH6nLiugAz1uJ1+7ZsN/WqZh/CkJhQMt6ZT6Qv8K8cM=
 -----END PUBLIC KEY-----
 `;
