@@ -210,6 +210,21 @@ body {
   margin-top: 8px;
 }
 .confirm-actions .btn { min-width: 120px; }
+
+/*
+ * Диалог о несохранённых правках при переключении объекта — три исхода
+ * (сохранить/не сохранять/отмена), и подписи у них длиннее, чем «Отмена» /
+ * «Удалить». В горизонтальный ряд на ширину обычного confirm-modal три такие
+ * кнопки не влезают — располагаем в столбец, шире, и не режем текст.
+ */
+.confirm-modal-wide { width: min(480px, calc(100vw - 48px)); }
+.confirm-actions-column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.confirm-actions-column .btn { width: 100%; white-space: normal; }
 .license-machine-id {
   background: var(--bg-track);
   border-radius: 3px;
@@ -1110,6 +1125,16 @@ h2.panel-head-search {
   gap: 10px;
   align-items: center;
   margin-bottom: 8px;
+}
+
+/* Несколько form-row друг под другом как один смысловой блок (например, «название» + «папка» при создании объекта). */
+.form-column {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.form-column .form-row {
+  margin-bottom: 0;
 }
 
 .field {

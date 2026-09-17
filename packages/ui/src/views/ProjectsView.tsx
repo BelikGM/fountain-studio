@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { askConfirm } from '../components/ConfirmDialog';
 import type { EngineConnection } from '../useEngine';
 
 /**
@@ -11,6 +12,12 @@ import type { EngineConnection } from '../useEngine';
  *
  * Пропавшие папки из списка не прячем: человек должен видеть, что объект был,
  * и сам решить — найти его или убрать строку.
+ *
+ * Диалог о несохранённых правках при переключении рисует не этот компонент, а
+ * App.tsx — он должен появляться, даже если человек сейчас не на этом экране
+ * (например, объект попросили открыть двойным щелчком по .fsproj, пока
+ * работали в «Пульте»). Здесь только вызываются engine.openProject и другие
+ * такие методы — а решение «спросить или нет» принимает движок сам.
  */
 
 /** Мостик в Electron. В браузере его нет — тогда путь вводится руками. */
@@ -22,10 +29,12 @@ function desktop(): DesktopApi | undefined {
 }
 
 export function ProjectsView({ engine, onClose }: { engine: EngineConnection; onClose?: () => void }) {
-  const { projects, projectResult, playback, send } = engine;
+  const { projects, projectResult, playback, send, openProject, createProject, copyProject, closeProject } = engine;
   const [name, setName] = useState('');
   const [creating, setCreating] = useState(false);
   const [copying, setCopying] = useState(false);
+  /** Куда положить новый объект (или копию) — пусто значит «папка по умолчанию». */
+  const [destDir, setDestDir] = useState('');
   const [openPath, setOpenPath] = useState('');
   const firstOpenRef = useRef<HTMLButtonElement>(null);
 
@@ -35,6 +44,7 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
       setCreating(false);
       setCopying(false);
       setName('');
+      setDestDir('');
     }
   }, [projects?.current]);
 
@@ -59,8 +69,10 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
 
   /*
    * Шоу играет — переключение объекта погасит фонтан на глазах у людей.
-   * Спрашиваем, прежде чем переключать: это как раз тот случай, когда лишний
-   * вопрос дешевле неожиданно потухшего фонтана.
+   * Спрашиваем, прежде чем даже пробовать переключиться: это как раз тот
+   * случай, когда лишний вопрос дешевле неожиданно потухшего фонтана.
+   * Несохранённые правки — отдельная проверка, её делает движок сам (см.
+   * engine.pendingProjectSwitch в App.tsx).
    */
   const playing =
     playback.activeSceneId !== null ||
@@ -68,30 +80,37 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
     playback.show !== null ||
     playback.playlist !== null;
 
-  const askIfPlaying = (what: string): boolean =>
-    !playing || window.confirm(`Сейчас идёт воспроизведение. ${what} — вывод на линию прервётся. Продолжить?`);
+  const askIfPlaying = (what: string): Promise<boolean> =>
+    !playing ? Promise.resolve(true) : askConfirm(`${what}?`, { detail: 'Сейчас идёт воспроизведение — вывод на линию прервётся.' });
 
-  const open = (dir: string): void => {
-    if (askIfPlaying('Открыть другой объект')) send({ type: 'openProject', dir });
+  const open = async (dir: string): Promise<void> => {
+    if (await askIfPlaying('Открыть другой объект')) openProject(dir);
   };
 
-  const create = (): void => {
+  const create = async (): Promise<void> => {
     const n = name.trim();
-    if (n === '' || !askIfPlaying('Создать новый объект')) return;
-    send({ type: 'createProject', name: n });
+    if (n === '' || !(await askIfPlaying('Создать новый объект'))) return;
+    createProject(n, destDir.trim());
   };
 
-  const copy = (): void => {
+  const copy = async (): Promise<void> => {
     const n = name.trim();
-    if (n === '' || !askIfPlaying('Открыть копию')) return;
-    send({ type: 'copyProject', name: n });
+    if (n === '' || !(await askIfPlaying('Открыть копию'))) return;
+    copyProject(n, destDir.trim());
   };
 
-  const browse = async (): Promise<void> => {
+  const browseOpen = async (): Promise<void> => {
     const api = desktop();
     if (!api) return;
     const dir = await api.chooseProjectFolder(projects.projectsRoot);
-    if (dir !== '') open(dir);
+    if (dir !== '') await open(dir);
+  };
+
+  const browseDest = async (): Promise<void> => {
+    const api = desktop();
+    if (!api) return;
+    const dir = await api.chooseProjectFolder(destDir.trim() || projects.projectsRoot);
+    if (dir !== '') setDestDir(dir);
   };
 
   return (
@@ -150,7 +169,7 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
                           {...(r.dir === first?.dir ? { ref: firstOpenRef } : {})}
                           className={r.dir === first?.dir ? 'btn btn-small active' : 'btn btn-small'}
                           {...(r.dir === first?.dir ? { 'data-hint': 'Самый свежий объект — открывается по Enter' } : {})}
-                          onClick={() => open(r.dir)}
+                          onClick={() => void open(r.dir)}
                         >
                           Открыть
                         </button>
@@ -170,71 +189,91 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
           </table>
         )}
 
-        <h3 style={{ marginTop: 18, marginBottom: 6 }}>Объект из другой папки</h3>
+        <h3 style={{ marginTop: 18, marginBottom: 6 }}>Открыть другой проект</h3>
         <div className="form-row">
-          {desktop() && (
-            <button
-              className="btn"
-              data-hint="Выбрать папку объекта на диске — например, ту, что прислали на флешке."
-              onClick={() => void browse()}
-            >
-              📁 Выбрать папку…
-            </button>
-          )}
           <input
             className="input"
             style={{ width: 380 }}
-            placeholder="или путь: D:\Фонтаны\Новороссийск"
+            placeholder="Путь к папке объекта: D:\Фонтаны\Новороссийск"
             value={openPath}
             data-hint="Путь к папке объекта (или к файлу project.json / .fsproj внутри неё)."
             onChange={(e) => setOpenPath(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && openPath.trim() !== '') open(openPath.trim());
+              if (e.key === 'Enter' && openPath.trim() !== '') void open(openPath.trim());
             }}
           />
-          <button className="btn btn-small" disabled={openPath.trim() === ''} onClick={() => open(openPath.trim())}>
+          <button className="btn btn-small" disabled={openPath.trim() === ''} onClick={() => void open(openPath.trim())}>
             Открыть
           </button>
+          {desktop() && (
+            <button
+              className="btn btn-small"
+              data-hint="Выбрать папку объекта на диске — например, ту, что прислали на флешке."
+              onClick={() => void browseOpen()}
+            >
+              Обзор…
+            </button>
+          )}
         </div>
 
         <h3 style={{ marginTop: 18, marginBottom: 6 }}>Новый объект</h3>
         {creating || copying ? (
-          <div className="form-row">
-            <label className="field">
-              Название:{' '}
-              <input
-                className="input"
-                style={{ width: 260 }}
-                autoFocus
-                value={name}
-                placeholder={copying ? `${projects.current?.name ?? ''} — вариант 2` : 'Новороссийск'}
-                onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') (copying ? copy : create)();
-                  if (e.key === 'Escape') {
-                    setCreating(false);
-                    setCopying(false);
-                  }
+          <div className="form-column">
+            <div className="form-row">
+              <label className="field">
+                Название:{' '}
+                <input
+                  className="input"
+                  style={{ width: 260 }}
+                  autoFocus
+                  value={name}
+                  placeholder={copying ? `${projects.current?.name ?? ''} — вариант 2` : 'Новороссийск'}
+                  onChange={(e) => setName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void (copying ? copy() : create());
+                    if (e.key === 'Escape') {
+                      setCreating(false);
+                      setCopying(false);
+                    }
+                  }}
+                />
+              </label>
+              <button className="btn active" disabled={name.trim() === ''} onClick={() => void (copying ? copy() : create())}>
+                {copying ? 'Сделать копию' : 'Создать'}
+              </button>
+              <button
+                className="btn btn-small"
+                onClick={() => {
+                  setCreating(false);
+                  setCopying(false);
                 }}
-              />
-            </label>
-            <button className="btn active" disabled={name.trim() === ''} onClick={copying ? copy : create}>
-              {copying ? 'Сделать копию' : 'Создать'}
-            </button>
-            <button
-              className="btn btn-small"
-              onClick={() => {
-                setCreating(false);
-                setCopying(false);
-              }}
-            >
-              Отмена
-            </button>
-            <span className="dim">
-              {copying
-                ? 'Копия ляжет рядом с остальными объектами: схема, линии и музыка те же, журнал и бэкапы начнутся заново.'
-                : `Папка появится в ${projects.projectsRoot}. Внутри сразу будет одна линия DMX.`}
-            </span>
+              >
+                Отмена
+              </button>
+            </div>
+            <div className="form-row">
+              <label className="field">
+                Папка:{' '}
+                <input
+                  className="input"
+                  style={{ width: 380 }}
+                  value={destDir}
+                  placeholder={projects.projectsRoot}
+                  data-hint="Куда положить папку объекта. Пусто — используется папка по умолчанию."
+                  onChange={(e) => setDestDir(e.target.value)}
+                />
+              </label>
+              {desktop() && (
+                <button className="btn btn-small" onClick={() => void browseDest()}>
+                  Обзор…
+                </button>
+              )}
+              <span className="dim">
+                {copying
+                  ? 'Схема, линии и музыка — как в исходном объекте, журнал и бэкапы начнутся заново.'
+                  : 'Внутри сразу будет одна линия DMX.'}
+              </span>
+            </div>
           </div>
         ) : (
           <div className="form-row">
@@ -242,6 +281,7 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
               className="btn"
               onClick={() => {
                 setName('');
+                setDestDir('');
                 setCreating(true);
               }}
             >
@@ -254,6 +294,7 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
                   data-hint="Копия открытого объекта под другим именем: попробовать второй вариант шоу, не трогая рабочий."
                   onClick={() => {
                     setName(`${projects.current?.name ?? ''} — вариант 2`);
+                    setDestDir('');
                     setCopying(true);
                   }}
                 >
@@ -263,7 +304,9 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
                   className="btn btn-small"
                   data-hint="Закрыть объект: вывод на линию прекратится, программа вернётся к выбору проекта."
                   onClick={() => {
-                    if (askIfPlaying('Закрыть объект')) send({ type: 'closeProject' });
+                    void (async () => {
+                      if (await askIfPlaying('Закрыть объект')) closeProject();
+                    })();
                   }}
                 >
                   Закрыть объект

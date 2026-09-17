@@ -22,7 +22,7 @@ import type { MqttController } from './mqttcontroller';
 import type { NetworkMonitor } from './netmonitor';
 import type { OscServer } from './oscserver';
 import type { ProjectStore } from './project';
-import { linesUsable, type ProjectsApi } from './projects';
+import { linesUsable, peekProjectName, resolveProjectDir, type ProjectsApi } from './projects';
 import { scanUsbDmx } from './usbscan';
 import { createZip, readZip } from './zip';
 import {
@@ -295,46 +295,74 @@ export function startServer(
           net?.poll();
           broadcastNetwork();
           break;
-        case 'openProject': {
-          const r = projects?.open(msg.dir) ?? { ok: false, error: 'управление проектами недоступно' };
-          ws.send(
-            JSON.stringify({
-              type: 'projectResult',
-              ok: r.ok,
-              message: r.ok ? 'Проект открыт' : (r.error ?? 'Не удалось открыть проект'),
-            } satisfies ServerMessage),
-          );
-          if (r.ok) broadcastProjectSwitched();
+        /*
+         * У открытого объекта могут быть правки, ещё не долетевшие до диска
+         * (окно короткое — до 500 мс, — но человек может кликнуть «Открыть
+         * другой» именно в этот момент). Без force в такой момент не
+         * переключаем, а спрашиваем: молча сохранить и молча потерять — оба
+         * решения без спроса могут оказаться не тем, что нужно человеку.
+         */
+        case 'openProject':
+        case 'createProject':
+        case 'copyProject':
+        case 'closeProject': {
+          if (store.isDirty && !msg.force) {
+            const targetName =
+              msg.type === 'openProject'
+                ? peekProjectName(resolveProjectDir(msg.dir))
+                : msg.type === 'createProject' || msg.type === 'copyProject'
+                  ? msg.name
+                  : undefined; // closeProject — цели нет, просто «закрыть»
+            ws.send(
+              JSON.stringify({
+                type: 'projectResult',
+                ok: false,
+                unsavedChanges: true,
+                message: `В объекте «${projects?.current()?.name ?? ''}» есть несохранённые изменения`,
+                ...(targetName ? { targetName } : {}),
+              } satisfies ServerMessage),
+            );
+            break;
+          }
+          if (msg.discard) store.discard();
+
+          if (msg.type === 'openProject') {
+            const r = projects?.open(msg.dir) ?? { ok: false, error: 'управление проектами недоступно' };
+            ws.send(
+              JSON.stringify({
+                type: 'projectResult',
+                ok: r.ok,
+                message: r.ok ? 'Проект открыт' : (r.error ?? 'Не удалось открыть проект'),
+              } satisfies ServerMessage),
+            );
+            if (r.ok) broadcastProjectSwitched();
+          } else if (msg.type === 'createProject') {
+            const r = projects?.create(msg.name, msg.parentDir) ?? { ok: false, error: 'управление проектами недоступно' };
+            ws.send(
+              JSON.stringify({
+                type: 'projectResult',
+                ok: r.ok,
+                message: r.ok ? `Создан проект «${msg.name}»` : (r.error ?? 'Не удалось создать проект'),
+              } satisfies ServerMessage),
+            );
+            if (r.ok) broadcastProjectSwitched();
+          } else if (msg.type === 'copyProject') {
+            const r = projects?.copy(msg.name, msg.parentDir) ?? { ok: false, error: 'управление проектами недоступно' };
+            ws.send(
+              JSON.stringify({
+                type: 'projectResult',
+                ok: r.ok,
+                message: r.ok ? `Сделана копия «${msg.name}», она и открыта` : (r.error ?? 'Не удалось скопировать объект'),
+              } satisfies ServerMessage),
+            );
+            if (r.ok) broadcastProjectSwitched();
+          } else {
+            projects?.close();
+            ws.send(JSON.stringify({ type: 'projectResult', ok: true, message: 'Объект закрыт' } satisfies ServerMessage));
+            broadcastProjectSwitched();
+          }
           break;
         }
-        case 'createProject': {
-          const r = projects?.create(msg.name, msg.parentDir) ?? { ok: false, error: 'управление проектами недоступно' };
-          ws.send(
-            JSON.stringify({
-              type: 'projectResult',
-              ok: r.ok,
-              message: r.ok ? `Создан проект «${msg.name}»` : (r.error ?? 'Не удалось создать проект'),
-            } satisfies ServerMessage),
-          );
-          if (r.ok) broadcastProjectSwitched();
-          break;
-        }
-        case 'copyProject': {
-          const r = projects?.copy(msg.name) ?? { ok: false, error: 'управление проектами недоступно' };
-          ws.send(
-            JSON.stringify({
-              type: 'projectResult',
-              ok: r.ok,
-              message: r.ok ? `Сделана копия «${msg.name}», она и открыта` : (r.error ?? 'Не удалось скопировать объект'),
-            } satisfies ServerMessage),
-          );
-          if (r.ok) broadcastProjectSwitched();
-          break;
-        }
-        case 'closeProject':
-          projects?.close();
-          broadcastProjectSwitched();
-          break;
         case 'forgetProject':
           projects?.forget(msg.dir);
           broadcast(projectsMessage());

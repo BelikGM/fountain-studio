@@ -42,6 +42,28 @@ export class ProjectStore {
     return this.current;
   }
 
+  /**
+   * Есть ли правки, ещё не записанные на диск. Окно тут короткое (сброс
+   * приходит через 500 мс сам собой), но при переключении объекта человек
+   * может успеть кликнуть «Открыть» прямо в этот момент — тогда честнее
+   * спросить, чем молча сохранить или молча потерять правку.
+   */
+  get isDirty(): boolean {
+    return this.dirty;
+  }
+
+  /**
+   * «Не сохранять»: забыть правки в памяти и вернуться к тому, что реально
+   * лежит на диске. Таймер отложенной записи гасим ДО перечитывания —
+   * иначе он бы через 500 мс всё равно дописал то, что просили выбросить.
+   */
+  discard(): void {
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
+    this.dirty = false;
+    this.current = this.load();
+  }
+
   private load(): Project {
     if (!fs.existsSync(this.file)) {
       console.log(`[project] файла нет, новый проект (${this.file})`);

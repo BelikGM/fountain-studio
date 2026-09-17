@@ -86,6 +86,11 @@ const b = createProject(root, 'Новороссийск');
   check('и называется «Новороссийск 2»', path.basename(b.dir) === 'Новороссийск 2', path.basename(b.dir));
   check('оба существуют одновременно', isProjectDir(a.dir) && isProjectDir(b.dir));
   check('свободная папка ищется и без создания', path.basename(freeDir(root, 'Новороссийск')) === 'Новороссийск 3');
+  // Имя объекта внутри project.json должно совпадать с именем папки — иначе
+  // в «Недавних» две строки выглядели бы подписанными одинаково, и было бы
+  // не понять, какая из них какая (нашли через скриншот экрана «Проекты»).
+  const bProject = JSON.parse(fs.readFileSync(b.projectFile, 'utf8')) as { name: string };
+  check('имя объекта в файле совпадает с именем папки', bProject.name === 'Новороссийск 2', bProject.name);
 }
 
 // ---- Открыть можно и по файлу, не только по папке ---------------------------
@@ -148,6 +153,14 @@ const b = createProject(root, 'Новороссийск');
   check('журнал в копию не уехал', fs.readdirSync(path.join(dup.dir, 'logs')).length === 0);
   check('бэкапы в копию не уехали', !fs.existsSync(path.join(dup.dir, 'backups')));
   check('исходный объект не тронут', fs.existsSync(path.join(a.dir, 'logs', '2026-09-17.jsonl')));
+
+  // Копия под ЗАНЯТЫМ именем — папка получает «2», и имя внутри файла должно
+  // совпасть с ней же, а не с запрошенным именем дословно (та же причина,
+  // что и у createProject выше).
+  const dup2 = copyProject(a.dir, root, 'Новороссийск — вариант 2');
+  check('копия с занятым именем получила свою папку', path.basename(dup2.dir) === 'Новороссийск — вариант 2 2', path.basename(dup2.dir));
+  const dup2Name = (JSON.parse(fs.readFileSync(dup2.projectFile, 'utf8')) as { name: string }).name;
+  check('и имя в файле совпадает с папкой', dup2Name === path.basename(dup2.dir), dup2Name);
 }
 
 // ---- Папку можно скопировать и открыть как есть ------------------------------

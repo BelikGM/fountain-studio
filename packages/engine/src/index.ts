@@ -190,7 +190,13 @@ function closeProject(): void {
 const projects: ProjectsApi = {
   appDataDir,
   projectsRoot,
-  current: () => current,
+  /*
+   * Имя берём ЖИВЫМ из store.project.name, а не из зафиксированного при
+   * открытии current.name: человек может переименовать объект после
+   * открытия (updateProject), и заголовок/список проектов должны увидеть
+   * новое имя сразу, а не только после следующего переключения.
+   */
+  current: () => (current ? { dir: current.dir, name: store.project.name } : null),
   open: openProject,
   close: closeProject,
   create(name: string, parentDir?: string): OpenResult & { dir?: string } {
@@ -210,11 +216,13 @@ const projects: ProjectsApi = {
    * Сначала сбрасываем проект на диск: копировать надо то, что человек видит
    * на экране, а не последнее сохранённое состояние.
    */
-  copy(newName: string): OpenResult & { dir?: string } {
+  copy(newName: string, parentDir?: string): OpenResult & { dir?: string } {
     if (!current) return { ok: false, error: 'Объект не открыт — копировать нечего' };
     try {
       store.flush();
-      const p = copyProject(current.dir, projectsRoot, newName);
+      const root = parentDir && parentDir.trim() !== '' ? parentDir : projectsRoot;
+      fs.mkdirSync(root, { recursive: true });
+      const p = copyProject(current.dir, root, newName);
       const opened = openProject(p.dir);
       return { ...opened, dir: p.dir };
     } catch (err) {

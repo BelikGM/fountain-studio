@@ -30,6 +30,20 @@ export interface JitterSample {
 /** Раз в секунду (частота 'stats' от движка) — час истории. */
 const MAX_JITTER_SAMPLES = 3600;
 
+/**
+ * Диалог «в объекте есть несохранённые правки» — попытка переключиться на
+ * другой объект (или закрыть текущий), пока в нём есть правки, ещё не
+ * записанные на диск. Три исхода ровно как в обычных редакторах: сохранить и
+ * продолжить, отменить правки и продолжить, передумать вовсе.
+ */
+export interface PendingProjectSwitch {
+  /** Куда переключаемся; null — это закрытие объекта (цели нет, просто «закрыть»). */
+  targetName: string | null;
+  save: () => void;
+  discard: () => void;
+  cancel: () => void;
+}
+
 /** Автозапуск при входе в Windows (§27 доработки, §3 п.3). */
 export interface AutostartState {
   supported: boolean;
@@ -85,6 +99,20 @@ export interface EngineConnection {
   projects: ProjectsState | null;
   /** Итог последней попытки открыть/создать объект. */
   projectResult: { ok: boolean; message: string } | null;
+  /**
+   * Открытый объект надо переключить (открыть другой/создать/закрыть), но в
+   * нём есть правки, ещё не долетевшие до диска, — движок отказался
+   * переключать сам и спрашивает. null, пока спрашивать не о чем.
+   */
+  pendingProjectSwitch: PendingProjectSwitch | null;
+  /** Открыть объект по папке (или файлу project.json/.fsproj внутри неё). */
+  openProject: (dir: string) => void;
+  /** Завести новый объект; parentDir — если не в папке по умолчанию. */
+  createProject: (name: string, parentDir?: string) => void;
+  /** «Сохранить как»: копия открытого объекта под новым именем (и, если задано, в другой папке). */
+  copyProject: (name: string, parentDir?: string) => void;
+  /** Закрыть объект — редактор вернётся к выбору проекта. */
+  closeProject: () => void;
   /** Статус OSC/MQTT (null — движок ещё не прислал). Включение — в fountain.config.json. */
   remote: RemoteStatus | null;
   /** Редактируемая конфигурация движка: вселенные и тик (вкладка «Настройки»). */
@@ -159,6 +187,16 @@ export function useEngine(): EngineConnection {
   const [failsafe, setFailsafe] = useState<FailsafeState | null>(null);
   const [projects, setProjects] = useState<ProjectsState | null>(null);
   const [projectResult, setProjectResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [pendingProjectSwitch, setPendingProjectSwitch] = useState<PendingProjectSwitch | null>(null);
+  /**
+   * Последняя отправленная команда переключения — если движок ответит
+   * unsavedChanges, ровно её же нужно будет повторить с force (и, может
+   * быть, discard). Ответы по WebSocket не носят id запроса, а тут он и не
+   * нужен: команда переключения объекта всегда одна активная за раз.
+   */
+  const lastProjectCommandRef = useRef<
+    Extract<ClientMessage, { type: 'openProject' | 'createProject' | 'copyProject' | 'closeProject' }> | null
+  >(null);
   const [remote, setRemote] = useState<RemoteStatus | null>(null);
   const [engineConfig, setEngineConfig] = useState<EngineConfigState | null>(null);
   const [backupConfig, setBackupConfig] = useState<{ enabled: boolean; intervalMin: number } | null>(null);
@@ -268,9 +306,27 @@ export function useEngine(): EngineConnection {
           case 'projects':
             setProjects(msg.state);
             break;
-          case 'projectResult':
+          case 'projectResult': {
             setProjectResult({ ok: msg.ok, message: msg.message });
+            const cmd = lastProjectCommandRef.current;
+            if (msg.unsavedChanges && cmd) {
+              setPendingProjectSwitch({
+                targetName: msg.targetName ?? null,
+                save: () => {
+                  send({ ...cmd, force: true });
+                  setPendingProjectSwitch(null);
+                },
+                discard: () => {
+                  send({ ...cmd, force: true, discard: true });
+                  setPendingProjectSwitch(null);
+                },
+                cancel: () => setPendingProjectSwitch(null),
+              });
+            } else {
+              setPendingProjectSwitch(null);
+            }
             break;
+          }
           case 'usbDmxScan':
             setUsbScan(msg.scan);
             break;
@@ -487,6 +543,42 @@ export function useEngine(): EngineConnection {
     [send],
   );
 
+  /*
+   * Переключение объекта — обёртки над send(), которые запоминают команду,
+   * чтобы при ответе unsavedChanges можно было послать её же снова, уже с
+   * force. Голый send({ type: 'openProject', ... }) в компонентах больше не
+   * используем — иначе диалог о несохранённых правках было бы нечем собрать.
+   */
+  const openProject = useCallback(
+    (dir: string) => {
+      const cmd = { type: 'openProject' as const, dir };
+      lastProjectCommandRef.current = cmd;
+      send(cmd);
+    },
+    [send],
+  );
+  const createProject = useCallback(
+    (name: string, parentDir?: string) => {
+      const cmd = { type: 'createProject' as const, name, ...(parentDir ? { parentDir } : {}) };
+      lastProjectCommandRef.current = cmd;
+      send(cmd);
+    },
+    [send],
+  );
+  const copyProject = useCallback(
+    (name: string, parentDir?: string) => {
+      const cmd = { type: 'copyProject' as const, name, ...(parentDir ? { parentDir } : {}) };
+      lastProjectCommandRef.current = cmd;
+      send(cmd);
+    },
+    [send],
+  );
+  const closeProject = useCallback(() => {
+    const cmd = { type: 'closeProject' as const };
+    lastProjectCommandRef.current = cmd;
+    send(cmd);
+  }, [send]);
+
   return {
     connected,
     version,
@@ -504,6 +596,11 @@ export function useEngine(): EngineConnection {
     failsafe,
     projects,
     projectResult,
+    pendingProjectSwitch,
+    openProject,
+    createProject,
+    copyProject,
+    closeProject,
     remote,
     engineConfig,
     backupConfig,

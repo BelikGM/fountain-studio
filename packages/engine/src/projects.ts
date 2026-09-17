@@ -70,6 +70,21 @@ export function isProjectDir(dir: string): boolean {
 }
 
 /**
+ * Имя объекта по папке, БЕЗ открытия — нужно только показать «переключить на
+ * Новороссийск?» в диалоге о несохранённых правках. Не читается или битый
+ * файл — используем имя папки, для диалога и это годится.
+ */
+export function peekProjectName(dir: string): string {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(dir, PROJECT_FILE), 'utf8')) as { name?: unknown };
+    if (typeof raw.name === 'string' && raw.name.trim() !== '') return raw.name;
+  } catch {
+    /* нечитаемый файл — отдаём имя папки ниже */
+  }
+  return path.basename(dir);
+}
+
+/**
  * Человек мог указать сам файл (project.json или ярлык .fsproj), а не папку —
  * из Проводника открывают именно файл. Приводим к папке объекта.
  */
@@ -185,7 +200,10 @@ export function createProject(root: string, name: string, project?: Project): Pr
   fs.mkdirSync(paths.audioDir, { recursive: true });
   fs.mkdirSync(paths.logsDir, { recursive: true });
   const base = project ?? emptyProject();
-  const withName = sanitizeProject({ ...base, name: name.trim() || path.basename(dir) });
+  // Имя объекта — от папки, а не от запроса дословно: если имя было занято,
+  // freeDir добавил «2» к папке, и в «Недавних» не должно быть двух строк с
+  // одинаковым именем и разными путями — не понять, какая из них какая.
+  const withName = sanitizeProject({ ...base, name: path.basename(dir) });
   fs.writeFileSync(paths.projectFile, JSON.stringify(withName, null, 2) + '\n', 'utf8');
   writeLines(dir, defaultLines());
   writeMarker(dir, withName.name);
@@ -213,7 +231,9 @@ export function copyProject(srcDir: string, root: string, newName: string): Proj
   });
   fs.mkdirSync(paths.audioDir, { recursive: true });
   fs.mkdirSync(paths.logsDir, { recursive: true });
-  const name = newName.trim() || path.basename(dir);
+  // Как и в createProject: имя — от итоговой папки, чтобы при совпадении
+  // имён «Недавние» не показывали две одинаково подписанные строки.
+  const name = path.basename(dir);
   try {
     const raw = JSON.parse(fs.readFileSync(paths.projectFile, 'utf8')) as Project;
     fs.writeFileSync(paths.projectFile, JSON.stringify(sanitizeProject({ ...raw, name }), null, 2) + '\n', 'utf8');
@@ -414,7 +434,7 @@ export interface ProjectsApi {
   close(): void;
   create(name: string, parentDir?: string): { ok: boolean; error?: string; dir?: string };
   /** «Сохранить как»: копия открытого объекта под новым именем. */
-  copy(newName: string): { ok: boolean; error?: string; dir?: string };
+  copy(newName: string, parentDir?: string): { ok: boolean; error?: string; dir?: string };
   /** Сохранить линии DMX открытого объекта (вкладка «Настройки»). */
   saveLines(tickMs: number, universes: ConfigUniverse[]): void;
   saveBackupConfig(enabled: boolean, intervalMin: number): void;

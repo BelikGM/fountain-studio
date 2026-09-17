@@ -416,12 +416,22 @@ export type ClientMessage =
   | { type: 'refreshNetwork' }
   // USB-DMX: найти FTDI-устройства и COM-порты, состояние интерфейсов Musidora.
   | { type: 'scanUsbDmx' }
-  // Проекты: объект — это папка, её можно открыть, создать или закрыть на ходу.
-  | { type: 'openProject'; dir: string }
-  | { type: 'createProject'; name: string; parentDir?: string }
-  /** «Сохранить как»: копия открытого объекта под новым именем. */
-  | { type: 'copyProject'; name: string }
-  | { type: 'closeProject' }
+  /*
+   * Проекты: объект — это папка, её можно открыть, создать или закрыть на
+   * ходу. У всех четырёх — общая пара флагов на случай несохранённых правок
+   * в открытом сейчас объекте (см. ProjectStore.isDirty в движке):
+   *   force   — переключать, не спрашивая (ответ человека на предупреждение);
+   *   discard — и правки при этом ЗАБЫТЬ, а не сохранить (без force игнорируется).
+   * Без force движок при грязном хранилище не переключает, а присылает
+   * projectResult{ unsavedChanges: true } — редактор показывает диалог, и уже
+   * ОТ ЭТОГО клика на сервер уходит повтор той же команды с force (и, если
+   * выбрали «не сохранять», с discard).
+   */
+  | { type: 'openProject'; dir: string; force?: boolean; discard?: boolean }
+  | { type: 'createProject'; name: string; parentDir?: string; force?: boolean; discard?: boolean }
+  /** «Сохранить как»: копия открытого объекта под новым именем (и, если задано, в другой папке). */
+  | { type: 'copyProject'; name: string; parentDir?: string; force?: boolean; discard?: boolean }
+  | { type: 'closeProject'; force?: boolean; discard?: boolean }
   | { type: 'forgetProject'; dir: string }
   // Захват входящего ArtDMX (§17 п.1): снимок кадра вселенной проекта и период цикла.
   | { type: 'getDmxCapture'; universe: number }
@@ -508,8 +518,13 @@ export type ServerMessage =
   | { type: 'modbus'; state: ModbusState }
   /** Список проектов и какой открыт (при подключении и после любой смены). */
   | { type: 'projects'; state: ProjectsState }
-  /** Ответ на openProject/createProject — с причиной, если не вышло. */
-  | { type: 'projectResult'; ok: boolean; message: string }
+  /**
+   * Ответ на openProject/createProject/copyProject/closeProject — с причиной,
+   * если не вышло. unsavedChanges — особый случай отказа: не «не вышло», а
+   * «сначала спросите человека» (см. force/discard у этих команд); targetName —
+   * во что предлагаем переключиться, для текста диалога.
+   */
+  | { type: 'projectResult'; ok: boolean; message: string; unsavedChanges?: boolean; targetName?: string }
   /** Аварийное отключение включилось или снялось (см. failsafe.ts). */
   | { type: 'failsafe'; state: FailsafeState }
   /** Ответ на scanUsbDmx (только запросившему). */

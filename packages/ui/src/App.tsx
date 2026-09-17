@@ -134,7 +134,7 @@ const TOUR_STEPS: TourStepDef[] = [
 
 export function App() {
   const engine = useEngine();
-  const { connected, version, stats, project, playback, send, undo, redo, savedAtMs, licenseStatus } = engine;
+  const { connected, version, stats, project, playback, send, undo, redo, savedAtMs, licenseStatus, openProject, pendingProjectSwitch } = engine;
   // null — движок ещё не прислал статус: не режем вкладки, чтобы не мигать интерфейсом.
   const unlicensed = licenseStatus !== null && !licenseStatus.licensed;
   const [showSaved, setShowSaved] = useState(false);
@@ -154,8 +154,11 @@ export function App() {
    */
   useEffect(() => {
     const api = (window as unknown as { fountainApp?: { onOpenProject(h: (dir: string) => void): void } }).fountainApp;
-    api?.onOpenProject((dir) => send({ type: 'openProject', dir }));
-  }, [send]);
+    // openProject (не голый send) — если в текущем объекте есть несохранённые
+    // правки, движок откажется переключать сам и спросит через тот же диалог,
+    // что и на экране «Проекты».
+    api?.onOpenProject((dir) => openProject(dir));
+  }, [openProject]);
   useEffect(() => {
     if (savedAtMs === null) return;
     setShowSaved(true);
@@ -400,6 +403,38 @@ export function App() {
       <HintHost />
       {helpOpen && <HelpView onClose={() => setHelpOpen(false)} />}
       {licenseOpen && <LicenseView engine={engine} onClose={() => setLicenseOpen(false)} />}
+      {/*
+        В открытом объекте есть правки, ещё не долетевшие до диска, а человек
+        пытается переключиться на другой (или закрыть текущий) — движок сам
+        отказался переключать и попросил решить. Рисуется здесь, а не внутри
+        ProjectsView: переключить объект можно и не заходя на этот экран
+        (двойной щелчок по .fsproj из Проводника, пока открыт «Пульт»).
+      */}
+      {pendingProjectSwitch && (
+        <div className="modal-overlay" onClick={pendingProjectSwitch.cancel}>
+          <div className="modal confirm-modal confirm-modal-wide" onClick={(e) => e.stopPropagation()}>
+            <div className="confirm-text">
+              В объекте «{engine.projects?.current?.name ?? ''}» есть несохранённые изменения
+            </div>
+            <p className="dim confirm-detail">
+              {pendingProjectSwitch.targetName
+                ? `Что сделать перед тем, как открыть «${pendingProjectSwitch.targetName}»?`
+                : 'Что сделать перед тем, как закрыть объект?'}
+            </p>
+            <div className="confirm-actions confirm-actions-column">
+              <button className="btn active" autoFocus onClick={pendingProjectSwitch.save}>
+                💾 Сохранить и {pendingProjectSwitch.targetName ? 'открыть' : 'закрыть'}
+              </button>
+              <button className="btn" onClick={pendingProjectSwitch.discard}>
+                Не сохранять и {pendingProjectSwitch.targetName ? 'открыть' : 'закрыть'}
+              </button>
+              <button className="btn btn-small" onClick={pendingProjectSwitch.cancel}>
+                Отмена
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {tourStep !== null && !unlicensed && (
         <TourOverlay
           steps={TOUR_STEPS}
