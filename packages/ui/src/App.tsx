@@ -24,6 +24,7 @@ import { RemoteView } from './views/RemoteView';
 import { ScheduleView } from './views/ScheduleView';
 import { ProjectsView } from './views/ProjectsView';
 import { SettingsView } from './views/SettingsView';
+import { WelcomeView } from './views/WelcomeView';
 import { lastManual, subscribeManual } from './manualActivity';
 
 type Tab =
@@ -42,11 +43,14 @@ type Tab =
   | 'settings';
 
 /**
- * Без активной лицензии на этот ПК (§27 доработки, «Продукт») доступны
- * только запуск уже готового плейлиста и расписание — заведение оборудования,
- * сцены/секвенсоры/шоу и диагностика требуют лицензии.
+ * Тариф Pro (§27 доработки, «Продукт», уровни — 18.09.2026): воспроизведение
+ * и текущая эксплуатация уже настроенного фонтана — шоу, плейлисты,
+ * расписание. Заведение оборудования, 3D-схема, сцены/секвенсоры и
+ * диагностика — уже Max. Сюда же падает истёкшая/отозванная max-лицензия
+ * (см. AccessLevel в shared/license.ts) — фонтан не должен резко остаться
+ * совсем без управления из-за забытого продления.
  */
-const UNLICENSED_TABS: Tab[] = ['playlists', 'schedule'];
+const PRO_TABS: Tab[] = ['show', 'playlists', 'schedule'];
 
 const TABS: { id: Tab; label: string; full: string }[] = [
   {
@@ -135,8 +139,18 @@ const TOUR_STEPS: TourStepDef[] = [
 export function App() {
   const engine = useEngine();
   const { connected, version, stats, project, playback, send, undo, redo, savedAtMs, licenseStatus, openProject, pendingProjectSwitch } = engine;
-  // null — движок ещё не прислал статус: не режем вкладки, чтобы не мигать интерфейсом.
-  const unlicensed = licenseStatus !== null && !licenseStatus.licensed;
+  /*
+   * Три уровня доступа (см. AccessLevel в shared/license.ts):
+   *  · none — лицензии не было никогда: экран приветствия вместо вкладок;
+   *  · pro  — воспроизведение и расписание (в т.ч. просроченная/отозванная
+   *    max-лицензия падает сюда же, а не сразу до none — фонтан не должен
+   *    резко остаться совсем без управления из-за забытого продления);
+   *  · max  — полный доступ.
+   * Пока движок не прислал статус (null) — не режем вкладки, чтобы окно не
+   * мигало пустым экраном на каждом подключении.
+   */
+  const access = licenseStatus?.access ?? 'max';
+  const unlicensed = access !== 'max';
   const [showSaved, setShowSaved] = useState(false);
   const [licenseOpen, setLicenseOpen] = useState(false);
   /**
@@ -189,7 +203,7 @@ export function App() {
   }, [tab]);
   // Если лицензии нет, а сохранённая/текущая вкладка недоступна — подменяем показ,
   // не трогая tab, чтобы вернуться на неё же после активации лицензии.
-  const effectiveTab: Tab = unlicensed && !UNLICENSED_TABS.includes(tab) ? 'playlists' : tab;
+  const effectiveTab: Tab = unlicensed && !PRO_TABS.includes(tab) ? 'playlists' : tab;
   // Режим оператора (§27 доработки, УХ п.8): состояние в localStorage,
   // переживает перезапуск приложения — снимается только паролем.
   const [locked, setLocked] = useState(() => isOperatorLocked());
@@ -373,7 +387,7 @@ export function App() {
           экраны. Оставляем только выбор объекта, лицензию и справку.
         */}
         <nav className="tabs">
-          {(noProject ? [] : unlicensed ? TABS.filter((t) => UNLICENSED_TABS.includes(t.id)) : TABS).map((t) => (
+          {(noProject || access === 'none' ? [] : access === 'pro' ? TABS.filter((t) => PRO_TABS.includes(t.id)) : TABS).map((t) => (
             <button
               key={t.id}
               data-tour={t.id}
@@ -387,10 +401,18 @@ export function App() {
         </nav>
         <button
           className={unlicensed ? 'help-btn license-btn license-btn-warn' : 'help-btn license-btn'}
-          data-hint={unlicensed ? 'Лицензия не активирована — нажмите для активации' : 'Лицензия'}
+          data-hint={
+            access === 'none'
+              ? 'Лицензия не активирована — нажмите, чтобы выбрать тариф'
+              : access === 'pro'
+                ? licenseStatus?.licensed
+                  ? 'Тариф Pro — воспроизведение и расписание. Нужен полный доступ? Оформите Max'
+                  : `${licenseStatus?.reason ?? 'Срок истёк'} — доступны воспроизведение и расписание`
+                : 'Лицензия'
+          }
           onClick={() => setLicenseOpen(true)}
         >
-          {unlicensed ? '🔒' : '🔑'}
+          {access === 'none' ? '🔒' : access === 'pro' ? '⏳' : '🔑'}
         </button>
         <button className="help-btn" data-hint="Справка" onClick={() => setHelpOpen(true)}>
           ?
@@ -445,11 +467,14 @@ export function App() {
       )}
 
       {/*
-        Пока объект не открыт, работать не с чем: вместо вкладок показываем
-        выбор проекта. Тот же экран открывается кнопкой в шапке — переключить
-        фонтан можно не перезапуская программу.
+        Приоритет экранов: сперва лицензия (без неё смысла выбирать объект
+        нет — лицензия привязана к КОМПЬЮТЕРУ, а не к проекту), потом выбор
+        объекта (тот же экран и кнопкой в шапке — переключить фонтан можно не
+        перезапуская программу), и только потом обычные вкладки.
       */}
-      {noProject || projectsOpen ? (
+      {access === 'none' ? (
+        <WelcomeView engine={engine} />
+      ) : noProject || projectsOpen ? (
         <ProjectsView engine={engine} {...(noProject ? {} : { onClose: () => setProjectsOpen(false) })} />
       ) : (
         <>

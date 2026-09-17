@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { LicenseFile, LicensePayload } from '@fountain-studio/shared';
+import type { LicenseFile, LicensePayload, LicensePlan } from '@fountain-studio/shared';
 import { canonicalPayload, PUBLIC_KEY_PEM } from '../license';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -28,6 +28,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  *                              он и есть «доступ», больше ничего передавать
  *                              не нужно. Заодно дописывает строку в журнал
  *                              (issued-licenses.json), чтобы `list` видел.
+ *                              --plan pro|max — обязателен, какой уровень
+ *                              открывает лицензия (см. AccessLevel в
+ *                              shared/license.ts). Срок — либо готовый
+ *                              пресет --duration trial|year|forever, либо
+ *                              своё число дней --days <N> (не оба сразу).
  *  · list                   — НИЧЕГО не меняет, только печатает: все
  *                              выданные лицензии (из журнала) и все отозванные
  *                              компьютеры разом.
@@ -56,9 +61,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * Примеры:
  *
  *   npx tsx packages/engine/src/tools/issue-license.ts keygen
- *   npx tsx packages/engine/src/tools/issue-license.ts issue --machine <id> --name "ООО Ромашка" --duration trial
- *   npx tsx packages/engine/src/tools/issue-license.ts issue --machine <id> --name "ООО Ромашка" --duration year --device "Комп на объекте"
- *   npx tsx packages/engine/src/tools/issue-license.ts issue --machine <id> --name "ООО Ромашка" --duration forever --out "C:\...\license.json"
+ *   npx tsx packages/engine/src/tools/issue-license.ts issue --machine <id> --name "ООО Ромашка" --plan pro --duration trial
+ *   npx tsx packages/engine/src/tools/issue-license.ts issue --machine <id> --name "ООО Ромашка" --plan max --duration year --device "Комп на объекте"
+ *   npx tsx packages/engine/src/tools/issue-license.ts issue --machine <id> --name "ООО Ромашка" --plan max --duration forever --out "C:\...\license.json"
+ *   npx tsx packages/engine/src/tools/issue-license.ts issue --machine <id> --name "ООО Ромашка" --plan pro --days 45
  *   npx tsx packages/engine/src/tools/issue-license.ts list
  *   npx tsx packages/engine/src/tools/issue-license.ts rename --machine <id> --device "Ноутбук прораба"
  *   npx tsx packages/engine/src/tools/issue-license.ts import старая-лицензия.json --device "Комп клиента"
@@ -79,7 +85,18 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * в панели активации лицензии; его нужно получить от покупателя (письмом/
  * сообщением) перед выпуском.
  *
- * Три срока: trial — 30 дней (пробный), year — 365 дней, forever — бессрочно.
+ * Сроки: trial — 30 дней (пробный), year — 365 дней, forever — бессрочно,
+ * либо --days <N> — своё число дней вместо готового пресета.
+ *
+ * Уровни (--plan): pro — воспроизведение готового (плейлисты, шоу,
+ * расписание), max — полный доступ (разработка шоу, 3D-схема, оборудование,
+ * протоколы, диагностика). Лицензии без файла вообще (совсем новая
+ * установка) не открывают ничего, кроме экрана приветствия с ценами.
+ * Просроченная лицензия не выключает программу начисто — падает до pro
+ * (фонтан продолжает играть по расписанию то, что уже настроено, просто
+ * новое не завести). Отозванная — падает до нуля: это осознанное решение
+ * продавца, а не забытое продление, поэтому строже (см. AccessLevel в
+ * shared/license.ts).
  *
  * Отзыв — по устройству офлайн-лицензию саму по себе не отозвать (файл с
  * подписью не перестаёт быть подлинным), поэтому это отдельный, необязательный
@@ -94,7 +111,8 @@ const JOURNAL_FILE = path.join(KEY_DIR, 'issued-licenses.json');
 const DEVICES_FILE = path.join(KEY_DIR, 'devices.json');
 const REVOKED_FILE = path.join(KEY_DIR, 'revoked.json');
 
-type Duration = 'trial' | 'year' | 'forever';
+/** custom — своё число дней через --days, а не один из готовых пресетов. */
+type Duration = 'trial' | 'year' | 'forever' | 'custom';
 
 /** Запись журнала: то же, что подписано, плюс куда лёг файл и пометка продавца. */
 interface JournalEntry {
@@ -104,6 +122,12 @@ interface JournalEntry {
   /** null — бессрочная. */
   expiresAt: string | null;
   duration: Duration;
+  /**
+   * Уровень подписки. Необязательное поле — записи, восстановленные командой
+   * import из лицензий до 18.09.2026 (когда уровней ещё не было), уровня не
+   * знают; в таком случае и сама лицензия действует как max (см. license.ts).
+   */
+  plan?: LicensePlan;
   /** Путь к выпущенному файлу лицензии — как он назывался в момент выпуска. */
   file: string;
   /** Свободная пометка: номер договора, контакт, объект (--note). */
@@ -167,7 +191,7 @@ function writeRevoked(list: RevokedEntry[]): void {
 }
 
 const DAY_MS = 24 * 3600 * 1000;
-const DURATION_DAYS: Record<Exclude<Duration, 'forever'>, number> = { trial: 30, year: 365 };
+const DURATION_DAYS: Record<'trial' | 'year', number> = { trial: 30, year: 365 };
 
 function formatDate(iso: string | null): string {
   if (!iso) return 'бессрочно';
@@ -183,6 +207,23 @@ function statusOf(entry: JournalEntry): string {
   if (left < 0) return `истекла ${Math.floor(-left / DAY_MS)} дн. назад`;
   const days = Math.floor(left / DAY_MS);
   return days <= 30 ? `истекает через ${days} дн.` : `активна, ещё ${days} дн.`;
+}
+
+/** Подпись срока для списка: у trial/year есть имя, у custom — считаем дни по факту (issuedAt→expiresAt). */
+function durationLabel(entry: Pick<JournalEntry, 'duration' | 'issuedAt' | 'expiresAt'>): string {
+  if (entry.duration === 'forever') return 'бессрочно';
+  if (entry.duration === 'trial') return 'пробный (30 дн.)';
+  if (entry.duration === 'year') return 'год';
+  if (!entry.expiresAt) return 'свой срок';
+  const days = Math.round((new Date(entry.expiresAt).getTime() - new Date(entry.issuedAt).getTime()) / DAY_MS);
+  return `${days} дн.`;
+}
+
+/** Что открывает уровень — короткая подсказка рядом с ним в списке. */
+function planLabel(plan: LicensePlan | undefined): string {
+  if (plan === 'pro') return 'Pro — воспроизведение и расписание';
+  if (plan === 'max') return 'Max — полный доступ';
+  return 'max (выпущена до уровней подписки)';
 }
 
 function keygen(): void {
@@ -237,17 +278,39 @@ function issue(argv: string[]): void {
   const args = parseArgs(argv);
   const machineId = args.machine;
   const licenseeName = args.name;
-  const duration = args.duration as Duration;
-  if (!machineId || !licenseeName || !duration) {
-    console.error('Нужны --machine <id> --name "<имя>" --duration <trial|year|forever>');
+  const plan = args.plan as LicensePlan;
+  if (!machineId || !licenseeName) {
+    console.error('Нужны --machine <id> --name "<имя>" --plan <pro|max> и --duration <trial|year|forever> ИЛИ --days <N>');
     process.exit(1);
+  }
+  if (plan !== 'pro' && plan !== 'max') {
+    console.error('--plan должен быть "pro" (воспроизведение и расписание) или "max" (полный доступ)');
+    process.exit(1);
+  }
+  // Срок — либо готовый пресет (--duration), либо своё число дней (--days).
+  // Одновременно оба не даём: неясно, какой из них главный.
+  if (args.duration && args.days) {
+    console.error('Укажите либо --duration <trial|year|forever>, либо --days <N> — не оба сразу');
+    process.exit(1);
+  }
+  let duration: Duration;
+  let customDays: number | null = null;
+  if (args.days) {
+    customDays = Number(args.days);
+    if (!Number.isInteger(customDays) || customDays <= 0) {
+      console.error('--days должен быть целым числом дней больше нуля');
+      process.exit(1);
+    }
+    duration = 'custom';
+  } else {
+    duration = args.duration as Duration;
+    if (duration !== 'trial' && duration !== 'year' && duration !== 'forever') {
+      console.error('--duration должен быть "trial" (30 дней), "year" или "forever" — либо используйте --days <N>');
+      process.exit(1);
+    }
   }
   if (!fs.existsSync(PRIVATE_KEY_FILE)) {
     console.error(`Нет приватного ключа (${PRIVATE_KEY_FILE}) — сначала: npx tsx src/tools/issue-license.ts keygen`);
-    process.exit(1);
-  }
-  if (duration !== 'trial' && duration !== 'year' && duration !== 'forever') {
-    console.error('--duration должен быть "trial" (30 дней), "year" или "forever"');
     process.exit(1);
   }
   const revoked = readRevoked().find((r) => r.machineId === machineId);
@@ -269,13 +332,14 @@ function issue(argv: string[]): void {
   }
   const privateKey = crypto.createPrivateKey(fs.readFileSync(PRIVATE_KEY_FILE, 'utf8'));
   const issuedAt = new Date();
-  const expiresAt =
-    duration === 'forever' ? null : new Date(issuedAt.getTime() + DURATION_DAYS[duration] * DAY_MS).toISOString();
+  const days = duration === 'custom' ? customDays! : duration === 'forever' ? null : DURATION_DAYS[duration];
+  const expiresAt = days === null ? null : new Date(issuedAt.getTime() + days * DAY_MS).toISOString();
   const payload: LicensePayload = {
     licenseeName,
     machineId,
     issuedAt: issuedAt.toISOString(),
     expiresAt,
+    plan,
   };
   const signature = crypto.sign(null, canonicalPayload(payload), privateKey).toString('base64');
   const file: LicenseFile = { payload, signature };
@@ -289,6 +353,7 @@ function issue(argv: string[]): void {
     issuedAt: payload.issuedAt,
     expiresAt,
     duration,
+    plan,
     file: path.resolve(out),
     ...(args.note ? { note: args.note } : {}),
   };
@@ -297,7 +362,8 @@ function issue(argv: string[]): void {
   console.log(`Лицензия выпущена: ${out}`);
   console.log(`  получатель: ${licenseeName}`);
   console.log(`  компьютер:  ${machineId}${args.device ? ` («${args.device}»)` : ''}`);
-  console.log(`  срок:       ${duration === 'trial' ? 'пробный, 30 дней' : duration === 'year' ? 'год' : 'бессрочно'}`);
+  console.log(`  уровень:    ${planLabel(plan)}`);
+  console.log(`  срок:       ${durationLabel(entry)}`);
   console.log(`  выдана:     ${formatDate(payload.issuedAt)}`);
   console.log(`  действует:  ${expiresAt ? `до ${formatDate(expiresAt)}` : 'бессрочно'}`);
   if (args.note) console.log(`  пометка:    ${args.note}`);
@@ -344,12 +410,18 @@ function importLicense(argv: string[]): void {
   // trial появился только 17.09.2026 — то есть все более ранние срочные
   // лицензии были годовыми, отсюда и вывод.
   const duration: Duration = parsed.payload.expiresAt === null ? 'forever' : 'year';
+  // payload.plan у таких файлов нет (уровней ещё не было — сама лицензия
+  // работает как max, см. license.ts). --plan здесь — только для ВАШЕЙ
+  // памятки в списке, кто на самом деле каким планом пользовался; на то,
+  // что реально откроет файл человеку, не влияет.
+  const plan = parsed.payload.plan ?? (args.plan as LicensePlan | undefined);
   const entry: JournalEntry = {
     licenseeName: parsed.payload.licenseeName,
     machineId: parsed.payload.machineId,
     issuedAt: parsed.payload.issuedAt,
     expiresAt: parsed.payload.expiresAt,
     duration,
+    ...(plan ? { plan } : {}),
     file: path.resolve(file),
     ...(args.note ? { note: args.note } : {}),
   };
@@ -358,6 +430,9 @@ function importLicense(argv: string[]): void {
   console.log(`Восстановлено в журнале: «${entry.licenseeName}», компьютер ${entry.machineId}.`);
   console.log(`  выдана: ${formatDate(entry.issuedAt)}, действует: ${entry.expiresAt ? `до ${formatDate(entry.expiresAt)}` : 'бессрочно'}`);
   console.log('(срок определён по наличию expiresAt — trial появился позже этой лицензии, поэтому это не он)');
+  if (!parsed.payload.plan) {
+    console.log('(в самом файле уровня подписки нет — лицензия работает как max; --plan здесь только для вашей памятки)');
+  }
 }
 
 /** Задать/сменить имя компьютера — не переиздавая лицензию. */
@@ -442,7 +517,8 @@ function list(): void {
       const revokedMark = revokedIds.has(e.machineId) ? '  ⛔ ОТОЗВАН' : '';
       console.log(`${e.licenseeName}${revokedMark}`);
       console.log(`  компьютер: ${e.machineId}  («${deviceLabel(e.machineId)}»)`);
-      console.log(`  срок:      ${e.duration === 'trial' ? 'пробный' : e.duration === 'year' ? 'год' : 'бессрочно'}`);
+      console.log(`  уровень:   ${planLabel(e.plan)}`);
+      console.log(`  срок:      ${durationLabel(e)}`);
       console.log(`  период:    ${formatDate(e.issuedAt)} → ${e.expiresAt ? formatDate(e.expiresAt) : 'бессрочно'}`);
       console.log(`  состояние: ${statusOf(e)}`);
       console.log(`  файл:      ${e.file}`);
@@ -478,8 +554,9 @@ else {
   console.log('Запускать из папки репозитория (cd C:\\fountain-studio), команда:\n');
   console.log(`  ${P} keygen`);
   console.log('    — один раз в жизни проекта: создать пару ключей.\n');
-  console.log(`  ${P} issue --machine <id> --name "<имя>" --duration <trial|year|forever> [--device "<комп>"] [--out <файл>] [--note "<пометка>"]`);
-  console.log('    — выпустить лицензию: файл в --out (или в текущей папке) и отдать покупателю.\n');
+  console.log(`  ${P} issue --machine <id> --name "<имя>" --plan <pro|max> --duration <trial|year|forever> [--device "<комп>"] [--out <файл>] [--note "<пометка>"]`);
+  console.log(`  ${P} issue --machine <id> --name "<имя>" --plan <pro|max> --days <N> [--device "<комп>"] [--out <файл>] [--note "<пометка>"]`);
+  console.log('    — выпустить лицензию: файл в --out (или в текущей папке) и отдать покупателю. Срок — либо пресет, либо --days.\n');
   console.log(`  ${P} list`);
   console.log('    — показать все выданные лицензии и все отозванные компьютеры (ничего не меняет).\n');
   console.log(`  ${P} rename --machine <id> --device "<имя>"`);

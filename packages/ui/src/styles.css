@@ -190,6 +190,57 @@ body {
 }
 .license-modal { width: min(520px, calc(100vw - 48px)); }
 
+/* Экран приветствия для совсем новой установки (WelcomeView) — карточки тарифов. */
+.welcome-panel { max-width: 900px; }
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+  margin-top: 12px;
+}
+.plan-card {
+  background: var(--bg-track);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.plan-card-max { border-color: var(--accent); }
+.plan-card-title {
+  font-size: 18px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.plan-card-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+}
+.plan-card-tagline { color: var(--fg-dim); font-size: 13px; }
+.plan-card-price { font-size: 16px; font-weight: 600; margin-top: 4px; }
+.plan-card-features {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.plan-card-fit { margin-top: auto; padding-top: 8px; font-size: 12px; }
+.contact-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-top: 10px;
+  font-size: 14px;
+}
+.contact-row a { color: var(--accent); }
+
 /* Подтверждение действия — своё окно вместо window.confirm (см. ConfirmDialog).
    Узкое, по центру, с вопросом крупно и пояснением помельче. */
 .confirm-modal {

@@ -14,7 +14,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { canonicalPayload, loadLicenseStatus, machineFingerprint, verifyLicenseFile } from '../license';
+import { accessFor, canonicalPayload, loadLicenseStatus, machineFingerprint, verifyLicenseFile } from '../license';
 import { isMachineRevoked, refreshRevocationList, revocationCacheInfo } from '../licenseRevocation';
 import crypto from 'node:crypto';
 import type { LicenseFile, LicensePayload } from '@fountain-studio/shared';
@@ -76,7 +76,59 @@ function makeLicense(payload: Partial<LicensePayload>, signWith: crypto.KeyObjec
   check('без файла лицензии — licensed:false', status.licensed === false);
   check('причина понятная', status.reason === 'Лицензия не активирована', status.reason);
   check('machineId посчитан', typeof status.machineId === 'string' && status.machineId.length > 0);
+  check('без лицензии доступ — none (совсем новая установка)', status.access === 'none', status.access);
+  check('без лицензии уровень — null', status.plan === null);
 }
+
+// ---- Отказ из-за чужой подписи/битого файла — всегда access none -----------
+{
+  const wrongSig = path.join(tmp, 'wrong-signature-plan');
+  fs.mkdirSync(wrongSig, { recursive: true });
+  fs.writeFileSync(
+    path.join(wrongSig, 'fountain.license.json'),
+    JSON.stringify(makeLicense({ plan: 'pro' }, otherPrivate), null, 2),
+  );
+  const s1 = loadLicenseStatus(wrongSig);
+  check('чужая подпись — access none, а не pro/max', s1.access === 'none', s1.access);
+  check('чужая подпись — plan null', s1.plan === null);
+}
+
+/*
+ * Уровни подписки и понижение при истечении/отзыве — это ЧИСТАЯ функция
+ * accessFor(check, plan) в license.ts, вынесенная отдельно как раз ради
+ * этого: настоящую подпись вендора (private.pem) самопроверке заводить
+ * незачем и нельзя, а вот саму логику «что открыть по результату проверки»
+ * проверить нужно на всех сочетаниях.
+ */
+{
+  const valid = { valid: true } as const;
+  const expired = { valid: false, expired: true, reason: 'истекла' } as const;
+  const invalid = { valid: false, reason: 'подпись не сходится' } as const;
+
+  check('валидна + план pro → доступ pro', accessFor(valid, 'pro') === 'pro');
+  check('валидна + план max → доступ max', accessFor(valid, 'max') === 'max');
+  check('валидна + плана нет (старая лицензия) → доступ max (грандфазеринг)', accessFor(valid, null) === 'max');
+  check('истекла (была pro) → падает до pro (и так floor)', accessFor(expired, 'pro') === 'pro');
+  check('истекла (была MAX) → падает до pro, а не остаётся max', accessFor(expired, 'max') === 'pro');
+  check('истекла старая (плана не было) → тоже до pro, не до max', accessFor(expired, null) === 'pro');
+  check('подпись не сошлась → доступ none, даже если план был указан', accessFor(invalid, 'max') === 'none');
+}
+
+// ---- Отзыв понижает access до none — строже, чем истечение срока ----------
+await withServer(
+  (_req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ revoked: [machineId] }));
+  },
+  async (url) => {
+    const dir = path.join(tmp, 'revoked-access');
+    fs.mkdirSync(dir, { recursive: true });
+    await refreshRevocationList(dir, url);
+    const status = loadLicenseStatus(dir);
+    check('отозванный компьютер — access none (не pro)', status.access === 'none', status.access);
+    check('причина явно «отозвана», не «не активирована»', status.reason === 'Лицензия отозвана', status.reason);
+  },
+);
 
 // ---- Отзыв: без revocationUrl ничего не проверяем --------------------------
 {

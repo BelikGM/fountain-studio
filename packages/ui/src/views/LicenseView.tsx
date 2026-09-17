@@ -1,11 +1,15 @@
 import { useState } from 'react';
+import { PLANS, priceLine } from '../plans';
 import type { EngineConnection } from '../useEngine';
 
 /**
  * Активация лицензии (§27 доработки, «Продукт») — привязка к 1 ПК, офлайн
  * проверка подписи на движке (см. packages/engine/src/license.ts). Доступна
- * из шапки в любой момент, даже когда остальные вкладки закрыты без лицензии —
- * иначе активировать её было бы неоткуда.
+ * из шапки в любой момент, даже когда остальные вкладки закрыты без
+ * лицензии — иначе активировать её было бы неоткуда.
+ *
+ * Экран для СОВСЕМ новой установки (access: 'none') — WelcomeView, не этот
+ * компонент: там ещё и тарифы с ценами, сюда попадают уже зная, что покупают.
  */
 export function LicenseView({ engine, onClose }: { engine: EngineConnection; onClose: () => void }) {
   const { licenseStatus, activateLicense } = engine;
@@ -33,6 +37,8 @@ export function LicenseView({ engine, onClose }: { engine: EngineConnection; onC
     }
   };
 
+  const planInfo = licenseStatus ? PLANS.find((p) => p.id === licenseStatus.plan) : undefined;
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal license-modal" onClick={(e) => e.stopPropagation()}>
@@ -52,15 +58,29 @@ export function LicenseView({ engine, onClose }: { engine: EngineConnection; onC
           <>
             {licenseStatus.licensed ? (
               <p className="ok-text">
-                ✔ Лицензия активна — {licenseStatus.licenseeName}
+                ✔ {planInfo?.title ?? 'Лицензия'} активна — {licenseStatus.licenseeName}
                 {licenseStatus.expiresAt
                   ? `, до ${new Date(licenseStatus.expiresAt).toLocaleDateString('ru-RU')}`
                   : ' (бессрочно)'}
               </p>
+            ) : licenseStatus.access === 'pro' ? (
+              // Настоящая лицензия была, но кончилась (истёк срок) — не блокировка,
+              // а понижение: фонтан продолжает играть по расписанию то, что уже
+              // настроено, просто новое не завести (см. AccessLevel в shared/license.ts).
+              <p className="warn">
+                ⚠ {licenseStatus.reason ?? 'Срок истёк'} — доступны только воспроизведение готового и расписание,
+                как на тарифе Pro. Новое шоу или 3D-схему не завести, пока не продлите.
+              </p>
             ) : (
               <p className="warn">
-                ⚠ {licenseStatus.reason ?? 'Лицензия не активирована'} — без лицензии доступны только вкладки
-                «Плейлисты» и «Расписание».
+                ⚠ {licenseStatus.reason ?? 'Лицензия не активирована'} — доступа нет вовсе.
+              </p>
+            )}
+
+            {licenseStatus.access === 'pro' && (
+              <p className="dim">
+                Тариф Max открывает разработку новых шоу, 3D-схему, оборудование и протоколы —{' '}
+                {PLANS.find((p) => p.id === 'max') && priceLine(PLANS.find((p) => p.id === 'max')!)}.
               </p>
             )}
 
