@@ -24,8 +24,14 @@ export class AudioPlayer {
 
   constructor(
     private readonly config: AudioPlayerConfig,
-    private readonly audioDir: string,
+    private audioDir: string,
   ) {}
+
+  /** Открыли другой объект — играем из его папки; текущее воспроизведение гасим. */
+  setDir(dir: string): void {
+    this.stop();
+    this.audioDir = dir;
+  }
 
   private detect(): boolean {
     if (this.config.player === 'none') return false;

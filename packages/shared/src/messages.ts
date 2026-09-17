@@ -416,6 +416,13 @@ export type ClientMessage =
   | { type: 'refreshNetwork' }
   // USB-DMX: найти FTDI-устройства и COM-порты, состояние интерфейсов Musidora.
   | { type: 'scanUsbDmx' }
+  // Проекты: объект — это папка, её можно открыть, создать или закрыть на ходу.
+  | { type: 'openProject'; dir: string }
+  | { type: 'createProject'; name: string; parentDir?: string }
+  /** «Сохранить как»: копия открытого объекта под новым именем. */
+  | { type: 'copyProject'; name: string }
+  | { type: 'closeProject' }
+  | { type: 'forgetProject'; dir: string }
   // Захват входящего ArtDMX (§17 п.1): снимок кадра вселенной проекта и период цикла.
   | { type: 'getDmxCapture'; universe: number }
   | { type: 'measureDmxCycle'; universe: number }
@@ -463,6 +470,24 @@ export type ClientMessage =
   // датчик по Modbus/MQTT: тот будет слать то же самое сообщение сам.
   | { type: 'setWindSpeed'; speedMs: number | null };
 
+/** Недавно открытый объект — строка на экране выбора проекта. */
+export interface RecentProjectInfo {
+  dir: string;
+  name: string;
+  openedAtMs: number;
+  /** Папку удалили или унесли — открыть нельзя, можно только убрать из списка. */
+  missing: boolean;
+}
+
+/** Что сейчас с проектами: какой открыт и какие открывали раньше. */
+export interface ProjectsState {
+  /** Открытый объект; null — ни одного, редактор показывает выбор проекта. */
+  current: { dir: string; name: string } | null;
+  recent: RecentProjectInfo[];
+  /** Куда программа складывает новые объекты по умолчанию. */
+  projectsRoot: string;
+}
+
 /** Движок → UI */
 export type ServerMessage =
   | { type: 'hello'; version: string; tickMs: number; universes: UniverseInfo[] }
@@ -481,6 +506,10 @@ export type ServerMessage =
   | { type: 'playback'; state: PlaybackState }
   | { type: 'network'; state: NetworkState }
   | { type: 'modbus'; state: ModbusState }
+  /** Список проектов и какой открыт (при подключении и после любой смены). */
+  | { type: 'projects'; state: ProjectsState }
+  /** Ответ на openProject/createProject — с причиной, если не вышло. */
+  | { type: 'projectResult'; ok: boolean; message: string }
   /** Аварийное отключение включилось или снялось (см. failsafe.ts). */
   | { type: 'failsafe'; state: FailsafeState }
   /** Ответ на scanUsbDmx (только запросившему). */

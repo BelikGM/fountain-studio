@@ -78,6 +78,23 @@ export class NetworkMonitor {
     };
   }
 
+  /**
+   * Открыли другой объект — у него свои ноды и вселенные. Перезапускаем
+   * опрос с новыми целями и забываем прежние находки: они относились к
+   * другому фонтану, и показывать их как «потерянные» нельзя.
+   */
+  configure(opts: Pick<NetMonitorOptions, 'targets' | 'universes'>): void {
+    const wasRunning = this.socket !== null;
+    if (wasRunning) this.stop();
+    this.opts.targets = opts.targets;
+    this.opts.universes = opts.universes;
+    this.nodes.clear();
+    this.rdm.clear();
+    this.log = [];
+    if (wasRunning && opts.targets.length > 0) this.start();
+    this.onChange?.();
+  }
+
   start(): void {
     this.socket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
     this.socket.on('error', (e) => console.error('[net] ошибка сокета:', e.message));

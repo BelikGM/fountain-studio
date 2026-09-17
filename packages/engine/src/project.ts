@@ -12,7 +12,29 @@ export class ProjectStore {
   private saveTimer: NodeJS.Timeout | undefined;
   private dirty = false;
 
-  constructor(readonly file: string) {
+  private currentFile: string;
+
+  constructor(file: string) {
+    this.currentFile = file;
+    this.current = this.load();
+  }
+
+  /** Файл открытого проекта. */
+  get file(): string {
+    return this.currentFile;
+  }
+
+  /**
+   * Открыть другой объект тем же хранилищем. Сначала дописываем на диск то,
+   * что не успело сохраниться у прежнего: переключение проекта не должно
+   * стоить человеку последних правок.
+   */
+  rebind(file: string): void {
+    this.flush();
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
+    this.dirty = false;
+    this.currentFile = file;
     this.current = this.load();
   }
 

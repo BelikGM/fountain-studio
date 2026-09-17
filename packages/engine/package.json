@@ -15,7 +15,8 @@
     "musidora-test": "tsx src/tools/musidora-selftest.ts",
     "failsafe-test": "tsx src/tools/failsafe-selftest.ts",
     "eventlog-test": "tsx src/tools/eventlog-selftest.ts",
-    "telegram-test": "tsx src/tools/telegram-selftest.ts"
+    "telegram-test": "tsx src/tools/telegram-selftest.ts",
+    "projects-test": "tsx src/tools/projects-selftest.ts"
   },
   "dependencies": {
     "@fountain-studio/shared": "*",

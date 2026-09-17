@@ -140,12 +140,17 @@ export class TelegramNotifier {
   private readonly recent = new Map<string, { atMs: number; suppressed: number }>();
   /** Сколько аварий смолчали в тихом режиме — скажем одним сообщением, когда он кончится. */
   private quietSuppressed = 0;
+  /**
+   * Токен живёт в папке ПРОГРАММЫ, а не объекта: папку проекта отдают
+   * коллеге, и свой токен бота отдавать вместе с ней нельзя.
+   */
   private readonly secretsFile: string;
-  private readonly queueFile: string;
+  /** Неотправленные сообщения — у объекта: это его события, а не программы. */
+  private queueFile: string;
   private unsubscribe: (() => void) | null = null;
 
   constructor(
-    projectFile: string,
+    files: { secretsFile: string; queueFile: string },
     /** Имя объекта — им подписывается каждое сообщение и называется его тема. */
     private getSiteName: () => string,
     /** Живой снимок объекта для отчётов и сводок. */
@@ -153,19 +158,39 @@ export class TelegramNotifier {
     /** Имена приборов по RDM-UID из патча — чтобы в сообщениях не было голых UID. */
     private getRdmNames: () => Map<string, string> = () => new Map(),
   ) {
-    const dir = path.dirname(projectFile);
-    this.secretsFile = path.join(dir, 'fountain.secrets.json');
-    this.queueFile = path.join(dir, 'telegram-queue.json');
-    this.load();
+    this.secretsFile = files.secretsFile;
+    this.queueFile = files.queueFile;
+    this.loadSecrets();
+    this.loadQueue();
   }
 
-  private load(): void {
+  /**
+   * Открыли другой объект: настройки бота общие для программы и остаются,
+   * а неотправленные сообщения — свои у каждого объекта. Прежнюю очередь
+   * дописываем на диск, чтобы ничего не потерять.
+   */
+  rebind(queueFile: string): void {
+    this.saveQueue();
+    this.queue = [];
+    this.queueFile = queueFile;
+    this.loadQueue();
+    this.restart();
+  }
+
+  private loadSecrets(): void {
     try {
       if (fs.existsSync(this.secretsFile)) {
         const raw = JSON.parse(fs.readFileSync(this.secretsFile, 'utf8')) as { telegram?: Partial<TelegramConfig> };
         this.cfg = { ...defaultTelegramConfig(), ...(raw.telegram ?? {}) };
         if (!this.cfg.siteTopics || typeof this.cfg.siteTopics !== 'object') this.cfg.siteTopics = {};
       }
+    } catch (err) {
+      console.error('[telegram] не удалось прочитать настройки:', err);
+    }
+  }
+
+  private loadQueue(): void {
+    try {
       if (fs.existsSync(this.queueFile)) {
         const raw = JSON.parse(fs.readFileSync(this.queueFile, 'utf8')) as Partial<Queued & { text: string }>[];
         if (Array.isArray(raw)) {

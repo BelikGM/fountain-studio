@@ -7,7 +7,21 @@ import path from 'node:path';
  * проект остаётся переносимым (папка проекта содержит всё шоу целиком).
  */
 export class AudioStore {
-  constructor(readonly dir: string) {}
+  private current: string;
+
+  constructor(dir: string) {
+    this.current = dir;
+  }
+
+  /** Папка аудио открытого объекта. */
+  get dir(): string {
+    return this.current;
+  }
+
+  /** Открыли другой объект — играем и сохраняем уже из его папки. */
+  setDir(dir: string): void {
+    this.current = dir;
+  }
 
   /** Только имя файла без путей — защита от выхода за пределы папки. */
   private safePath(name: string): string | null {

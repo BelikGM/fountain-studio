@@ -78,6 +78,35 @@ const DEFAULTS: EngineConfig = {
   backup: { enabled: true, intervalMin: 10 },
 };
 
+/**
+ * Настройки САМОЙ ПРОГРАММЫ (не объекта): порт, тайминги планировщика,
+ * звуковой плеер, внешние пульты. Лежат в папке данных приложения и при
+ * переключении проектов не меняются.
+ *
+ * Всё, что относится к объекту — вселенные, шаг тика, бэкапы, — живёт в
+ * lines.json внутри папки проекта (см. projects.ts). Поэтому здесь список
+ * вселенных пустой: его подставляет открытый проект.
+ */
+export function loadAppConfig(appDataDir: string): EngineConfig & { configFile: string } {
+  const file = path.join(appDataDir, 'app-config.json');
+  let raw: Partial<EngineConfig> = {};
+  try {
+    if (fs.existsSync(file)) raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<EngineConfig>;
+  } catch (err) {
+    console.error('[config] не удалось прочитать настройки программы:', err);
+  }
+  return {
+    server: { ...DEFAULTS.server, ...raw.server },
+    timing: { ...DEFAULTS.timing, ...raw.timing },
+    audio: { ...DEFAULTS.audio, ...raw.audio },
+    universes: [],
+    backup: { ...DEFAULTS.backup, ...raw.backup },
+    configFile: file,
+    ...(raw.osc ? { osc: raw.osc } : {}),
+    ...(raw.mqtt ? { mqtt: raw.mqtt } : {}),
+  };
+}
+
 /** Ищет fountain.config.json вверх от cwd; путь можно задать через --config. */
 export function loadConfig(argv: string[]): EngineConfig & { configFile: string } {
   const flagIdx = argv.indexOf('--config');

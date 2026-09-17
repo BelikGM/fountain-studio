@@ -22,6 +22,7 @@ import type { MqttController } from './mqttcontroller';
 import type { NetworkMonitor } from './netmonitor';
 import type { OscServer } from './oscserver';
 import type { ProjectStore } from './project';
+import { linesUsable, type ProjectsApi } from './projects';
 import { scanUsbDmx } from './usbscan';
 import { createZip, readZip } from './zip';
 import {
@@ -62,6 +63,7 @@ export function startServer(
   osc?: OscServer,
   mqtt?: MqttController,
   telegram?: TelegramNotifier,
+  projects?: ProjectsApi,
 ): WebSocketServer {
   const port = engine.config.server.port;
   const wss = new WebSocketServer({ port });
@@ -74,6 +76,32 @@ export function startServer(
   };
 
   const broadcastPlayback = (): void => broadcast({ type: 'playback', state: engine.playbackState() });
+  /**
+   * Состояние проектов для редактора. «Потерянные» папки не прячем: человек
+   * должен видеть, что объект был, и сам решить — найти его или убрать из
+   * списка.
+   */
+  const projectsMessage = (): Extract<ServerMessage, { type: 'projects' }> => ({
+    type: 'projects',
+    state: {
+      current: projects?.current() ?? null,
+      recent: (projects?.recent() ?? []).map((r) => ({ ...r, missing: !fs.existsSync(r.dir) })),
+      projectsRoot: projects?.projectsRoot ?? '',
+    },
+  });
+  /** После смены объекта редактор должен увидеть ВСЁ новое, а не половину. */
+  const broadcastProjectSwitched = (): void => {
+    broadcast({ type: 'hello', version: ENGINE_VERSION, tickMs: engine.config.timing.tickMs, universes: engine.universeInfos() });
+    broadcast(configMessage());
+    broadcast({ type: 'project', project: store.project });
+    broadcast(backupConfigMessage());
+    broadcast(backupListMessage());
+    broadcast({ type: 'logHistory', events: eventLog.list() });
+    broadcastPlayback();
+    broadcast(projectsMessage());
+    if (telegram) broadcast({ type: 'telegram', state: telegram.status() });
+    broadcastNetwork();
+  };
   // Уведомления сами узнают, что у бота включили темы или нашёлся получатель, —
   // сразу показываем это в Настройках.
   if (telegram) telegram.onStatusChange = () => broadcast({ type: 'telegram', state: telegram.status() });
@@ -105,10 +133,15 @@ export function startServer(
     type: 'backupList',
     backups: backups?.list() ?? [],
   });
-  const projectDir = path.dirname(store.file);
+  /**
+   * Лицензия привязана к КОМПЬЮТЕРУ, а не к объекту, поэтому лежит в данных
+   * программы: иначе при каждом новом проекте её пришлось бы активировать
+   * заново, а отдавая папку объекта коллеге, человек отдавал бы и лицензию.
+   */
+  const licenseDir = projects?.appDataDir ?? path.dirname(store.file);
   const licenseMessage = (): Extract<ServerMessage, { type: 'license' }> => ({
     type: 'license',
-    status: loadLicenseStatus(projectDir),
+    status: loadLicenseStatus(licenseDir),
   });
   // Журнал событий (§27 доработки, §3 п.1): новое событие — сразу всем
   // подключённым клиентам (не только тому, кто его вызвал).
@@ -139,6 +172,7 @@ export function startServer(
     if (telegram) ws.send(JSON.stringify({ type: 'telegram', state: telegram.status() } satisfies ServerMessage));
     ws.send(JSON.stringify({ type: 'modbus', state: engine.modbusState() } satisfies ServerMessage));
     ws.send(JSON.stringify({ type: 'failsafe', state: engine.failsafeState() } satisfies ServerMessage));
+    ws.send(JSON.stringify(projectsMessage()));
     ws.send(JSON.stringify(backupConfigMessage()));
     ws.send(JSON.stringify(backupListMessage()));
     ws.send(JSON.stringify({ type: 'logHistory', events: eventLog.list() } satisfies ServerMessage));
@@ -261,6 +295,50 @@ export function startServer(
           net?.poll();
           broadcastNetwork();
           break;
+        case 'openProject': {
+          const r = projects?.open(msg.dir) ?? { ok: false, error: 'управление проектами недоступно' };
+          ws.send(
+            JSON.stringify({
+              type: 'projectResult',
+              ok: r.ok,
+              message: r.ok ? 'Проект открыт' : (r.error ?? 'Не удалось открыть проект'),
+            } satisfies ServerMessage),
+          );
+          if (r.ok) broadcastProjectSwitched();
+          break;
+        }
+        case 'createProject': {
+          const r = projects?.create(msg.name, msg.parentDir) ?? { ok: false, error: 'управление проектами недоступно' };
+          ws.send(
+            JSON.stringify({
+              type: 'projectResult',
+              ok: r.ok,
+              message: r.ok ? `Создан проект «${msg.name}»` : (r.error ?? 'Не удалось создать проект'),
+            } satisfies ServerMessage),
+          );
+          if (r.ok) broadcastProjectSwitched();
+          break;
+        }
+        case 'copyProject': {
+          const r = projects?.copy(msg.name) ?? { ok: false, error: 'управление проектами недоступно' };
+          ws.send(
+            JSON.stringify({
+              type: 'projectResult',
+              ok: r.ok,
+              message: r.ok ? `Сделана копия «${msg.name}», она и открыта` : (r.error ?? 'Не удалось скопировать объект'),
+            } satisfies ServerMessage),
+          );
+          if (r.ok) broadcastProjectSwitched();
+          break;
+        }
+        case 'closeProject':
+          projects?.close();
+          broadcastProjectSwitched();
+          break;
+        case 'forgetProject':
+          projects?.forget(msg.dir);
+          broadcast(projectsMessage());
+          break;
         case 'scanUsbDmx':
           void scanUsbDmx().then((scan) => {
             if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'usbDmxScan', scan } satisfies ServerMessage));
@@ -271,7 +349,7 @@ export function startServer(
           // статус: при неудачной активации файл лицензии не пишется, и
           // loadLicenseStatus() тогда вернул бы общее «не активирована»,
           // потеряв конкретную причину отказа (чужая подпись/машина/истёк срок).
-          const status = activateLicense(projectDir, msg.fileText);
+          const status = activateLicense(licenseDir, msg.fileText);
           broadcast({ type: 'license', status });
           break;
         }
@@ -316,24 +394,19 @@ export function startServer(
           void handleRdmRequest(net, msg, ws);
           break;
         case 'updateConfig': {
-          // Валидация: непустой список, уникальные id, разумный тик.
+          // Валидация: непустой список, уникальные id, у каждой линии есть
+          // выходы, разумный тик. Проверяем придирчиво не из педантизма: на
+          // кривом списке движок падал на `u.outputs.map(...)`, а упавший
+          // движок — это остановленное шоу на объекте.
           const tickMs = Math.round(msg.tickMs);
-          const ids = msg.universes.map((u) => u.id);
-          if (
-            msg.universes.length === 0 ||
-            new Set(ids).size !== ids.length ||
-            ids.some((id) => !Number.isInteger(id) || id < 1) ||
-            !Number.isFinite(tickMs) ||
-            tickMs < 10 ||
-            tickMs > 1000
-          ) {
-            console.error('[server] updateConfig отклонён: некорректные вселенные или тик');
+          if (!linesUsable(msg.universes) || !Number.isFinite(tickMs) || tickMs < 10 || tickMs > 1000) {
+            console.error('[server] updateConfig отклонён: некорректные линии или тик');
             break;
           }
           engine.applyConfig(msg.universes, tickMs);
           // Калибровка и Modbus-насосы индексируются по вселенным — переиндексировать.
           engine.setProject(store.project);
-          persistConfig(engine, tickMs, msg.universes);
+          persistConfig(projects, tickMs, msg.universes);
           // hello повторно: UI обновит список вселенных и tickMs без переподключения.
           broadcast({
             type: 'hello',
@@ -418,17 +491,11 @@ export function startServer(
               };
               const tickMs = Math.round(Number(raw.tickMs));
               const universes = Array.isArray(raw.universes) ? raw.universes : [];
-              const ids = universes.map((u) => u.id);
-              const ok =
-                universes.length > 0 &&
-                new Set(ids).size === ids.length &&
-                ids.every((id) => Number.isInteger(id) && id >= 1) &&
-                Number.isFinite(tickMs) &&
-                tickMs >= 10 &&
-                tickMs <= 1000;
+              // Архив мог прийти откуда угодно — линии применяем только целые.
+              const ok = linesUsable(universes) && Number.isFinite(tickMs) && tickMs >= 10 && tickMs <= 1000;
               if (ok) {
                 engine.applyConfig(universes, tickMs);
-                persistConfig(engine, tickMs, universes);
+                persistConfig(projects, tickMs, universes);
                 linesApplied = universes.length;
               }
             }
@@ -468,7 +535,7 @@ export function startServer(
           if (!backups) break;
           backups.setConfig(msg.enabled, msg.intervalMin);
           const cfg = backups.config();
-          persistBackupConfig(engine, cfg.enabled, cfg.intervalMin);
+          persistBackupConfig(projects, cfg.enabled, cfg.intervalMin);
           broadcast(backupConfigMessage());
           break;
         }
@@ -618,33 +685,21 @@ export function startServer(
  * Сохраняет новые вселенные/тик в fountain.config.json, не трогая остальные
  * поля файла (server, audio, osc, mqtt, spinMs, uiFrameMs).
  */
-function persistConfig(engine: Engine, tickMs: number, universes: ConfigUniverse[]): void {
-  const file = (engine.config as { configFile?: string }).configFile;
-  if (!file) {
-    console.error('[server] путь к fountain.config.json неизвестен — настройки применены, но не сохранены');
+/**
+ * Линии DMX и бэкапы — свойства ОБЪЕКТА, поэтому пишутся в lines.json его
+ * папки, а не в настройки программы: перенесли папку на другой компьютер —
+ * приехали и линии (см. projects.ts).
+ */
+function persistConfig(projects: ProjectsApi | undefined, tickMs: number, universes: ConfigUniverse[]): void {
+  if (!projects?.current()) {
+    console.error('[server] проект не открыт — линии применены, но сохранять их некуда');
     return;
   }
-  try {
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
-    raw.timing = { ...(raw.timing as object | undefined), tickMs };
-    raw.universes = universes;
-    fs.writeFileSync(file, JSON.stringify(raw, null, 2) + '\n');
-    console.log(`[server] настройки сохранены в ${file}`);
-  } catch (err) {
-    console.error('[server] не удалось сохранить fountain.config.json:', err);
-  }
+  projects.saveLines(tickMs, universes);
 }
 
-function persistBackupConfig(engine: Engine, enabled: boolean, intervalMin: number): void {
-  const file = (engine.config as { configFile?: string }).configFile;
-  if (!file) return;
-  try {
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
-    raw.backup = { enabled, intervalMin };
-    fs.writeFileSync(file, JSON.stringify(raw, null, 2) + '\n');
-  } catch (err) {
-    console.error('[server] не удалось сохранить настройку бэкапов:', err);
-  }
+function persistBackupConfig(projects: ProjectsApi | undefined, enabled: boolean, intervalMin: number): void {
+  projects?.saveBackupConfig(enabled, intervalMin);
 }
 
 /**

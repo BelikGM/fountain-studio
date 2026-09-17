@@ -34,7 +34,7 @@ export class BackupStore {
   private lastHash = '';
   private enabled: boolean;
   private intervalMin: number;
-  private readonly dir: string;
+  private dir: string;
 
   constructor(
     projectFile: string,
@@ -45,6 +45,17 @@ export class BackupStore {
     this.enabled = initial.enabled;
     this.intervalMin = clampInterval(initial.intervalMin);
     this.reschedule();
+  }
+
+  /**
+   * Открыли другой объект: снимки этого объекта лежат в его папке, поэтому
+   * меняем каталог и настройку и заводим расписание заново. Отпечаток
+   * сбрасываем — иначе первый снимок нового объекта посчитался бы «таким же».
+   */
+  rebind(projectFile: string, initial: { enabled: boolean; intervalMin: number }): void {
+    this.dir = path.join(path.dirname(projectFile), 'backups');
+    this.lastHash = '';
+    this.setConfig(initial.enabled, initial.intervalMin);
   }
 
   setConfig(enabled: boolean, intervalMin: number): void {

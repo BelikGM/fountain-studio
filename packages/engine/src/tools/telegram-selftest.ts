@@ -43,7 +43,11 @@ const snapshot = (): SiteSnapshot =>
     backupAgeMin: null,
   }) as unknown as SiteSnapshot;
 
-const tg = new TelegramNotifier(projectFile, () => 'Тестовый объект', snapshot);
+const tg = new TelegramNotifier(
+  { secretsFile: path.join(dir, 'secrets.json'), queueFile: path.join(dir, 'telegram-queue.json') },
+  () => 'Тестовый объект',
+  snapshot,
+);
 // Фальшивый токен: нужен только чтобы подписка на журнал включилась.
 tg.setConfig({ token: 'test:token', chatId: '1', enabled: true, alarms: true });
 
