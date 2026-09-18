@@ -75,6 +75,7 @@ import {
   type ServerMessage,
   applyAddressRemap,
   sanitizeAddressRemap,
+  GRACE_PERIOD_DAYS,
 } from '@fountain-studio/shared';
 import { wireAlarmNotifications } from '../alarms';
 import { AudioStore } from '../audio';
@@ -2322,13 +2323,27 @@ async function main(): Promise<void> {
       });
       check(!verifyLicenseFile(wrongMachine).valid, 'verifyLicenseFile(): верная подпись, но чужой machineId — отклонено');
 
-      const expired = sign({
+      /*
+       * Просроченная на сутки — это ещё льготный период (GRACE_PERIOD_DAYS,
+       * 18.09.2026): программа работает и просит оплатить. Отклоняется
+       * только то, что вышло и за льготу.
+       */
+      const inGrace = sign({
         licenseeName: 'Тест',
         machineId: myMachineId,
         issuedAt: new Date(Date.now() - 2 * 365 * 24 * 3600 * 1000).toISOString(),
         expiresAt: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
       });
-      check(!verifyLicenseFile(expired).valid, 'verifyLicenseFile(): просроченная лицензия отклонена');
+      const graceCheck = verifyLicenseFile(inGrace);
+      check(graceCheck.valid && graceCheck.grace === true, 'verifyLicenseFile(): просрочка на сутки — льготный период, доступ есть');
+
+      const expired = sign({
+        licenseeName: 'Тест',
+        machineId: myMachineId,
+        issuedAt: new Date(Date.now() - 2 * 365 * 24 * 3600 * 1000).toISOString(),
+        expiresAt: new Date(Date.now() - (GRACE_PERIOD_DAYS + 1) * 24 * 3600 * 1000).toISOString(),
+      });
+      check(!verifyLicenseFile(expired).valid, 'verifyLicenseFile(): просроченная сверх льготы лицензия отклонена');
 
       const good = sign({
         licenseeName: 'Смоук-тест',

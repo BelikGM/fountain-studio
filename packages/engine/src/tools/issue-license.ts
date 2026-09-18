@@ -33,6 +33,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  *                              shared/license.ts). Срок — либо готовый
  *                              пресет --duration trial|year|forever, либо
  *                              своё число дней --days <N> (не оба сразу).
+ *                              --renew — ПРОДЛЕНИЕ: считать срок от прежней
+ *                              даты окончания, а не от сегодня. Просрочил
+ *                              неделю и оплатил — новый срок всё равно от
+ *                              старой даты, чтобы платить с опозданием не
+ *                              было выгодно.
  *  · list                   — НИЧЕГО не меняет, только печатает: все
  *                              выданные лицензии (из журнала) и все отозванные
  *                              компьютеры разом.
@@ -90,13 +95,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  *
  * Уровни (--plan): pro — воспроизведение готового (плейлисты, шоу,
  * расписание), max — полный доступ (разработка шоу, 3D-схема, оборудование,
- * протоколы, диагностика). Лицензии без файла вообще (совсем новая
- * установка) не открывают ничего, кроме экрана приветствия с ценами.
- * Просроченная лицензия не выключает программу начисто — падает до pro
- * (фонтан продолжает играть по расписанию то, что уже настроено, просто
- * новое не завести). Отозванная — падает до нуля: это осознанное решение
- * продавца, а не забытое продление, поэтому строже (см. AccessLevel в
- * shared/license.ts).
+ * протоколы, диагностика).
+ *
+ * Что бывает, когда доступа нет (всё это — access: none, экран приветствия
+ * с тарифами вместо вкладок, см. shared/license.ts):
+ *  · лицензии не было никогда — совсем новая установка;
+ *  · срок вышел И прошли льготные дни (GRACE_PERIOD_DAYS = 7): первые семь
+ *    дней после даты окончания программа работает как обычно и просит
+ *    оплатить, дальше закрывается;
+ *  · компьютер отозван.
+ * Свои объекты этим не задеть: им выдаётся бессрочная лицензия (forever) —
+ * у неё срока нет вовсе, и интернет для неё не нужен.
  *
  * Отзыв — по устройству офлайн-лицензию саму по себе не отозвать (файл с
  * подписью не перестаёт быть подлинным), поэтому это отдельный, необязательный
@@ -243,9 +252,16 @@ function keygen(): void {
 function parseArgs(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i]!.startsWith('--')) {
-      const key = argv[i]!.slice(2);
-      out[key] = argv[i + 1] ?? '';
+    if (!argv[i]!.startsWith('--')) continue;
+    const key = argv[i]!.slice(2);
+    const next = argv[i + 1];
+    // Флаг без значения (--renew): следующий аргумент — уже другой ключ или
+    // конец строки. Раньше такой флаг СЪЕДАЛ следующий ключ как своё
+    // значение, и «--renew --plan pro» молча терял план.
+    if (next === undefined || next.startsWith('--')) {
+      out[key] = '';
+    } else {
+      out[key] = next;
       i++;
     }
   }
@@ -333,7 +349,29 @@ function issue(argv: string[]): void {
   const privateKey = crypto.createPrivateKey(fs.readFileSync(PRIVATE_KEY_FILE, 'utf8'));
   const issuedAt = new Date();
   const days = duration === 'custom' ? customDays! : duration === 'forever' ? null : DURATION_DAYS[duration];
-  const expiresAt = days === null ? null : new Date(issuedAt.getTime() + days * DAY_MS).toISOString();
+  /*
+   * ПРОДЛЕНИЕ (--renew) считается от прежней даты окончания, а не от дня
+   * оплаты: оплатил 17-го при сроке до 10-го — новый срок до 10-го
+   * следующего месяца. Иначе платить с опозданием выгодно, и льготная
+   * неделя превращается в бесплатную неделю каждый месяц.
+   */
+  let startFrom = issuedAt.getTime();
+  if (args.renew !== undefined) {
+    const prev = [...readJournal()]
+      .filter((e) => e.machineId === machineId && e.expiresAt)
+      .sort((a, b) => a.expiresAt!.localeCompare(b.expiresAt!))
+      .pop();
+    if (!prev) {
+      console.log('Внимание: --renew, но в журнале нет прошлой срочной лицензии на этот компьютер —');
+      console.log('считаю срок от сегодняшнего дня.\n');
+    } else if (days === null) {
+      console.log('Внимание: --renew с бессрочной лицензией смысла не имеет — прежняя дата не нужна.\n');
+    } else {
+      startFrom = new Date(prev.expiresAt!).getTime();
+      console.log(`Продление от прежней даты окончания: ${formatDate(prev.expiresAt)} (а не от сегодня).\n`);
+    }
+  }
+  const expiresAt = days === null ? null : new Date(startFrom + days * DAY_MS).toISOString();
   const payload: LicensePayload = {
     licenseeName,
     machineId,
@@ -557,6 +595,8 @@ else {
   console.log(`  ${P} issue --machine <id> --name "<имя>" --plan <pro|max> --duration <trial|year|forever> [--device "<комп>"] [--out <файл>] [--note "<пометка>"]`);
   console.log(`  ${P} issue --machine <id> --name "<имя>" --plan <pro|max> --days <N> [--device "<комп>"] [--out <файл>] [--note "<пометка>"]`);
   console.log('    — выпустить лицензию: файл в --out (или в текущей папке) и отдать покупателю. Срок — либо пресет, либо --days.\n');
+  console.log(`  ${P} issue --renew --machine <id> --name "<имя>" --plan <pro|max> --days <N>`);
+  console.log('    — ПРОДЛЕНИЕ: срок считается от прежней даты окончания, а не от дня оплаты.\n');
   console.log(`  ${P} list`);
   console.log('    — показать все выданные лицензии и все отозванные компьютеры (ничего не меняет).\n');
   console.log(`  ${P} rename --machine <id> --device "<имя>"`);

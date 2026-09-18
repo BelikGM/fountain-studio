@@ -159,7 +159,8 @@ export function App() {
    * оплатить нужно время.
    */
   const daysLeft = licenseStatus?.licensed ? daysUntilExpiry(licenseStatus.expiresAt) : null;
-  const expiringSoon = daysLeft !== null && daysLeft <= EXPIRY_WARNING_DAYS;
+  const inGrace = licenseStatus?.grace === true;
+  const expiringSoon = inGrace || (daysLeft !== null && daysLeft <= EXPIRY_WARNING_DAYS);
   const [showSaved, setShowSaved] = useState(false);
   const [licenseOpen, setLicenseOpen] = useState(false);
   /**
@@ -412,18 +413,20 @@ export function App() {
           className={unlicensed || expiringSoon ? 'help-btn license-btn license-btn-warn' : 'help-btn license-btn'}
           data-hint={
             access === 'none'
-              ? 'Лицензия не активирована — нажмите, чтобы выбрать тариф'
-              : access === 'pro'
-                ? licenseStatus?.licensed
-                  ? 'Тариф Pro — воспроизведение и расписание. Нужен полный доступ? Оформите Max'
-                  : `${licenseStatus?.reason ?? 'Срок истёк'} — доступны воспроизведение и расписание`
+              ? licenseStatus?.expired
+                ? `${licenseStatus.reason ?? 'Срок подписки истёк'} — нажмите, чтобы продлить`
+                : 'Лицензия не активирована — нажмите, чтобы выбрать тариф'
+              : inGrace
+                ? `Оплата просрочена — программа закроется через ${licenseStatus?.graceDaysLeft ?? 0} дн.`
                 : expiringSoon
-                  ? `Подписка заканчивается через ${daysLeft} дн. — напишите нам, чтобы продлить`
+                ? `Подписка заканчивается через ${daysLeft} дн. — напишите нам, чтобы продлить`
+                : access === 'pro'
+                  ? 'Тариф Pro — воспроизведение и расписание. Нужен полный доступ? Оформите Max'
                   : 'Лицензия'
           }
           onClick={() => setLicenseOpen(true)}
         >
-          {access === 'none' ? '🔒' : access === 'pro' ? '⏳' : expiringSoon ? '⏳' : '🔑'}
+          {access === 'none' ? '🔒' : expiringSoon ? '⏳' : '🔑'}
         </button>
         <button className="help-btn" data-hint="Справка" onClick={() => setHelpOpen(true)}>
           ?

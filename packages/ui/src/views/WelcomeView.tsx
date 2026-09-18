@@ -17,6 +17,8 @@ export function WelcomeView({ engine }: { engine: EngineConnection }) {
   const { licenseStatus, activateLicense } = engine;
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  /** Подписка была и кончилась — это другой разговор, чем «впервые вижу программу». */
+  const expired = licenseStatus?.expired === true;
 
   const doActivate = async (file: File): Promise<void> => {
     setBusy(true);
@@ -42,11 +44,23 @@ export function WelcomeView({ engine }: { engine: EngineConnection }) {
   return (
     <main className="view">
       <section className="panel welcome-panel">
-        <h2>Добро пожаловать в Fountain Studio</h2>
-        <p className="dim">
-          Программа управления светомузыкальными фонтанами: DMX512, таймлайн под музыку, 3D-визуализация струй
-          и света. Чтобы начать работу, нужна лицензия — выберите тариф ниже и напишите нам.
-        </p>
+        {/*
+          Один и тот же экран для двух разных людей: тому, кто видит программу
+          впервые, нужно «что это и сколько стоит», а тому, у кого кончилась
+          оплаченная подписка, — «продлите», он уже всё это выбирал и платил.
+        */}
+        <h2>{expired ? 'Подписка закончилась' : 'Добро пожаловать в Fountain Studio'}</h2>
+        {expired ? (
+          <p className="warn">
+            ⚠ {licenseStatus?.reason ?? 'Срок подписки истёк'}. Объект и все настройки на месте — работа
+            откроется сразу, как только продлите: напишите нам, пришлём новый файл лицензии.
+          </p>
+        ) : (
+          <p className="dim">
+            Программа управления светомузыкальными фонтанами: DMX512, таймлайн под музыку, 3D-визуализация
+            струй и света. Чтобы начать работу, нужна лицензия — выберите тариф ниже и напишите нам.
+          </p>
+        )}
 
         <div className="plan-grid">
           {PLANS.map((p) => (

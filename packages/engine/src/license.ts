@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { AccessLevel, LicenseFile, LicensePayload, LicensePlan, LicenseStatus } from '@fountain-studio/shared';
+import { GRACE_PERIOD_DAYS, type AccessLevel, type LicenseFile, type LicensePayload, type LicensePlan, type LicenseStatus } from '@fountain-studio/shared';
 import { isMachineRevoked } from './licenseRevocation';
 
 /**
@@ -66,12 +66,14 @@ export function machineFingerprint(): string {
 export interface LicenseCheck {
   valid: boolean;
   reason?: string;
+  /** Срок вышел, но идут льготные дни — доступ пока полный (см. GRACE_PERIOD_DAYS). */
+  grace?: boolean;
+  graceDaysLeft?: number;
   /**
    * Подпись настоящая, лицензия действительно для ЭТОГО компьютера — просто
-   * вышел срок. Отличаем от «вообще не лицензия» специально: настоящая,
-   * но просроченная лицензия даёт понижение до Pro (см. AccessLevel в
-   * shared/license.ts), а не полную блокировку — фонтан не должен резко
-   * замолчать из-за забытого продления.
+   * вышел срок вместе с льготными днями. Отличаем от «вообще не лицензия»
+   * ради текста в интерфейсе: такому человеку говорим «продлите», а не
+   * «выберите тариф» — он уже выбирал и платил.
    */
   expired?: boolean;
 }
@@ -96,10 +98,47 @@ export function verifyLicenseFile(file: LicenseFile): LicenseCheck {
   if (file.payload.machineId !== machineFingerprint()) {
     return { valid: false, reason: 'Лицензия выдана для другого компьютера' };
   }
-  if (file.payload.expiresAt && new Date(file.payload.expiresAt).getTime() < Date.now()) {
-    return { valid: false, reason: `Срок лицензии истёк ${file.payload.expiresAt}`, expired: true };
+  if (file.payload.expiresAt) {
+    const state = expiryState(file.payload.expiresAt);
+    if (state.kind === 'expired') {
+      return { valid: false, reason: `Срок лицензии истёк ${file.payload.expiresAt}`, expired: true };
+    }
+    if (state.kind === 'grace') {
+      return {
+        valid: true,
+        grace: true,
+        graceDaysLeft: state.graceDaysLeft,
+        reason: `Оплата просрочена с ${new Date(state.endMs).toLocaleDateString('ru-RU')}`,
+      };
+    }
   }
   return { valid: true };
+}
+
+/**
+ * Где сейчас лицензия по срокам: ещё действует, идут льготные дни или всё.
+ *
+ * Отдельной функцией — чтобы самопроверка могла прогнать границы окна
+ * (последний день, первый льготный, первый закрытый) на НАСТОЯЩЕМ коде, а не
+ * на своей копии той же арифметики: такой тест ничего не стоит и ломается
+ * вместе с ошибкой, вместо того чтобы её ловить.
+ *
+ * Льготные дни нужны потому, что оплата редко проходит день в день, а на
+ * объекте в этот вечер может идти программа: закрывать фонтан из-за суток
+ * задержки платежа — плохой размен.
+ */
+export function expiryState(
+  expiresAt: string,
+  nowMs = Date.now(),
+): { kind: 'active' } | { kind: 'grace'; graceDaysLeft: number; endMs: number } | { kind: 'expired' } {
+  const end = new Date(expiresAt).getTime();
+  if (Number.isNaN(end)) return { kind: 'active' };
+  const graceEnd = end + GRACE_PERIOD_DAYS * 86_400_000;
+  if (nowMs >= graceEnd) return { kind: 'expired' };
+  if (nowMs >= end) {
+    return { kind: 'grace', graceDaysLeft: Math.max(0, Math.ceil((graceEnd - nowMs) / 86_400_000)), endMs: end };
+  }
+  return { kind: 'active' };
 }
 
 /** Лицензии без явного plan выпущены до 18.09.2026, когда лицензия была «всё включено» — считаем их max. */
@@ -113,10 +152,17 @@ function effectivePlan(payload: LicensePayload): LicensePlan {
  * самопроверка могла прогнать все переходы (валидна/истекла/битая подпись ×
  * pro/max) без настоящего приватного ключа вендора — тут нет ни подписи, ни
  * файлов, чистая функция от готового результата проверки.
+ *
+ * ИСТЁКШАЯ лицензия закрывает доступ ПОЛНОСТЬЮ (none), а не понижает до pro.
+ * Решение заказчика от 18.09.2026: не оплачен даже самый дешёвый тариф —
+ * программа не работает, иначе после первой же оплаты человек бессрочно
+ * пользуется уровнем Pro бесплатно. Раньше здесь было понижение до pro;
+ * если снова захотите «фонтан доигрывает по расписанию» — это возвращается
+ * одной строкой, но тогда вместе с решением про льготный период.
  */
 export function accessFor(check: LicenseCheck, plan: LicensePlan | null): AccessLevel {
   if (check.valid) return plan ?? 'max';
-  return check.expired ? 'pro' : 'none';
+  return 'none';
 }
 
 function licenseFilePath(projectDir: string): string {
@@ -124,12 +170,10 @@ function licenseFilePath(projectDir: string): string {
 }
 
 /**
- * Собирает итоговый статус из результата проверки подписи и того, отозван
- * ли компьютер. Здесь и только здесь решается разница между «не лицензирован
- * вовсе» (access: none — совсем новая установка или испорченный/чужой файл)
- * и «лицензия была, но кончилась» (access: pro — понижение, не отключение).
- * Отзыв — умышленно строже отдельного истечения срока: это не «забыли
- * продлить», а решение продавца, поэтому сразу none, а не pro.
+ * Собирает итоговый статус. Здесь сходятся три разных «нет доступа», которые
+ * человеку нужно различать: совсем новая установка (выберите тариф),
+ * истёкшая подписка (продлите — вы уже платили) и отзыв (решение продавца).
+ * Плюс льготные дни: срок вышел, но программа ещё работает и просит оплату.
  */
 function statusFrom(params: {
   machineId: string;
@@ -139,6 +183,9 @@ function statusFrom(params: {
   plan: LicensePlan | null;
   licensed: boolean;
   access: AccessLevel;
+  expired?: boolean;
+  grace?: boolean;
+  graceDaysLeft?: number;
 }): LicenseStatus {
   return {
     licensed: params.licensed,
@@ -148,6 +195,8 @@ function statusFrom(params: {
     plan: params.plan,
     access: params.access,
     ...(params.reason ? { reason: params.reason } : {}),
+    ...(params.expired ? { expired: true } : {}),
+    ...(params.grace ? { grace: true, graceDaysLeft: params.graceDaysLeft ?? 0 } : {}),
   };
 }
 
@@ -177,6 +226,8 @@ export function loadLicenseStatus(projectDir: string): LicenseStatus {
       licensed: check.valid,
       access: accessFor(check, plan),
       ...(check.reason ? { reason: check.reason } : {}),
+      ...(check.expired ? { expired: true } : {}),
+      ...(check.grace ? { grace: true, graceDaysLeft: check.graceDaysLeft ?? 0 } : {}),
     });
   } catch {
     return statusFrom({ machineId, reason: 'Файл лицензии повреждён (не JSON)', licenseeName: null, expiresAt: null, plan: null, licensed: false, access: 'none' });
@@ -202,6 +253,8 @@ export function activateLicense(projectDir: string, fileText: string): LicenseSt
       plan: null,
       licensed: false,
       access: accessFor(check, null),
+      ...(check.expired ? { expired: true } : {}),
+      ...(check.grace ? { grace: true, graceDaysLeft: check.graceDaysLeft ?? 0 } : {}),
     });
   }
   fs.writeFileSync(licenseFilePath(projectDir), JSON.stringify(parsed, null, 2), 'utf8');

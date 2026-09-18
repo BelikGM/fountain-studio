@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { EXPIRY_WARNING_DAYS, daysUntilExpiry } from '@fountain-studio/shared';
+import { EXPIRY_WARNING_DAYS, GRACE_PERIOD_DAYS, daysUntilExpiry } from '@fountain-studio/shared';
 import { PLANS, VENDOR_EMAIL, priceLine } from '../plans';
 import type { EngineConnection } from '../useEngine';
 
@@ -67,28 +67,38 @@ export function LicenseView({ engine, onClose }: { engine: EngineConnection; onC
                     : ' (бессрочно)'}
                 </p>
                 {/*
-                  Предупреждаем заранее: продление — это списаться с продавцом и
-                  оплатить, на это нужно время. В день окончания узнавать поздно.
+                  Два разных предупреждения: «скоро закончится» (ещё в сроке) и
+                  «просрочено, идут льготные дни» — во втором случае счёт уже
+                  пошёл, и текст должен быть жёстче.
                 */}
-                {daysLeft !== null && daysLeft <= EXPIRY_WARNING_DAYS && (
+                {licenseStatus.grace ? (
                   <p className="warn">
-                    ⚠ {daysLeft > 0 ? `Остаётся ${daysLeft} дн.` : 'Последний день'} — напишите нам заранее, чтобы
-                    продлить: {VENDOR_EMAIL}. Когда срок выйдет, останутся только воспроизведение готового и
-                    расписание.
+                    ⚠ {licenseStatus.reason ?? 'Оплата просрочена'}. Программа работает ещё{' '}
+                    {licenseStatus.graceDaysLeft ?? 0} дн. — потом доступ закроется. Продление:{' '}
+                    {VENDOR_EMAIL}
+                    <br />
+                    Оплата продлевает срок от прежней даты окончания, а не от дня оплаты.
                   </p>
+                ) : (
+                  daysLeft !== null &&
+                  daysLeft <= EXPIRY_WARNING_DAYS && (
+                    <p className="warn">
+                      ⚠ {daysLeft > 0 ? `Остаётся ${daysLeft} дн.` : 'Последний день'} — напишите нам заранее,
+                      чтобы продлить: {VENDOR_EMAIL}. После окончания будет ещё {GRACE_PERIOD_DAYS} льготных
+                      дней, дальше работа закроется.
+                    </p>
+                  )
                 )}
               </>
-            ) : licenseStatus.access === 'pro' ? (
-              // Настоящая лицензия была, но кончилась (истёк срок) — не блокировка,
-              // а понижение: фонтан продолжает играть по расписанию то, что уже
-              // настроено, просто новое не завести (см. AccessLevel в shared/license.ts).
+            ) : licenseStatus.expired ? (
+              // Человек уже платил — ему нужно «продлите», а не «выберите тариф».
               <p className="warn">
-                ⚠ {licenseStatus.reason ?? 'Срок истёк'} — доступны только воспроизведение готового и расписание,
-                как на тарифе Pro. Новое шоу или 3D-схему не завести, пока не продлите.
+                ⚠ {licenseStatus.reason ?? 'Срок подписки истёк'}. Работа с программой закрыта до продления —
+                напишите нам: {VENDOR_EMAIL}
               </p>
             ) : (
               <p className="warn">
-                ⚠ {licenseStatus.reason ?? 'Лицензия не активирована'} — доступа нет вовсе.
+                ⚠ {licenseStatus.reason ?? 'Лицензия не активирована'} — доступа нет.
               </p>
             )}
 

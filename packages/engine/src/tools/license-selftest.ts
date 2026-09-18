@@ -14,10 +14,10 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { accessFor, canonicalPayload, loadLicenseStatus, machineFingerprint, verifyLicenseFile } from '../license';
+import { accessFor, canonicalPayload, expiryState, loadLicenseStatus, machineFingerprint, verifyLicenseFile } from '../license';
 import { isMachineRevoked, refreshRevocationList, revocationCacheInfo } from '../licenseRevocation';
 import crypto from 'node:crypto';
-import { EXPIRY_WARNING_DAYS, daysUntilExpiry, type LicenseFile, type LicensePayload } from '@fountain-studio/shared';
+import { EXPIRY_WARNING_DAYS, GRACE_PERIOD_DAYS, daysUntilExpiry, type LicenseFile, type LicensePayload } from '@fountain-studio/shared';
 
 let failed = 0;
 let passed = 0;
@@ -108,10 +108,57 @@ function makeLicense(payload: Partial<LicensePayload>, signWith: crypto.KeyObjec
   check('валидна + план pro → доступ pro', accessFor(valid, 'pro') === 'pro');
   check('валидна + план max → доступ max', accessFor(valid, 'max') === 'max');
   check('валидна + плана нет (старая лицензия) → доступ max (грандфазеринг)', accessFor(valid, null) === 'max');
-  check('истекла (была pro) → падает до pro (и так floor)', accessFor(expired, 'pro') === 'pro');
-  check('истекла (была MAX) → падает до pro, а не остаётся max', accessFor(expired, 'max') === 'pro');
-  check('истекла старая (плана не было) → тоже до pro, не до max', accessFor(expired, null) === 'pro');
+  // Решение заказчика 18.09.2026: не оплачено — не работает совсем, без
+  // «доигрывания по расписанию». Смягчает это только льготный период ниже.
+  check('истекла (была pro) → доступа нет вовсе', accessFor(expired, 'pro') === 'none');
+  check('истекла (была max) → доступа нет вовсе', accessFor(expired, 'max') === 'none');
+  check('истекла старая (плана не было) → тоже none', accessFor(expired, null) === 'none');
   check('подпись не сошлась → доступ none, даже если план был указан', accessFor(invalid, 'max') === 'none');
+  // Льготные дни — это ВАЛИДНАЯ лицензия: доступ полный, просто интерфейс
+  // просит оплатить. Иначе фонтан вставал бы из-за задержки платежа на день.
+  const grace = { valid: true, grace: true, graceDaysLeft: 3 } as const;
+  check('льготные дни + план pro → доступ pro (программа работает)', accessFor(grace, 'pro') === 'pro');
+  check('льготные дни + план max → доступ max', accessFor(grace, 'max') === 'max');
+}
+
+// ---- Льготный период: границы срока ---------------------------------------
+{
+  const dir = path.join(tmp, 'grace-window');
+  fs.mkdirSync(dir, { recursive: true });
+  const licFile = path.join(dir, 'fountain.license.json');
+  const daysAgo = (d: number): string => new Date(Date.now() - d * 86_400_000).toISOString();
+
+  /*
+   * Границы окна проверяем на НАСТОЯЩЕЙ функции движка (expiryState), а не
+   * на пересчитанной здесь копии той же арифметики: копия сломалась бы
+   * вместе с кодом и ничего бы не поймала.
+   */
+  const now = Date.UTC(2026, 8, 18, 12, 0, 0);
+  const endIn = (days: number): string => new Date(now + days * 86_400_000).toISOString();
+
+  check('срок ещё не вышел — active', expiryState(endIn(3), now).kind === 'active');
+  check('ровно в момент окончания — уже льготный период', expiryState(endIn(0), now).kind === 'grace');
+  check('на следующий день после срока — ещё льготный', expiryState(endIn(-1), now).kind === 'grace');
+  check(
+    `за день до конца льготы (${GRACE_PERIOD_DAYS - 1} дн.) — ещё льготный`,
+    expiryState(endIn(-(GRACE_PERIOD_DAYS - 1)), now).kind === 'grace',
+  );
+  check(`ровно через ${GRACE_PERIOD_DAYS} дн. — льгота кончилась`, expiryState(endIn(-GRACE_PERIOD_DAYS), now).kind === 'expired');
+  check('через месяц после срока — истекла', expiryState(endIn(-30), now).kind === 'expired');
+  const g = expiryState(endIn(-2), now);
+  check(
+    'в льготном периоде считается остаток дней',
+    g.kind === 'grace' && g.graceDaysLeft === GRACE_PERIOD_DAYS - 2,
+    g.kind === 'grace' ? String(g.graceDaysLeft) : g.kind,
+  );
+  check('битая дата не превращается в «истекла»', expiryState('не дата', now).kind === 'active');
+
+  // А вот то, что просроченная НЕ считается «истёкшей» внутри окна и
+  // считается ПОСЛЕ него — проверяем на настоящем статусе: файл кладём с
+  // чужой подписью, значит ждём отказ по подписи, но без пометки expired.
+  fs.writeFileSync(licFile, JSON.stringify(makeLicense({ expiresAt: daysAgo(100) }, otherPrivate), null, 2));
+  const s = loadLicenseStatus(dir);
+  check('чужая подпись важнее срока: отказ не помечен как «истекла»', s.expired !== true, JSON.stringify(s));
 }
 
 // ---- Предупреждение «скоро закончится» ------------------------------------
