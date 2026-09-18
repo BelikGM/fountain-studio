@@ -80,10 +80,21 @@ export interface UniverseInfo {
 export interface EngineStats {
   ticks: number;
   intervalMs: number;
-  /** Опоздание последнего тика относительно расчётного момента, мс. */
+  /**
+   * Опоздание последнего тика ОТПРАВКИ относительно расчётного момента, мс.
+   * Именно отправка определяет ровность потока в линии (расчёт идёт своим
+   * тактом, см. sender в engine.ts).
+   */
   lastJitterMs: number;
   avgJitterMs: number;
   maxJitterMs: number;
+  /**
+   * То же для такта РАСЧЁТА. На поток уже не влияет — если расчёт опоздал,
+   * отправщик повторит предыдущий кадр, — но показывает, успевает ли машина
+   * считать шоу.
+   */
+  calcAvgJitterMs: number;
+  calcMaxJitterMs: number;
   /** Всего отправлено кадров вселенных во все выходы. */
   framesSent: number;
   pattern: TestPatternMode;

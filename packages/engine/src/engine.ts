@@ -5,6 +5,7 @@ import {
   DMX_UNIVERSE_SIZE,
   clampDmx,
   computeWindLimitPercent,
+  smoothWindSpeed,
   defaultUtilityLightConfig,
   defaultWindLimitConfig,
   isUtilityLightOn,
@@ -51,6 +52,12 @@ interface UniverseState {
   manual: Uint8Array;
   /** Итоговый кадр, уходящий в выходы и визуализацию. */
   out: Uint8Array;
+  /**
+   * Готовый кадр ПОСЛЕ переадресации — именно он уходит в кабель. Лежит
+   * отдельно от out, потому что считает его один такт, а отправляет другой
+   * (см. комментарий к sender в Engine).
+   */
+  wire: Uint8Array;
   outputs: UniverseOutput[];
 }
 
@@ -64,7 +71,29 @@ export class Engine {
   readonly playback: Playback;
   /** Насосы с прямым управлением по Modbus (§12 п.9) — читают то же u.out, что уходит в DMX. */
   readonly pumps = new PumpModbusManager();
+  /** Расчётчик: собирает кадр (сцены, шоу, консоль, ветер, переадресация). */
   private ticker: Ticker;
+  /**
+   * Отправщик — ОТДЕЛЬНЫЙ такт, который только берёт последний готовый кадр
+   * и отдаёт его в выходы, ничего не считая.
+   *
+   * Зачем разделять. Раньше один таймер считал и тут же отправлял. Стоит
+   * расчёту задуматься (тяжёлое шоу, сборка мусора, антивирус) — и кадр
+   * уходит в линию не через 50 мс, а через 65–70: свет дёргается, заливки
+   * идут ступеньками. Теперь задержка расчёта не рвёт поток: отправщик в
+   * свой момент отдаёт ПРЕДЫДУЩИЙ кадр. Для DMX это совершенно нормально —
+   * протокол состояния, повтор кадра и есть его обычная жизнь, а вот пауза
+   * в потоке приёмнику видна.
+   *
+   * Предрасчёта «на секунду вперёд» здесь сознательно нет: чтобы считать
+   * будущее, воспроизведение должно стать чистой функцией времени, а ручная
+   * консоль, ветер и служебный свет всё равно обязаны применяться в момент
+   * отправки — иначе фейдер оператора начнёт отставать на всю глубину
+   * буфера. См. IDEAS.md → «Раздельный такт».
+   */
+  private sender: Ticker;
+  /** Пока расчётчик не собрал первый кадр, слать нечего — нули в линию не гоним. */
+  private hasFrame = false;
   private pattern: TestPatternMode = 'off';
   private framesSent = 0;
   /** Часы движка: время последнего тика (n * tickMs), мс. */
@@ -117,8 +146,19 @@ export class Engine {
   private twoStateChannels = new Map<number, Set<number>>();
   private utilityLightConfig: UtilityLightConfig = defaultUtilityLightConfig();
   private windLimitConfig: WindLimitConfig = defaultWindLimitConfig();
-  /** Текущее показание скорости ветра, м/с — null, пока никто не ввёл/не прислал. */
+  /**
+   * Последнее СЫРОЕ показание датчика (или ручного ввода), м/с — null, пока
+   * никто не ввёл/не прислал. Для расчёта ограничения используется не оно, а
+   * сглаженное windSpeed: по сырому нельзя, порыв на полсекунды уронил бы
+   * воду на глазах у людей (см. smoothWindSpeed в windlimit.ts).
+   */
+  private windRaw: number | null = null;
+  /** Сглаженная скорость ветра — то, по чему реально режутся насосы. */
   private windSpeed: number | null = null;
+  /** Когда последний раз двигали сглаживание — чтобы считать шаг по стенным часам. */
+  private windSmoothedAtMs = 0;
+  /** Последний записанный в журнал процент ограничения: не пишем строку на каждый процент. */
+  private windLoggedPercent = 100;
   private failsafeConfig: FailsafeConfig = defaultFailsafeConfig();
   /** Время предыдущего тика по стенным часам — по нему видно, что такт вставал. */
   private lastTickWallMs = 0;
@@ -136,11 +176,13 @@ export class Engine {
         label: u.label ?? `Вселенная ${u.id}`,
         manual: new Uint8Array(DMX_UNIVERSE_SIZE),
         out: new Uint8Array(DMX_UNIVERSE_SIZE),
+        wire: new Uint8Array(DMX_UNIVERSE_SIZE),
         outputs: u.outputs.map(createOutput),
       });
     }
     this.playback = new Playback(this.universes.map((u) => u.id));
     this.ticker = new Ticker(config.timing.tickMs, config.timing.spinMs, (n) => this.tick(n));
+    this.sender = new Ticker(config.timing.tickMs, config.timing.spinMs, () => this.sendFrames());
   }
 
   start(): void {
@@ -148,6 +190,7 @@ export class Engine {
       for (const o of u.outputs) console.log(`[engine] ${u.label}: ${o.describe()}`);
     }
     this.ticker.start();
+    this.sender.start();
     console.log(
       `[engine] тик ${this.config.timing.tickMs} мс (${Math.round(1000 / this.config.timing.tickMs)} Гц), вселенных: ${this.universes.length}`,
     );
@@ -155,6 +198,7 @@ export class Engine {
 
   stop(): void {
     this.ticker.stop();
+    this.sender.stop();
     for (const u of this.universes) for (const o of u.outputs) o.close();
     this.pumps.stop();
   }
@@ -169,6 +213,8 @@ export class Engine {
   applyConfig(universes: EngineConfig['universes'], tickMs: number): void {
     this.playback.stopAll();
     this.ticker.stop();
+    this.sender.stop();
+    this.hasFrame = false;
     for (const u of this.universes) for (const o of u.outputs) o.close();
     this.universes.length = 0;
     for (const u of universes) {
@@ -177,6 +223,7 @@ export class Engine {
         label: u.label ?? `Вселенная ${u.id}`,
         manual: new Uint8Array(DMX_UNIVERSE_SIZE),
         out: new Uint8Array(DMX_UNIVERSE_SIZE),
+        wire: new Uint8Array(DMX_UNIVERSE_SIZE),
         outputs: u.outputs.map(createOutput),
       });
     }
@@ -188,18 +235,41 @@ export class Engine {
     this.paused = false;
     this.pauseOffsetMs = 0;
     this.ticker = new Ticker(tickMs, this.config.timing.spinMs, (n) => this.tick(n));
+    this.sender = new Ticker(tickMs, this.config.timing.spinMs, () => this.sendFrames());
     this.ticker.start();
+    this.sender.start();
     console.log(
       `[engine] конфигурация применена: тик ${tickMs} мс, вселенных: ${this.universes.length}`,
     );
   }
 
-  private tick(n: number): void {
+  /**
+   * Отправка готового кадра в линию — отдельный такт, ничего не считает.
+   *
+   * Здесь же следим за аварийным отключением: смотреть надо именно за
+   * ОТПРАВКОЙ, потому что на линию влияет она. Если расчёт задумался, а
+   * отправщик идёт ровно — приборы продолжают получать поток, и это не
+   * авария; а вот если встал отправщик, поток прервался по-настоящему.
+   */
+  private sendFrames(): void {
     this.checkFailsafe();
+    if (!this.hasFrame) return;
+    for (const u of this.universes) {
+      for (const o of u.outputs) {
+        o.send(u.wire);
+        this.framesSent++;
+      }
+    }
+  }
+
+  private tick(n: number): void {
     if (this.paused) this.pauseOffsetMs += this.config.timing.tickMs;
     this.nowMs = n * this.config.timing.tickMs - this.pauseOffsetMs;
     const tSec = this.nowMs / 1000;
     this.playback.tick(this.nowMs);
+    // Ветер двигаем до расчёта кадра: ограничение внизу должно считаться по
+    // уже обновлённому сглаженному значению, а не по прошлому тику.
+    this.updateWindSmoothing();
     for (let i = 0; i < this.universes.length; i++) {
       const u = this.universes[i]!;
       // Воспроизведение считаем ВСЕГДА, даже когда идёт тест-генератор: при
@@ -269,12 +339,11 @@ export class Engine {
       // Переадресация — САМЫЙ ПОСЛЕДНИЙ шаг, уже над готовым кадром: проект,
       // сцены и тест-генераторы продолжают работать с правильными адресами, а
       // на линию уходит то, что нужно фактическому монтажу.
-      const wire = applyAddressRemap(u.out, this.addressRemap[u.id]);
-      for (const o of u.outputs) {
-        o.send(wire);
-        this.framesSent++;
-      }
+      // Готовый кадр кладём в u.wire — в линию его отдаст ОТПРАВЩИК своим
+      // тактом (см. sendFrames и комментарий к sender).
+      u.wire.set(applyAddressRemap(u.out, this.addressRemap[u.id]));
     }
+    this.hasFrame = true;
     // Насосы на Modbus: тот же посчитанный кадр (включая тест-паттерны — пусконаладка),
     // что уходит в DMX-выходы, идёт и на прямое управление ПЧ. Переадресация
     // сюда НЕ применяется: она про путаницу в кабелях DMX, а ПЧ адресуется по
@@ -557,20 +626,68 @@ export class Engine {
     }
   }
 
-  /** Ручной ввод (пока нет датчика по Modbus/MQTT — задел под него, см. windlimit.ts) или null — сбросить. */
+  /**
+   * Ручной ввод (пока нет датчика по Modbus/MQTT — задел под него, см.
+   * windlimit.ts) или null — сбросить.
+   *
+   * Показание только ЗАПОМИНАЕТСЯ. Применяется оно через сглаживание в
+   * тике: рост ветра догоняем за ~секунду, спад отпускаем заметно медленнее.
+   * Сброс (null) — единственное, что действует сразу: это явная команда
+   * человека «датчика больше нет», тянуть с ней нечего.
+   */
   setWindSpeed(speedMs: number | null): void {
-    const before = this.windLimitPercent();
-    this.windSpeed = speedMs;
-    const after = this.windLimitPercent();
-    if (before !== after) {
-      eventLog.log(
-        'wind',
-        speedMs === null
-          ? 'показание ветра сброшено — ограничение снято'
-          : `ветер ${speedMs} м/с → высота струй ограничена ${after}%`,
-        after < 100 ? 'warn' : 'info',
-      );
+    this.windRaw = speedMs;
+    if (speedMs === null) {
+      const had = this.windSpeed !== null;
+      this.windSpeed = null;
+      this.windSmoothedAtMs = 0;
+      if (had) {
+        eventLog.log('wind', 'показание ветра сброшено — ограничение снято');
+        this.windLoggedPercent = 100;
+      }
+      return;
     }
+    // Первое показание берём как есть — иначе ограничение «поедет» с нуля и
+    // первые секунды вода будет лететь так, будто ветра нет.
+    if (this.windSpeed === null) {
+      this.windSpeed = speedMs;
+      this.windSmoothedAtMs = Date.now();
+      this.logWindIfChanged();
+    }
+  }
+
+  /**
+   * Двигает сглаженное значение ветра к последнему показанию. Зовётся из
+   * тика: шаг считается по стенным часам, чтобы постоянные времени в
+   * секундах не зависели от того, какой сейчас шаг тика.
+   */
+  private updateWindSmoothing(): void {
+    if (this.windRaw === null || this.windSpeed === null) return;
+    const now = Date.now();
+    const dtSec = this.windSmoothedAtMs > 0 ? (now - this.windSmoothedAtMs) / 1000 : 0;
+    this.windSmoothedAtMs = now;
+    if (dtSec <= 0) return;
+    const next = smoothWindSpeed(this.windSpeed, this.windRaw, dtSec, this.windLimitConfig);
+    if (next === null) return;
+    this.windSpeed = next;
+    this.logWindIfChanged();
+  }
+
+  /**
+   * Пишем в журнал не каждый процент, а заметные ступени: сглаживание меняет
+   * значение непрерывно, и построчная запись забила бы журнал за вечер.
+   */
+  private logWindIfChanged(): void {
+    const pct = this.windLimitPercent();
+    if (Math.abs(pct - this.windLoggedPercent) < 5 && !(pct === 100 && this.windLoggedPercent !== 100)) return;
+    this.windLoggedPercent = pct;
+    eventLog.log(
+      'wind',
+      pct >= 100
+        ? `ветер ${this.windSpeed?.toFixed(1)} м/с — ограничение снято`
+        : `ветер ${this.windSpeed?.toFixed(1)} м/с → высота струй ограничена ${pct}%`,
+      pct < 100 ? 'warn' : 'info',
+    );
   }
 
   /**
@@ -714,8 +831,18 @@ export class Engine {
   }
 
   stats(): EngineStats {
+    /*
+     * Основные цифры — от ОТПРАВЩИКА: именно его ровность видит линия, и
+     * именно её имеет смысл показывать как «джиттер» в строке состояния.
+     * Джиттер расчётчика отдаём отдельно (calc*): он важен для понимания
+     * «успевает ли машина считать», но на поток уже не влияет — задержку
+     * расчёта отправщик закрывает повтором предыдущего кадра.
+     */
+    const calc = this.ticker.stats();
     return {
-      ...this.ticker.stats(),
+      ...this.sender.stats(),
+      calcAvgJitterMs: calc.avgJitterMs,
+      calcMaxJitterMs: calc.maxJitterMs,
       framesSent: this.framesSent,
       pattern: this.pattern,
       patternScope: this.patternScope,

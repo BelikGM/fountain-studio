@@ -58,6 +58,8 @@ import {
   brightnessEnvelopePoints,
   colorChangeEvents,
   colorChannelEnvelopePoints,
+  defaultWindLimitConfig,
+  smoothWindSpeed,
   computeWindLimitPercent,
   defaultUtilityLightConfig,
   isUtilityLightOn,
@@ -1785,12 +1787,53 @@ async function main(): Promise<void> {
 
   console.log('— Датчик ветра → безопасное снижение струй (§27 доработки, §4 п.1) —');
   {
+    /*
+     * Сглаживание показаний (19.09.2026). Ограничение струй нельзя дёргать
+     * по каждому показанию: порыв на полсекунды уронил бы воду на глазах у
+     * людей и через секунду поднял обратно. Рост догоняем быстро (это
+     * безопасность), спад отпускаем медленно (между порывами ветер
+     * проваливается почти в ноль).
+     */
+    const cfg = { attackSec: 1, releaseSec: 15, maxPlausibleSpeed: 40 };
+    check(smoothWindSpeed(null, 7, 0.05, cfg) === 7, 'первое показание берётся как есть — не ползём с нуля');
+
+    // Порыв: 0 → 12 м/с на 0,3 с. За это время сглаженное почти не двинулось.
+    const gust = smoothWindSpeed(0, 12, 0.3, cfg);
+    check(gust !== null && gust < 4, `порыв 0,3 с почти не поднял расчётный ветер (${gust?.toFixed(1)} м/с из 12)`);
+
+    // Устойчивый ветер: те же 12 м/с, но держатся 3 с — уже почти догнали.
+    let steady = 0;
+    for (let i = 0; i < 60; i++) steady = smoothWindSpeed(steady, 12, 0.05, cfg) ?? steady;
+    check(steady > 10.5, `устойчивый ветер за 3 с догнали (${steady.toFixed(1)} из 12 м/с)`);
+
+    // Спад: ветер упал в ноль, но за те же 3 с высота почти не вернулась.
+    let falling = steady;
+    for (let i = 0; i < 60; i++) falling = smoothWindSpeed(falling, 0, 0.05, cfg) ?? falling;
+    check(falling > 8, `спад отпускается медленно — через 3 с ещё ${falling.toFixed(1)} м/с (струи не «дышат»)`);
+
+    // Мусор с датчика (обрыв линии) игнорируется целиком, а не «частично сглаживается».
+    check(smoothWindSpeed(5, 900, 1, cfg) === 5, 'невозможное показание 900 м/с отброшено, значение не изменилось');
+    check(smoothWindSpeed(5, -3, 1, cfg) === 5, 'отрицательное показание отброшено');
+  }
+  {
     /**
      * Ограничение считается ПО ВЫСОТЕ струи: снос растёт линейно с высотой,
      * поэтому одна и та же скорость ветра для двухметрового фонтанчика
      * безобидна, а для пятнадцатиметровой струи уже недопустима.
      */
-    const testCfg = { enabled: true, marginM: 0.6, tauSec: 4, minPercent: 20, stopSpeed: 12 };
+        // attack/release в тесте укорочены: сглаживание проверяем отдельно и
+    // подробно (см. ниже), а здесь важна сама цепочка «показание → насос»,
+    // и ждать по 15 секунд на каждый шаг ни к чему.
+    const testCfg = {
+      ...defaultWindLimitConfig(),
+      enabled: true,
+      marginM: 0.6,
+      tauSec: 4,
+      minPercent: 20,
+      stopSpeed: 12,
+      attackSec: 0.2,
+      releaseSec: 0.5,
+    };
     check(
       computeWindLimitPercent(0.5, testCfg, 6) === 100,
       'ветер: слабый ветер шестиметровую струю не трогает (100%)',

@@ -60,10 +60,71 @@ export interface WindLimitConfig {
   minPercent: number;
   /** м/с — выше этого ветра фонтан выключается совсем (0 — не выключать). */
   stopSpeed: number;
+  /**
+   * За сколько секунд сглаженный ветер догоняет ВЫРОСШЕЕ показание.
+   * Коротко (≈1 с): порыв на полсекунды почти не поднимет расчётное
+   * значение, а настоящий ветер — поднимет за пару секунд.
+   */
+  attackSec: number;
+  /**
+   * За сколько секунд сглаженный ветер отпускает УПАВШЕЕ показание.
+   * Заметно дольше подъёма: между порывами ветер проваливается почти до
+   * нуля, и если возвращать высоту так же быстро, струи начнут «дышать» —
+   * то вверх, то вниз, на глазах у людей. Поднимать воду обратно спешить
+   * некуда, а вот убирать — надо быстро.
+   */
+  releaseSec: number;
+  /**
+   * Показания выше этого (м/с) считаем обрывом линии или сбоем датчика и
+   * игнорируем. 40 м/с — это ураган, при котором фонтан давно выключен
+   * руками; всё, что больше, — почти наверняка мусор в кадре Modbus.
+   */
+  maxPlausibleSpeed: number;
 }
 
 export function defaultWindLimitConfig(): WindLimitConfig {
-  return { enabled: false, marginM: 0.6, tauSec: 4, minPercent: 25, stopSpeed: 12 };
+  return {
+    enabled: false,
+    marginM: 0.6,
+    tauSec: 4,
+    minPercent: 25,
+    stopSpeed: 12,
+    attackSec: 1,
+    releaseSec: 15,
+    maxPlausibleSpeed: 40,
+  };
+}
+
+/**
+ * Сглаживание показаний ветра во времени: фильтр первого порядка с разными
+ * постоянными на рост и на спад.
+ *
+ * Зачем вообще: ограничение струй нельзя дёргать по каждому показанию
+ * датчика. Порыв на полсекунды или дребезг на линии Modbus уронил бы воду на
+ * глазах у людей и через секунду поднял обратно. Поэтому расчёт идёт не по
+ * «сырому» значению, а по сглаженному: вырос ветер — за ~attackSec догоняем
+ * (быстро, это безопасность), упал — отпускаем за ~releaseSec (медленно,
+ * между порывами ветер проваливается почти в ноль).
+ *
+ * Возвращает новое сглаженное значение. prev === null — первое показание,
+ * берём как есть: ждать минуту на старте незачем.
+ */
+export function smoothWindSpeed(
+  prev: number | null,
+  raw: number,
+  dtSec: number,
+  cfg: Pick<WindLimitConfig, 'attackSec' | 'releaseSec' | 'maxPlausibleSpeed'>,
+): number | null {
+  if (!Number.isFinite(raw) || raw < 0) return prev;
+  // Заведомо невозможное показание — не сглаживаем, а ИГНОРИРУЕМ целиком:
+  // если протянуть его через фильтр, мусор всё равно частично просочится.
+  if (raw > cfg.maxPlausibleSpeed) return prev;
+  if (prev === null) return raw;
+  const tau = Math.max(0.05, raw > prev ? cfg.attackSec : cfg.releaseSec);
+  const dt = Math.max(0, dtSec);
+  // Классический экспоненциальный фильтр: доля пути к цели за шаг dt.
+  const k = 1 - Math.exp(-dt / tau);
+  return prev + (raw - prev) * k;
 }
 
 const G = 9.81;
@@ -126,5 +187,10 @@ export function sanitizeWindLimitConfig(raw: unknown): WindLimitConfig {
     // Старые проекты знали maxSpeed вместо stopSpeed — переносим по смыслу:
     // там это была скорость «дальше некуда снижать», здесь — «глушим».
     stopSpeed: num(r.stopSpeed ?? r.maxSpeed, d.stopSpeed, 0, 60),
+    // Верхняя граница у attack — 10 с: дольше «подтверждать» опасный ветер
+    // уже небезопасно, вода всё это время летит на дорожку.
+    attackSec: num(r.attackSec, d.attackSec, 0.1, 10),
+    releaseSec: num(r.releaseSec, d.releaseSec, 0.5, 120),
+    maxPlausibleSpeed: num(r.maxPlausibleSpeed, d.maxPlausibleSpeed, 5, 100),
   };
 }
