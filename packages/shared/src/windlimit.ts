@@ -75,6 +75,18 @@ export interface WindLimitConfig {
    */
   releaseSec: number;
   /**
+   * Сколько секунд ветер должен ДЕРЖАТЬСЯ ниже текущего расчётного, прежде
+   * чем вообще начнём поднимать струи обратно.
+   *
+   * Без этой выдержки фильтр начинает отпускать сразу, пусть и медленно, а
+   * между порывами ветер проваливается почти в ноль каждые несколько
+   * секунд — и вода принималась бы «дышать». 10 с выбраны по тому, как
+   * ветер устроен: порывом метеорологи считают превышение длиной от 3 с, а
+   * затишья между порывами в шквалистую погоду — как раз секунды. Десять
+   * секунд заведомо длиннее затишья, но короче настоящей перемены погоды.
+   */
+  releaseHoldSec: number;
+  /**
    * Показания выше этого (м/с) считаем обрывом линии или сбоем датчика и
    * игнорируем. 40 м/с — это ураган, при котором фонтан давно выключен
    * руками; всё, что больше, — почти наверняка мусор в кадре Modbus.
@@ -91,40 +103,68 @@ export function defaultWindLimitConfig(): WindLimitConfig {
     stopSpeed: 12,
     attackSec: 1,
     releaseSec: 15,
+    releaseHoldSec: 10,
     maxPlausibleSpeed: 40,
   };
 }
 
 /**
- * Сглаживание показаний ветра во времени: фильтр первого порядка с разными
- * постоянными на рост и на спад.
+ * Состояние сглаживания ветра. Хранится в движке между тиками: фильтру нужно
+ * помнить не только последнее значение, но и сколько уже длится затишье.
+ */
+export interface WindSmoothState {
+  /** Расчётная скорость, по которой режутся насосы; null — показаний ещё не было. */
+  smoothed: number | null;
+  /**
+   * Сколько секунд подряд сырое показание держится НИЖЕ расчётного. Пока
+   * меньше releaseHoldSec — высоту не поднимаем вовсе (см. там же почему).
+   */
+  belowSec: number;
+}
+
+export function initialWindSmoothState(): WindSmoothState {
+  return { smoothed: null, belowSec: 0 };
+}
+
+/**
+ * Один шаг сглаживания показаний ветра: фильтр первого порядка с разными
+ * постоянными на рост и на спад плюс выдержка перед подъёмом.
  *
  * Зачем вообще: ограничение струй нельзя дёргать по каждому показанию
  * датчика. Порыв на полсекунды или дребезг на линии Modbus уронил бы воду на
  * глазах у людей и через секунду поднял обратно. Поэтому расчёт идёт не по
- * «сырому» значению, а по сглаженному: вырос ветер — за ~attackSec догоняем
- * (быстро, это безопасность), упал — отпускаем за ~releaseSec (медленно,
- * между порывами ветер проваливается почти в ноль).
- *
- * Возвращает новое сглаженное значение. prev === null — первое показание,
- * берём как есть: ждать минуту на старте незачем.
+ * «сырому» значению, а по сглаженному: вырос ветер — догоняем за ~attackSec
+ * (быстро, это безопасность), упал — сначала выдерживаем releaseHoldSec и
+ * только потом отпускаем за ~releaseSec.
  */
-export function smoothWindSpeed(
-  prev: number | null,
+export function stepWindSmoothing(
+  state: WindSmoothState,
   raw: number,
   dtSec: number,
-  cfg: Pick<WindLimitConfig, 'attackSec' | 'releaseSec' | 'maxPlausibleSpeed'>,
-): number | null {
-  if (!Number.isFinite(raw) || raw < 0) return prev;
+  cfg: Pick<WindLimitConfig, 'attackSec' | 'releaseSec' | 'releaseHoldSec' | 'maxPlausibleSpeed'>,
+): WindSmoothState {
   // Заведомо невозможное показание — не сглаживаем, а ИГНОРИРУЕМ целиком:
   // если протянуть его через фильтр, мусор всё равно частично просочится.
-  if (raw > cfg.maxPlausibleSpeed) return prev;
-  if (prev === null) return raw;
-  const tau = Math.max(0.05, raw > prev ? cfg.attackSec : cfg.releaseSec);
+  if (!Number.isFinite(raw) || raw < 0 || raw > cfg.maxPlausibleSpeed) return state;
+  // Первое показание берём как есть: иначе ограничение ползло бы с нуля, и
+  // первые секунды вода летела бы так, будто ветра нет.
+  if (state.smoothed === null) return { smoothed: raw, belowSec: 0 };
+
   const dt = Math.max(0, dtSec);
-  // Классический экспоненциальный фильтр: доля пути к цели за шаг dt.
-  const k = 1 - Math.exp(-dt / tau);
-  return prev + (raw - prev) * k;
+  const prev = state.smoothed;
+
+  if (raw >= prev) {
+    // Ветер вырос — догоняем быстро и сбрасываем накопленную «тишину».
+    const k = 1 - Math.exp(-dt / Math.max(0.05, cfg.attackSec));
+    return { smoothed: prev + (raw - prev) * k, belowSec: 0 };
+  }
+
+  // Ветер ниже расчётного. Сначала выдерживаем паузу: провал между порывами
+  // длится секунды, и поднимать на нём струи нельзя.
+  const belowSec = state.belowSec + dt;
+  if (belowSec < cfg.releaseHoldSec) return { smoothed: prev, belowSec };
+  const k = 1 - Math.exp(-dt / Math.max(0.05, cfg.releaseSec));
+  return { smoothed: prev + (raw - prev) * k, belowSec };
 }
 
 const G = 9.81;
@@ -191,6 +231,7 @@ export function sanitizeWindLimitConfig(raw: unknown): WindLimitConfig {
     // уже небезопасно, вода всё это время летит на дорожку.
     attackSec: num(r.attackSec, d.attackSec, 0.1, 10),
     releaseSec: num(r.releaseSec, d.releaseSec, 0.5, 120),
+    releaseHoldSec: num(r.releaseHoldSec, d.releaseHoldSec, 0, 120),
     maxPlausibleSpeed: num(r.maxPlausibleSpeed, d.maxPlausibleSpeed, 5, 100),
   };
 }

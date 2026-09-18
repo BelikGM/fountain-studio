@@ -5,7 +5,9 @@ import {
   DMX_UNIVERSE_SIZE,
   clampDmx,
   computeWindLimitPercent,
-  smoothWindSpeed,
+  initialWindSmoothState,
+  stepWindSmoothing,
+  type WindSmoothState,
   defaultUtilityLightConfig,
   defaultWindLimitConfig,
   isUtilityLightOn,
@@ -150,11 +152,18 @@ export class Engine {
    * Последнее СЫРОЕ показание датчика (или ручного ввода), м/с — null, пока
    * никто не ввёл/не прислал. Для расчёта ограничения используется не оно, а
    * сглаженное windSpeed: по сырому нельзя, порыв на полсекунды уронил бы
-   * воду на глазах у людей (см. smoothWindSpeed в windlimit.ts).
+   * воду на глазах у людей (см. stepWindSmoothing в windlimit.ts).
    */
   private windRaw: number | null = null;
-  /** Сглаженная скорость ветра — то, по чему реально режутся насосы. */
-  private windSpeed: number | null = null;
+  /**
+   * Состояние сглаживания: расчётная скорость (по ней режутся насосы) и
+   * сколько секунд ветер держится ниже неё — см. stepWindSmoothing.
+   */
+  private windSmoothing: WindSmoothState = initialWindSmoothState();
+  /** Расчётная (сглаженная) скорость ветра — по ней и режутся насосы. */
+  private get windCalcSpeed(): number | null {
+    return this.windSmoothing.smoothed;
+  }
   /** Когда последний раз двигали сглаживание — чтобы считать шаг по стенным часам. */
   private windSmoothedAtMs = 0;
   /** Последний записанный в журнал процент ограничения: не пишем строку на каждый процент. */
@@ -297,14 +306,14 @@ export class Engine {
         // Ветровое ограничение считается ДЛЯ КАЖДОГО НАСОСА по высоте его
         // струи: одинаковый процент на весь объект резал бы низкие фонтанчики
         // впустую и не спасал бы высокие.
-        if (this.windSpeed !== null && this.windLimitConfig.enabled) {
+        if (this.windCalcSpeed !== null && this.windLimitConfig.enabled) {
           const pumpIdx = this.pumpChannels.get(u.id);
           if (pumpIdx) {
             for (const idx of pumpIdx) {
               const v = u.out[idx]!;
               if (v <= 0) continue;
               const h = this.pumpHeightByChannel.get(`${u.id}:${idx}`) ?? WIND_FALLBACK_HEIGHT_M;
-              const pct = computeWindLimitPercent(this.windSpeed, this.windLimitConfig, h);
+              const pct = computeWindLimitPercent(this.windCalcSpeed, this.windLimitConfig, h);
               if (pct < 100) u.out[idx] = Math.round((v * pct) / 100);
             }
           }
@@ -638,8 +647,8 @@ export class Engine {
   setWindSpeed(speedMs: number | null): void {
     this.windRaw = speedMs;
     if (speedMs === null) {
-      const had = this.windSpeed !== null;
-      this.windSpeed = null;
+      const had = this.windCalcSpeed !== null;
+      this.windSmoothing = initialWindSmoothState();
       this.windSmoothedAtMs = 0;
       if (had) {
         eventLog.log('wind', 'показание ветра сброшено — ограничение снято');
@@ -649,8 +658,8 @@ export class Engine {
     }
     // Первое показание берём как есть — иначе ограничение «поедет» с нуля и
     // первые секунды вода будет лететь так, будто ветра нет.
-    if (this.windSpeed === null) {
-      this.windSpeed = speedMs;
+    if (this.windCalcSpeed === null) {
+      this.windSmoothing = { smoothed: speedMs, belowSec: 0 };
       this.windSmoothedAtMs = Date.now();
       this.logWindIfChanged();
     }
@@ -662,14 +671,12 @@ export class Engine {
    * секундах не зависели от того, какой сейчас шаг тика.
    */
   private updateWindSmoothing(): void {
-    if (this.windRaw === null || this.windSpeed === null) return;
+    if (this.windRaw === null || this.windCalcSpeed === null) return;
     const now = Date.now();
     const dtSec = this.windSmoothedAtMs > 0 ? (now - this.windSmoothedAtMs) / 1000 : 0;
     this.windSmoothedAtMs = now;
     if (dtSec <= 0) return;
-    const next = smoothWindSpeed(this.windSpeed, this.windRaw, dtSec, this.windLimitConfig);
-    if (next === null) return;
-    this.windSpeed = next;
+    this.windSmoothing = stepWindSmoothing(this.windSmoothing, this.windRaw, dtSec, this.windLimitConfig);
     this.logWindIfChanged();
   }
 
@@ -684,8 +691,8 @@ export class Engine {
     eventLog.log(
       'wind',
       pct >= 100
-        ? `ветер ${this.windSpeed?.toFixed(1)} м/с — ограничение снято`
-        : `ветер ${this.windSpeed?.toFixed(1)} м/с → высота струй ограничена ${pct}%`,
+        ? `ветер ${this.windCalcSpeed?.toFixed(1)} м/с — ограничение снято`
+        : `ветер ${this.windCalcSpeed?.toFixed(1)} м/с → высота струй ограничена ${pct}%`,
       pct < 100 ? 'warn' : 'info',
     );
   }
@@ -699,19 +706,19 @@ export class Engine {
    * именно это и надо знать.
    */
   private windLimitPercent(): number {
-    if (this.windSpeed === null || !this.windLimitConfig.enabled) return 100;
+    if (this.windCalcSpeed === null || !this.windLimitConfig.enabled) return 100;
     let worst = 100;
     for (const h of this.pumpHeightByChannel.values()) {
-      worst = Math.min(worst, computeWindLimitPercent(this.windSpeed, this.windLimitConfig, h));
+      worst = Math.min(worst, computeWindLimitPercent(this.windCalcSpeed, this.windLimitConfig, h));
     }
     if (this.pumpHeightByChannel.size === 0) {
-      worst = computeWindLimitPercent(this.windSpeed, this.windLimitConfig, WIND_FALLBACK_HEIGHT_M);
+      worst = computeWindLimitPercent(this.windCalcSpeed, this.windLimitConfig, WIND_FALLBACK_HEIGHT_M);
     }
     return worst;
   }
 
   windState(): { speedMs: number | null; limitPercent: number; config: WindLimitConfig } {
-    return { speedMs: this.windSpeed, limitPercent: this.windLimitPercent(), config: this.windLimitConfig };
+    return { speedMs: this.windCalcSpeed, limitPercent: this.windLimitPercent(), config: this.windLimitConfig };
   }
 
   modbusState(): ModbusState {

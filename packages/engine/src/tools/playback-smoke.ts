@@ -59,7 +59,8 @@ import {
   colorChangeEvents,
   colorChannelEnvelopePoints,
   defaultWindLimitConfig,
-  smoothWindSpeed,
+  initialWindSmoothState,
+  stepWindSmoothing,
   computeWindLimitPercent,
   defaultUtilityLightConfig,
   isUtilityLightOn,
@@ -1794,26 +1795,36 @@ async function main(): Promise<void> {
      * безопасность), спад отпускаем медленно (между порывами ветер
      * проваливается почти в ноль).
      */
-    const cfg = { attackSec: 1, releaseSec: 15, maxPlausibleSpeed: 40 };
-    check(smoothWindSpeed(null, 7, 0.05, cfg) === 7, 'первое показание берётся как есть — не ползём с нуля');
+    const cfg = { attackSec: 1, releaseSec: 15, releaseHoldSec: 10, maxPlausibleSpeed: 40 };
+    /** Прогон: держим показание raw секунд secs и возвращаем расчётную скорость. */
+    const run = (start: number | null, raw: number, secs: number, step = 0.05): number => {
+      let st = start === null ? initialWindSmoothState() : { smoothed: start, belowSec: 0 };
+      for (let t = 0; t < secs; t += step) st = stepWindSmoothing(st, raw, step, cfg);
+      return st.smoothed ?? -1;
+    };
 
-    // Порыв: 0 → 12 м/с на 0,3 с. За это время сглаженное почти не двинулось.
-    const gust = smoothWindSpeed(0, 12, 0.3, cfg);
-    check(gust !== null && gust < 4, `порыв 0,3 с почти не поднял расчётный ветер (${gust?.toFixed(1)} м/с из 12)`);
+    check(stepWindSmoothing(initialWindSmoothState(), 7, 0.05, cfg).smoothed === 7, 'первое показание берётся как есть — не ползём с нуля');
+
+    // Порыв: 0 → 12 м/с на 0,3 с. За это время расчётное значение почти не двинулось.
+    const gust = run(0, 12, 0.3);
+    check(gust < 4, `порыв 0,3 с почти не поднял расчётный ветер (${gust.toFixed(1)} м/с из 12)`);
 
     // Устойчивый ветер: те же 12 м/с, но держатся 3 с — уже почти догнали.
-    let steady = 0;
-    for (let i = 0; i < 60; i++) steady = smoothWindSpeed(steady, 12, 0.05, cfg) ?? steady;
+    const steady = run(0, 12, 3);
     check(steady > 10.5, `устойчивый ветер за 3 с догнали (${steady.toFixed(1)} из 12 м/с)`);
 
-    // Спад: ветер упал в ноль, но за те же 3 с высота почти не вернулась.
-    let falling = steady;
-    for (let i = 0; i < 60; i++) falling = smoothWindSpeed(falling, 0, 0.05, cfg) ?? falling;
-    check(falling > 8, `спад отпускается медленно — через 3 с ещё ${falling.toFixed(1)} м/с (струи не «дышат»)`);
+    // Затишье между порывами: ветер упал в ноль на 8 с — выдержка ещё не вышла,
+    // высоту не поднимаем ВООБЩЕ, иначе струи «дышали» бы на каждом провале.
+    const lull = run(steady, 0, 8);
+    check(Math.abs(lull - steady) < 0.01, `затишье 8 с — расчётный ветер не сдвинулся (${lull.toFixed(1)} м/с)`);
+
+    // Настоящее затишье: 40 с без ветра — выдержка прошла, значение заметно упало.
+    const calm = run(steady, 0, 40);
+    check(calm < steady * 0.6, `затишье 40 с — расчётный ветер упал до ${calm.toFixed(1)} м/с (из ${steady.toFixed(1)})`);
 
     // Мусор с датчика (обрыв линии) игнорируется целиком, а не «частично сглаживается».
-    check(smoothWindSpeed(5, 900, 1, cfg) === 5, 'невозможное показание 900 м/с отброшено, значение не изменилось');
-    check(smoothWindSpeed(5, -3, 1, cfg) === 5, 'отрицательное показание отброшено');
+    check(stepWindSmoothing({ smoothed: 5, belowSec: 0 }, 900, 1, cfg).smoothed === 5, 'невозможное показание 900 м/с отброшено, значение не изменилось');
+    check(stepWindSmoothing({ smoothed: 5, belowSec: 0 }, -3, 1, cfg).smoothed === 5, 'отрицательное показание отброшено');
   }
   {
     /**
@@ -1833,6 +1844,7 @@ async function main(): Promise<void> {
       stopSpeed: 12,
       attackSec: 0.2,
       releaseSec: 0.5,
+      releaseHoldSec: 0.3,
     };
     check(
       computeWindLimitPercent(0.5, testCfg, 6) === 100,
@@ -2090,7 +2102,12 @@ async function main(): Promise<void> {
   check(true, 'канал 0 → уставка 0, команда СТОП (8192=1)');
 
   vfdRegs.set(10, 7); // мок-ПЧ сообщает аварию (код 7 по карте Elhart — «пониженное напряжение шины DC»)
-  await waitFor('авария обнаружена', () => pumpStatus()?.faultCode === 7, 4000);
+  // Ждём с запасом: опрос аварий идёт раз в 3 с (HEALTH_POLL_MS), и если
+  // регистр выставлен сразу после очередного опроса, ответ придёт только через
+  // три секунды плюс обмен по TCP. С таймаутом 4 с проверка иногда падала на
+  // загруженной машине, хотя движок работал верно — проверяем ДОШЛО ЛИ, а не
+  // за сколько миллисекунд.
+  await waitFor('авария обнаружена', () => pumpStatus()?.faultCode === 7, 9000);
   check(true, 'опрос аварии: код 7 из регистра F0.10 дошёл до UI-состояния насоса');
 
   await waitFor(
