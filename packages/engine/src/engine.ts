@@ -4,10 +4,13 @@ import {
   DEFAULT_PATTERN_SPEED_SEC,
   DMX_UNIVERSE_SIZE,
   clampDmx,
-  computeWindLimitPercent,
-  initialWindSmoothState,
-  stepWindSmoothing,
-  type WindSmoothState,
+  initialWindCorrectionState,
+  stepWindCorrection,
+  windCapDmx,
+  windNozzleFor,
+  plainWindNozzle,
+  type WindCorrectionState,
+  type WindNozzle,
   defaultUtilityLightConfig,
   defaultWindLimitConfig,
   isUtilityLightOn,
@@ -33,6 +36,12 @@ import { eventLog } from './eventlog';
 import type { EngineConfig, OutputConfig } from './config';
 /** Высота струи для насоса, не привязанного к схеме, м — считаем его средним. */
 const WIND_FALLBACK_HEIGHT_M = 4;
+/**
+ * Не чаще этого пишем в журнал про ветер (кроме начала и конца ограничения).
+ * Плавный ввод коррекции проходит все проценты за секунды — без паузы журнал
+ * заливало бы полутора десятками строк на каждое включение.
+ */
+const WIND_LOG_MIN_MS = 20_000;
 /**
  * Сколько держим безопасные значения после того, как такт выровнялся: если
  * машина дышит рывками, вода не должна мигать туда-сюда каждые полсекунды.
@@ -121,8 +130,42 @@ export class Engine {
    * набор индексов адресов (адрес-1).
    */
   private pumpChannels = new Map<number, Set<number>>();
-  /** «вселенная:индекс» → высота струи этого насоса, м (для ветрового ограничения). */
-  private pumpHeightByChannel = new Map<string, number>();
+  /**
+   * «вселенная:индекс» → форсунки, которые кормит этот насос (для ветра).
+   *
+   * Список, а не одна: на одном насосе бывает куст форсунок, и предел надо
+   * брать по САМОЙ уязвимой — у неё может быть и меньшая высота, но меньше
+   * места до борта. Раньше здесь лежала одна высота (самая большая), и
+   * форсунка у борта оставалась без защиты.
+   */
+  private pumpNozzlesByChannel = new Map<string, WindNozzle[]>();
+  /**
+   * «вселенная:индекс» → предел значения на насосе, 0..255. Пересчитывается
+   * только когда меняется расчётный ветер, а не каждый тик: перебор по высоте
+   * для сотни насосов 20 раз в секунду — впустую сожжённое время, ветер
+   * меняется несравнимо медленнее.
+   */
+  private windCapByChannel = new Map<string, number>();
+  /**
+   * При каких ветре и силе посчитаны пределы — ключом, чтобы сравнивать точно.
+   *
+   * История этой строки стоит того, чтобы её прочитать. Сначала здесь было
+   * сравнение с допуском: «пересчитать, если ветер или сила изменились больше
+   * чем на 0,05». Оно ОСТАВЛЯЛО ПРЕДЕЛ УСТАРЕВШИМ НАВСЕГДА, когда последний
+   * шаг не дотягивал до допуска: сила доходила до 0,98, потом до 1,0 — разница
+   * 0,02, пересчёта нет, и насос застывал на 5 из 255 вместо нуля. Потом я
+   * огрубил величины до 0,01 — и то же самое повторилось на шаге 0,996 → 1,0
+   * (насос застыл на 1). Любое огрубление входа даёт право на ошибку в одну
+   * единицу DMX, а «одна единица» на стопе — это работающий насос там, где
+   * фонтан положено глушить.
+   *
+   * Поэтому: СИЛА сравнивается точно (она меняется только во время плавного
+   * перехода — это секунды, пересчёт там ничего не стоит), а ветер огрубляется
+   * до 0,05 м/с, потому что он может дрожать непрерывно и такая разница не
+   * стоит и одной единицы DMX. Переход через «стоп» вынесен в ключ отдельной
+   * меткой: на нём огрубление недопустимо.
+   */
+  private windCapKey = '';
   /**
    * Служебное освещение по времени суток (§27 доработки, «Switches») —
    * universeId → индексы адресов (адрес-1) ВСЕХ каналов выбранных приборов.
@@ -150,24 +193,22 @@ export class Engine {
   private windLimitConfig: WindLimitConfig = defaultWindLimitConfig();
   /**
    * Последнее СЫРОЕ показание датчика (или ручного ввода), м/с — null, пока
-   * никто не ввёл/не прислал. Для расчёта ограничения используется не оно, а
-   * сглаженное windSpeed: по сырому нельзя, порыв на полсекунды уронил бы
-   * воду на глазах у людей (см. stepWindSmoothing в windlimit.ts).
+   * никто не ввёл/не прислал. Именно оно показывается человеку: это то, что
+   * говорит датчик. Резать насосы по нему нельзя — см. stepWindCorrection.
    */
   private windRaw: number | null = null;
   /**
-   * Состояние сглаживания: расчётная скорость (по ней режутся насосы) и
-   * сколько секунд ветер держится ниже неё — см. stepWindSmoothing.
+   * Состояние коррекции во времени: включена ли, по какой скорости считаем,
+   * какой силой применяем и сколько уже держатся выдержки. Вся логика — в
+   * stepWindCorrection (windlimit.ts), здесь только хранение.
    */
-  private windSmoothing: WindSmoothState = initialWindSmoothState();
-  /** Расчётная (сглаженная) скорость ветра — по ней и режутся насосы. */
-  private get windCalcSpeed(): number | null {
-    return this.windSmoothing.smoothed;
-  }
-  /** Когда последний раз двигали сглаживание — чтобы считать шаг по стенным часам. */
+  private windCorrection: WindCorrectionState = initialWindCorrectionState();
+  /** Когда последний раз двигали состояние — чтобы считать шаг по стенным часам. */
   private windSmoothedAtMs = 0;
   /** Последний записанный в журнал процент ограничения: не пишем строку на каждый процент. */
   private windLoggedPercent = 100;
+  /** Когда последний раз писали про ветер — см. WIND_LOG_MIN_MS. */
+  private windLoggedAtMs = 0;
   private failsafeConfig: FailsafeConfig = defaultFailsafeConfig();
   /** Время предыдущего тика по стенным часам — по нему видно, что такт вставал. */
   private lastTickWallMs = 0;
@@ -303,18 +344,21 @@ export class Engine {
         }
         // Безопасное снижение струй по ветру (§27 доработки, §4 п.1) — после
         // калибровки, только каналы intensity насосов; свет не трогаем.
-        // Ветровое ограничение считается ДЛЯ КАЖДОГО НАСОСА по высоте его
-        // струи: одинаковый процент на весь объект резал бы низкие фонтанчики
-        // впустую и не спасал бы высокие.
-        if (this.windCalcSpeed !== null && this.windLimitConfig.enabled) {
+        //
+        // Это ПОТОЛОК, а не множитель. Разница принципиальная: у каждого
+        // насоса свой предел по его форсункам, и насос, который в этот момент
+        // и так работает вполсилы (струя низкая, ветер ей ничего не сделает),
+        // остаётся нетронутым. Прежняя версия множила ТЕКУЩЕЕ значение на
+        // процент, посчитанный по ПАСПОРТНОЙ высоте, и роняла полуметровую
+        // струю пятнадцатиметровой форсунки до четверти — впустую.
+        if (this.windCorrection.fade > 0 && this.windLimitConfig.enabled) {
           const pumpIdx = this.pumpChannels.get(u.id);
           if (pumpIdx) {
             for (const idx of pumpIdx) {
               const v = u.out[idx]!;
               if (v <= 0) continue;
-              const h = this.pumpHeightByChannel.get(`${u.id}:${idx}`) ?? WIND_FALLBACK_HEIGHT_M;
-              const pct = computeWindLimitPercent(this.windCalcSpeed, this.windLimitConfig, h);
-              if (pct < 100) u.out[idx] = Math.round((v * pct) / 100);
+              const cap = this.windCapByChannel.get(`${u.id}:${idx}`) ?? 255;
+              if (v > cap) u.out[idx] = cap;
             }
           }
         }
@@ -532,23 +576,28 @@ export class Engine {
     this.pumps.setDevices(project.devices);
 
     /**
-     * Насосные каналы и ВЫСОТА струи, которую каждый из них поднимает.
+     * Насосные каналы и ФОРСУНКИ, которые каждый из них кормит.
      *
-     * Высота нужна ветровому ограничению: снос растёт линейно с высотой, и
-     * пятнадцатиметровую струю надо резать в разы раньше двухметровой. Если
-     * один насос кормит несколько форсунок — берём самую высокую из них: по
-     * ней и считаем, иначе высокая останется без защиты.
+     * Ветровому расчёту нужна не одна высота, а геометрия каждой форсунки:
+     * высота при полном насосе, наклон сопла и сколько до борта чаши. Один
+     * насос часто кормит куст форсунок — храним их все и считаем предел по
+     * самой уязвимой. «Самая высокая» не годится: форсунка у борта может быть
+     * ниже, а рискованнее — ей ближе выплеснуть воду наружу.
      *
-     * Насос без привязки к схеме высоты не имеет — для него ограничение
-     * считается по запасному значению (см. WIND_FALLBACK_HEIGHT_M).
+     * Насос без привязки к схеме геометрии не имеет — считаем его средней
+     * вертикальной струёй без чаши (см. WIND_FALLBACK_HEIGHT_M).
      */
     this.pumpChannels.clear();
-    this.pumpHeightByChannel.clear();
-    const heightByPumpId = new Map<string, number>();
+    this.pumpNozzlesByChannel.clear();
+    this.windCapKey = '';
+    const nozzlesByPumpId = new Map<string, WindNozzle[]>();
     for (const n of project.layout.nozzles) {
+      const wn = windNozzleFor(n, project.layout.bowls);
       for (const id of [n.pumpDeviceId, n.pump2DeviceId, ...(n.extraPumpDeviceIds ?? []), ...(n.extraPump2DeviceIds ?? [])]) {
         if (!id) continue;
-        heightByPumpId.set(id, Math.max(heightByPumpId.get(id) ?? 0, n.maxHeightM));
+        const list = nozzlesByPumpId.get(id);
+        if (list) list.push(wn);
+        else nozzlesByPumpId.set(id, [wn]);
       }
     }
     for (const d of project.devices) {
@@ -559,13 +608,13 @@ export class Engine {
         set = new Set();
         this.pumpChannels.set(d.universe, set);
       }
-      const h = heightByPumpId.get(d.id) ?? WIND_FALLBACK_HEIGHT_M;
+      const nz = nozzlesByPumpId.get(d.id) ?? [plainWindNozzle(WIND_FALLBACK_HEIGHT_M)];
       for (let k = 0; k < profile.channels.length; k++) {
         if (profile.channels[k]!.role !== 'intensity') continue;
         const idx = d.address - 1 + k;
         if (idx >= 0 && idx < DMX_UNIVERSE_SIZE) {
           set.add(idx);
-          this.pumpHeightByChannel.set(`${d.universe}:${idx}`, h);
+          this.pumpNozzlesByChannel.set(`${d.universe}:${idx}`, nz);
         }
       }
     }
@@ -636,63 +685,98 @@ export class Engine {
   }
 
   /**
-   * Ручной ввод (пока нет датчика по Modbus/MQTT — задел под него, см.
-   * windlimit.ts) или null — сбросить.
+   * Показание датчика ветра (или ручного ввода), м/с; null — сбросить.
    *
-   * Показание только ЗАПОМИНАЕТСЯ. Применяется оно через сглаживание в
-   * тике: рост ветра догоняем за ~секунду, спад отпускаем заметно медленнее.
-   * Сброс (null) — единственное, что действует сразу: это явная команда
-   * человека «датчика больше нет», тянуть с ней нечего.
+   * Показание только ЗАПОМИНАЕТСЯ. Применяется оно состоянием коррекции в
+   * тике: ниже порога — ничего, выше — только после выдержки в десять секунд
+   * (см. stepWindCorrection). Сброс (null) — единственное, что действует
+   * сразу: это явная команда человека «датчика больше нет».
    */
   setWindSpeed(speedMs: number | null): void {
     this.windRaw = speedMs;
     if (speedMs === null) {
-      const had = this.windCalcSpeed !== null;
-      this.windSmoothing = initialWindSmoothState();
+      const had = this.windCorrection.fade > 0 || this.windCorrection.active;
+      this.windCorrection = initialWindCorrectionState();
       this.windSmoothedAtMs = 0;
+      this.windCapByChannel.clear();
+      this.windCapKey = '';
       if (had) {
         eventLog.log('wind', 'показание ветра сброшено — ограничение снято');
         this.windLoggedPercent = 100;
       }
       return;
     }
-    // Первое показание берём как есть — иначе ограничение «поедет» с нуля и
-    // первые секунды вода будет лететь так, будто ветра нет.
-    if (this.windCalcSpeed === null) {
-      this.windSmoothing = { smoothed: speedMs, belowSec: 0 };
-      this.windSmoothedAtMs = Date.now();
-      this.logWindIfChanged();
-    }
+    if (this.windSmoothedAtMs === 0) this.windSmoothedAtMs = Date.now();
   }
 
   /**
-   * Двигает сглаженное значение ветра к последнему показанию. Зовётся из
-   * тика: шаг считается по стенным часам, чтобы постоянные времени в
-   * секундах не зависели от того, какой сейчас шаг тика.
+   * Двигает состояние коррекции по последнему показанию. Зовётся из тика: шаг
+   * считается по стенным часам, чтобы выдержки в секундах не зависели от того,
+   * какой сейчас шаг тика.
    */
   private updateWindSmoothing(): void {
-    if (this.windRaw === null || this.windCalcSpeed === null) return;
+    if (this.windRaw === null) return;
     const now = Date.now();
     const dtSec = this.windSmoothedAtMs > 0 ? (now - this.windSmoothedAtMs) / 1000 : 0;
     this.windSmoothedAtMs = now;
     if (dtSec <= 0) return;
-    this.windSmoothing = stepWindSmoothing(this.windSmoothing, this.windRaw, dtSec, this.windLimitConfig);
+    this.windCorrection = stepWindCorrection(this.windCorrection, this.windRaw, dtSec, this.windLimitConfig);
+    this.refreshWindCaps();
     this.logWindIfChanged();
   }
 
   /**
-   * Пишем в журнал не каждый процент, а заметные ступени: сглаживание меняет
-   * значение непрерывно, и построчная запись забила бы журнал за вечер.
+   * Пересчитать пределы по насосам — только когда расчётный ветер или сила
+   * коррекции действительно сдвинулись (см. windCapKey о том, почему не
+   * «сдвинулись больше чем на»).
+   *
+   * Каждый тик перебирать высоты для сотни насосов незачем: ветер меняется
+   * несравнимо медленнее кадров.
+   */
+  private refreshWindCaps(): void {
+    const { level, fade } = this.windCorrection;
+    const stop = this.windLimitConfig.stopSpeed > 0 && level >= this.windLimitConfig.stopSpeed;
+    const key = `${stop ? 'stop' : Math.round(level * 20)}:${fade}`;
+    if (key === this.windCapKey) return;
+    this.windCapKey = key;
+    this.windCapByChannel.clear();
+    if (fade <= 0 || !this.windLimitConfig.enabled) return;
+    for (const [key, list] of this.pumpNozzlesByChannel) {
+      let cap = 255;
+      // По самой уязвимой форсунке куста: если одна из них уже выплёскивает
+      // воду за борт, насос надо резать, даже если остальным ветер не страшен.
+      for (const nz of list) cap = Math.min(cap, windCapDmx(level, fade, this.windLimitConfig, nz));
+      if (cap < 255) this.windCapByChannel.set(key, cap);
+    }
+  }
+
+  /**
+   * Пишем в журнал не каждый процент, а по делу.
+   *
+   * Два порога вместе, и оба нужны. Ступень 5% отсекает дрожание. Пауза
+   * WIND_LOG_MIN_MS отсекает ПЛАВНЫЕ ПЕРЕХОДЫ: ввод коррекции за три секунды
+   * проходит все проценты подряд, и без паузы в журнал ложилось полтора
+   * десятка строк на каждое включение — за ветреный вечер журнал стал бы
+   * нечитаемым. Начало и конец ограничения пишем всегда: это как раз то, что
+   * человек ищет в журнале.
    */
   private logWindIfChanged(): void {
     const pct = this.windLimitPercent();
-    if (Math.abs(pct - this.windLoggedPercent) < 5 && !(pct === 100 && this.windLoggedPercent !== 100)) return;
+    const edge = (pct >= 100) !== (this.windLoggedPercent >= 100);
+    if (!edge) {
+      if (Math.abs(pct - this.windLoggedPercent) < 5) return;
+      if (Date.now() - this.windLoggedAtMs < WIND_LOG_MIN_MS) return;
+    }
     this.windLoggedPercent = pct;
+    this.windLoggedAtMs = Date.now();
+    const raw = this.windRaw ?? 0;
+    const calc = this.windCorrection.level;
+    // Показываем и показание датчика, и расчётную скорость, когда они разошлись:
+    // иначе строка «ветер 4,8 м/с» при затихшем датчике выглядит ошибкой.
+    const speed = calc > 0 && Math.abs(calc - raw) > 0.5 ? `${raw.toFixed(1)} м/с (расчётные ${calc.toFixed(1)})` : `${raw.toFixed(1)} м/с`;
     eventLog.log(
       'wind',
-      pct >= 100
-        ? `ветер ${this.windCalcSpeed?.toFixed(1)} м/с — ограничение снято`
-        : `ветер ${this.windCalcSpeed?.toFixed(1)} м/с → высота струй ограничена ${pct}%`,
+      pct >= 100 ? `ветер ${speed} — ограничение снято` : `ветер ${speed} → высота струй ограничена ${pct}%`,
       pct < 100 ? 'warn' : 'info',
     );
   }
@@ -700,25 +784,40 @@ export class Engine {
   /**
    * Показательный процент для статуса в интерфейсе.
    *
-   * Насосы режутся каждый по своей высоте, одного числа на объект больше нет —
-   * но человеку нужно видеть, насколько серьёзно ветер вмешался. Показываем
-   * САМОЕ СИЛЬНОЕ ограничение по объекту: если где-то струя срезана вдвое,
-   * именно это и надо знать.
+   * Насосы режутся каждый по своей форсунке, одного числа на объект больше
+   * нет — но человеку нужно видеть, насколько серьёзно ветер вмешался.
+   * Показываем САМОЕ СИЛЬНОЕ ограничение по объекту: если где-то струя срезана
+   * вдвое, именно это и надо знать. 100 — коррекция не действует.
    */
   private windLimitPercent(): number {
-    if (this.windCalcSpeed === null || !this.windLimitConfig.enabled) return 100;
-    let worst = 100;
-    for (const h of this.pumpHeightByChannel.values()) {
-      worst = Math.min(worst, computeWindLimitPercent(this.windCalcSpeed, this.windLimitConfig, h));
+    if (!this.windLimitConfig.enabled || this.windCorrection.fade <= 0) return 100;
+    let cap = 255;
+    for (const v of this.windCapByChannel.values()) cap = Math.min(cap, v);
+    if (this.pumpNozzlesByChannel.size === 0) {
+      cap = windCapDmx(this.windCorrection.level, this.windCorrection.fade, this.windLimitConfig, plainWindNozzle(WIND_FALLBACK_HEIGHT_M));
     }
-    if (this.pumpHeightByChannel.size === 0) {
-      worst = computeWindLimitPercent(this.windCalcSpeed, this.windLimitConfig, WIND_FALLBACK_HEIGHT_M);
-    }
-    return worst;
+    return Math.round((cap / 255) * 100);
   }
 
-  windState(): { speedMs: number | null; limitPercent: number; config: WindLimitConfig } {
-    return { speedMs: this.windCalcSpeed, limitPercent: this.windLimitPercent(), config: this.windLimitConfig };
+  /**
+   * Что показать про ветер. `speedMs` — СЫРОЕ показание датчика: человек должен
+   * видеть, что говорит прибор. Насколько это вмешалось в работу, видно по
+   * limitPercent, а почему ещё не вмешалось (идёт выдержка) — по correcting.
+   */
+  windState(): {
+    speedMs: number | null;
+    limitPercent: number;
+    config: WindLimitConfig;
+    correcting: boolean;
+    calcSpeedMs: number | null;
+  } {
+    return {
+      speedMs: this.windRaw,
+      limitPercent: this.windLimitPercent(),
+      config: this.windLimitConfig,
+      correcting: this.windCorrection.fade > 0,
+      calcSpeedMs: this.windCorrection.level > 0 ? this.windCorrection.level : null,
+    };
   }
 
   modbusState(): ModbusState {

@@ -1,5 +1,6 @@
 /**
- * Смоук-тест воспроизведения: поднимает движок с WebSocket-сервером в этом же
+ * Смоук-тест во
+  type WindCorrectionState,спроизведения: поднимает движок с WebSocket-сервером в этом же
  * процессе, подключается клиентом и проверяет: загрузку проекта, статическую
  * сцену, HTP-слияние с ручной консолью, секвенсор с фейдом и переходами шагов,
  * общий стоп, шоу-таймлайн (блоки, огибающие, опережение дорожек, транспорт),
@@ -59,8 +60,9 @@ import {
   colorChangeEvents,
   colorChannelEnvelopePoints,
   defaultWindLimitConfig,
-  initialWindSmoothState,
-  stepWindSmoothing,
+  initialWindCorrectionState,
+  stepWindCorrection,
+  type WindCorrectionState,
   computeWindLimitPercent,
   defaultUtilityLightConfig,
   isUtilityLightOn,
@@ -1795,36 +1797,42 @@ async function main(): Promise<void> {
      * безопасность), спад отпускаем медленно (между порывами ветер
      * проваливается почти в ноль).
      */
-    const cfg = { attackSec: 1, releaseSec: 15, releaseHoldSec: 10, maxPlausibleSpeed: 40 };
-    /** Прогон: держим показание raw секунд secs и возвращаем расчётную скорость. */
-    const run = (start: number | null, raw: number, secs: number, step = 0.05): number => {
-      let st = start === null ? initialWindSmoothState() : { smoothed: start, belowSec: 0 };
-      for (let t = 0; t < secs; t += step) st = stepWindSmoothing(st, raw, step, cfg);
-      return st.smoothed ?? -1;
+    /*
+     * Здесь — только цепочка целиком. Подробный разбор состояния коррекции
+     * (порог, выдержки, подтверждение, плавность, наклон сопла, борт чаши) —
+     * в отдельной самопроверке: npm -w @fountain-studio/engine run wind-test.
+     */
+    const cfg = { ...defaultWindLimitConfig(), enabled: true };
+    /** Прогон: держим показание raw секунд secs, возвращаем состояние. */
+    const hold = (st: WindCorrectionState, raw: number, secs: number, step = 0.1): WindCorrectionState => {
+      let cur = st;
+      for (let t = 0; t < secs - 1e-9; t += step) cur = stepWindCorrection(cur, raw, step, cfg);
+      return cur;
     };
 
-    check(stepWindSmoothing(initialWindSmoothState(), 7, 0.05, cfg).smoothed === 7, 'первое показание берётся как есть — не ползём с нуля');
+    // Ниже порога не реагируем ВООБЩЕ: ветер 1–2 м/с на объекте постоянно.
+    const quiet = hold(initialWindCorrectionState(), 1.9, 60);
+    check(!quiet.active && quiet.fade === 0, 'ветер 1,9 м/с целую минуту — коррекции нет вовсе (порог 2 м/с)');
 
-    // Порыв: 0 → 12 м/с на 0,3 с. За это время расчётное значение почти не двинулось.
-    const gust = run(0, 12, 0.3);
-    check(gust < 4, `порыв 0,3 с почти не поднял расчётный ветер (${gust.toFixed(1)} м/с из 12)`);
+    // Порыв выше порога, но короче выдержки на включение — не включаемся.
+    const gust = hold(initialWindCorrectionState(), 9, 5);
+    check(!gust.active, 'порыв 9 м/с длиной 5 с коррекцию не включил (нужно 10 с подряд)');
 
-    // Устойчивый ветер: те же 12 м/с, но держатся 3 с — уже почти догнали.
-    const steady = run(0, 12, 3);
-    check(steady > 10.5, `устойчивый ветер за 3 с догнали (${steady.toFixed(1)} из 12 м/с)`);
+    // Устойчивый ветер: те же 9 м/с, но 11 с — включились.
+    const steady = hold(initialWindCorrectionState(), 9, 11);
+    check(steady.active && steady.level > 8.5, `устойчивый ветер 11 с включил коррекцию (расчётные ${steady.level.toFixed(1)} м/с)`);
 
-    // Затишье между порывами: ветер упал в ноль на 8 с — выдержка ещё не вышла,
-    // высоту не поднимаем ВООБЩЕ, иначе струи «дышали» бы на каждом провале.
-    const lull = run(steady, 0, 8);
-    check(Math.abs(lull - steady) < 0.01, `затишье 8 с — расчётный ветер не сдвинулся (${lull.toFixed(1)} м/с)`);
+    // Затишье короче выдержки на снятие — коррекция держится.
+    const lull = hold(steady, 0, 5);
+    check(lull.active && lull.fade > 0.9, 'затишье 5 с коррекцию не сняло');
 
-    // Настоящее затишье: 40 с без ветра — выдержка прошла, значение заметно упало.
-    const calm = run(steady, 0, 40);
-    check(calm < steady * 0.6, `затишье 40 с — расчётный ветер упал до ${calm.toFixed(1)} м/с (из ${steady.toFixed(1)})`);
+    // Настоящее затишье — сняли и вернули воду.
+    const calm = hold(steady, 0, 40);
+    check(!calm.active && calm.fade === 0 && calm.level === 0, 'затишье 40 с — коррекция снята полностью');
 
-    // Мусор с датчика (обрыв линии) игнорируется целиком, а не «частично сглаживается».
-    check(stepWindSmoothing({ smoothed: 5, belowSec: 0 }, 900, 1, cfg).smoothed === 5, 'невозможное показание 900 м/с отброшено, значение не изменилось');
-    check(stepWindSmoothing({ smoothed: 5, belowSec: 0 }, -3, 1, cfg).smoothed === 5, 'отрицательное показание отброшено');
+    // Мусор с датчика игнорируется целиком, а не «частично сглаживается».
+    check(stepWindCorrection(steady, 900, 1, cfg) === steady, 'невозможное показание 900 м/с отброшено — состояние не изменилось');
+    check(stepWindCorrection(steady, -3, 1, cfg) === steady, 'отрицательное показание отброшено');
   }
   {
     /**
@@ -1842,9 +1850,16 @@ async function main(): Promise<void> {
       tauSec: 4,
       minPercent: 20,
       stopSpeed: 12,
-      attackSec: 0.2,
-      releaseSec: 0.5,
-      releaseHoldSec: 0.3,
+      // Выдержки укорочены: здесь проверяется цепочка «показание → насос», а
+      // сами выдержки — в wind-test. Ждать по десять секунд на каждый шаг ни
+      // к чему: с заводскими значениями тест ждал бы минуту.
+      activateHoldSec: 0.3,
+      deactivateHoldSec: 0.3,
+      adjustHoldSec: 0.1,
+      fastHoldSec: 0.2,
+      fadeInSec: 0.2,
+      fadeOutSec: 0.2,
+      levelFallPerSec: 50,
     };
     check(
       computeWindLimitPercent(0.5, testCfg, 6) === 100,
@@ -1892,7 +1907,10 @@ async function main(): Promise<void> {
     check(true, 'без показания ветра — насос и свет на полном значении (200/200)');
 
     send({ type: 'setWindSpeed', speedMs: 15 }); // выше stopSpeed — полное глушение
-    await waitFor('насос заглушен ветром', () => ch(1) === 0, 2000);
+    // Ждём с запасом: коррекция включается через выдержку и вводится плавно
+    // (в этом тесте выдержки укорочены до десятых долей секунды). Проверяем
+    // ЧТО заглушило, а не за сколько миллисекунд.
+    await waitFor('насос заглушен ветром', () => ch(1) === 0, 5000);
     check(ch(10) === 200, 'ветер не трогает свет — канал R rgb1 остался 200');
     check(true, 'ветер 15 м/с (выше stopSpeed 12) → насос заглушен со 200 до 0');
 

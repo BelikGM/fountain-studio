@@ -581,4 +581,14 @@ export type ServerMessage =
   /** Статус автозапуска (шлётся при подключении и после setAutostart). */
   | { type: 'autostartState'; supported: boolean; enabled: boolean; error?: string }
   /** Ветер и текущее ограничение (шлётся при подключении и после setWindSpeed). */
-  | { type: 'windState'; speedMs: number | null; limitPercent: number; config: WindLimitConfig };
+  | {
+      type: 'windState';
+      /** Сырое показание датчика (или ручного ввода), м/с — что говорит прибор. */
+      speedMs: number | null;
+      limitPercent: number;
+      config: WindLimitConfig;
+      /** Коррекция действует сейчас. false при заданном ветре — идёт выдержка. */
+      correcting: boolean;
+      /** Расчётная скорость, по которой режутся насосы, м/с; null — коррекции нет. */
+      calcSpeedMs: number | null;
+    };

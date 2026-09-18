@@ -351,9 +351,28 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
                 }}
               />
             </label>
+            {/*
+              Три разных состояния, и путать их нельзя. Ветер введён, но
+              коррекция ещё не началась — идёт выдержка (10 с): без этой
+              подписи оператор решил бы, что ограничение не работает.
+            */}
             {windState && windState.limitPercent < 100 && (
-              <span className="warn">⚠ струи ограничены до {windState.limitPercent}%</span>
+              <span className="warn">
+                ⚠ струи ограничены до {windState.limitPercent}%
+                {windState.calcSpeedMs !== null ? ` (расчётные ${windState.calcSpeedMs.toFixed(1)} м/с)` : ''}
+              </span>
             )}
+            {windState &&
+              !windState.correcting &&
+              windState.speedMs !== null &&
+              windState.speedMs >= windState.config.deadbandSpeed && (
+                <span className="dim">⏳ ждём {windState.config.activateHoldSec} с подряд — потом снизим</span>
+              )}
+            {windState &&
+              windState.speedMs !== null &&
+              windState.speedMs < windState.config.deadbandSpeed && (
+                <span className="dim">ниже порога {windState.config.deadbandSpeed} м/с — не реагируем</span>
+              )}
           </div>
         )}
 

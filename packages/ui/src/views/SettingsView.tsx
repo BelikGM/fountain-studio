@@ -874,15 +874,56 @@ function WindLimitPanel({ engine }: { engine: EngineConnection }) {
     <section className="panel">
       <h2>Датчик ветра</h2>
       <p className="dim">
-        Ветер выше порога — мощность насосов (высота струй) снижается; свет не трогается. Пока без реального
-        датчика — оператор вводит текущую скорость ветра вручную на вкладке «Отладка».
+        Ветер выше порога — мощность насосов (высота струй) снижается; свет не трогается. Предел считается
+        по ТЕКУЩЕЙ высоте струи и по расстоянию до борта чаши, поэтому приглушённую струю коррекция не
+        трогает, а форсунку у борта режет сильнее центральной. Показание вводится вручную в строке
+        состояния, пока не подключён анемометр.
       </p>
       <div className="form-row">
         <label className="field">
           <input type="checkbox" checked={cfg.enabled} onChange={(e) => update({ enabled: e.target.checked })} />{' '}
           Включено
         </label>
-        <label className="field" data-hint="Насколько далеко от оси струи вода ещё может падать. 0,6 м — это примерно «в чашу, а не на дорожку». Меньше значение — раньше и сильнее снижаем.">
+        <label className="field" data-hint="Ниже этого ветра не делаем ничего и ни для каких струй. Ветер 1–2 м/с на объекте бывает постоянно, и реагировать на него — значит шевелить воду весь день без причины.">
+          Порог, м/с:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={0}
+            max={20}
+            step={0.5}
+            disabled={!cfg.enabled}
+            value={cfg.deadbandSpeed}
+            onChange={(e) => update({ deadbandSpeed: Math.max(0, Math.min(20, Number(e.target.value) || 0)) })}
+          />
+        </label>
+        <label className="field" data-hint="Сколько секунд ветер должен держаться выше порога НЕПРЕРЫВНО, прежде чем снижать струи. Порыв короче этого игнорируется: мгновенно отреагировать всё равно нельзя — насос не сбрасывает частоту сразу, а вода уже в воздухе.">
+          Ждать, с:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={0}
+            max={120}
+            step={1}
+            disabled={!cfg.enabled}
+            value={cfg.activateHoldSec}
+            onChange={(e) => update({ activateHoldSec: Math.max(0, Math.min(120, Number(e.target.value) || 0)) })}
+          />
+        </label>
+        <label className="field" data-hint="Сколько секунд ветер должен держаться НИЖЕ порога, чтобы коррекция снялась совсем и струи вернулись на полную высоту.">
+          Отпускать, с:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={0}
+            max={300}
+            step={1}
+            disabled={!cfg.enabled}
+            value={cfg.deactivateHoldSec}
+            onChange={(e) => update({ deactivateHoldSec: Math.max(0, Math.min(300, Number(e.target.value) || 0)) })}
+          />
+        </label>
+        <label className="field" data-hint="Насколько далеко ветер может уводить струю от её обычного места. 0,6 м — «заметно, но ещё рисунок, а не косой столб». Этот предел работает для любой форсунки, где бы она ни стояла.">
           Допустимый снос, м:{' '}
           <input
             className="input input-num"
@@ -893,6 +934,19 @@ function WindLimitPanel({ engine }: { engine: EngineConnection }) {
             disabled={!cfg.enabled}
             value={cfg.marginM}
             onChange={(e) => update({ marginM: Math.max(0.05, Math.min(10, Number(e.target.value) || 0.6)) })}
+          />
+        </label>
+        <label className="field" data-hint="Насколько внутрь борта должна падать вода. Нужен потому, что вода падает не точкой, а пятном брызг: «ровно на борт» — это уже на дорожку. Считается по геометрии чаши из схемы.">
+          Запас у борта, м:{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={0}
+            max={5}
+            step={0.1}
+            disabled={!cfg.enabled}
+            value={cfg.edgeReserveM}
+            onChange={(e) => update({ edgeReserveM: Math.max(0, Math.min(5, Number(e.target.value) || 0)) })}
           />
         </label>
         <label className="field" data-hint="Насколько быстро ветер разгоняет воду. Плотная связная струя — 5–6 с, обычная — 4, сильно распылённая или туман — 2–2,5. Чем меньше, тем сильнее сносит.">
@@ -937,8 +991,10 @@ function WindLimitPanel({ engine }: { engine: EngineConnection }) {
       {cfg.enabled && (
         <>
           <p className="dim">
-            Снос растёт линейно с высотой струи, поэтому ограничение у каждой струи своё: высокие режутся
-            заметно раньше низких. В таблице — сколько процентов мощности останется.
+            Снос растёт с высотой струи, поэтому предел у каждой струи свой: высокие режутся заметно
+            раньше низких. В таблице — предел мощности для струи, которая сейчас работает НА ПОЛНУЮ;
+            приглушённой струи коррекция не касается, пока её высота укладывается в допуск. Расстояние
+            до борта здесь не учтено — у форсунок у самого борта предел будет ниже.
           </p>
           <table className="table">
             <thead>
