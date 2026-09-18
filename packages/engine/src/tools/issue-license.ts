@@ -16,11 +16,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  *
  * Команды — что каждая делает:
  *
- *  · keygen                 — один раз в жизни проекта: создаёт пару ключей
- *                              (приватный + публичный). Если приватный ключ
- *                              уже есть, отказывается — не перезаписывает
- *                              молча (иначе все выданные раньше лицензии
- *                              перестанут проверяться).
+ *  · keygen                 — ВАМ ЭТО УЖЕ НЕ НУЖНО: ключи созданы 25.08.2026
+ *                              и лежат в license-keys/. Команда делает пару
+ *                              ключей — «печать продавца», которой заверяются
+ *                              все лицензии. Она одна на ВЕСЬ продукт, а не
+ *                              на клиента и не на объект: сколько бы
+ *                              покупателей ни было, печать та же. Клиентам
+ *                              keygen запускать не нужно никогда — они
+ *                              получают готовый файл лицензии.
+ *                              Повторный запуск = НОВАЯ печать, и все ранее
+ *                              выданные лицензии (в том числе уже уехавшие
+ *                              клиентам) мгновенно перестают проходить
+ *                              проверку. Поэтому при существующем ключе
+ *                              команда отказывается работать.
  *  · issue                  — ВЫПУСКАЕТ лицензию: подписывает privateKey'ом
  *                              файл для конкретного --machine и печатает его
  *                              на диск (--out, по умолчанию рядом, в текущей
@@ -63,9 +71,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  *                              license.revocationUrl), чтобы движки покупателей
  *                              сами его скачивали и проверяли себя.
  *
- * Примеры:
+ * Примеры (keygen тут нет намеренно — он уже сделан и больше не нужен):
  *
- *   npx tsx packages/engine/src/tools/issue-license.ts keygen
  *   npx tsx packages/engine/src/tools/issue-license.ts issue --machine <id> --name "ООО Ромашка" --plan pro --duration trial
  *   npx tsx packages/engine/src/tools/issue-license.ts issue --machine <id> --name "ООО Ромашка" --plan max --duration year --device "Комп на объекте"
  *   npx tsx packages/engine/src/tools/issue-license.ts issue --machine <id> --name "ООО Ромашка" --plan max --duration forever --out "C:\...\license.json"
@@ -591,7 +598,8 @@ else {
   const P = 'npx tsx packages/engine/src/tools/issue-license.ts';
   console.log('Запускать из папки репозитория (cd C:\\fountain-studio), команда:\n');
   console.log(`  ${P} keygen`);
-  console.log('    — один раз в жизни проекта: создать пару ключей.\n');
+  console.log('    — создать «печать продавца» (пару ключей). Она одна на весь продукт и УЖЕ создана —');
+  console.log('      эта команда вам больше не нужна, клиентам её запускать не нужно никогда.\n');
   console.log(`  ${P} issue --machine <id> --name "<имя>" --plan <pro|max> --duration <trial|year|forever> [--device "<комп>"] [--out <файл>] [--note "<пометка>"]`);
   console.log(`  ${P} issue --machine <id> --name "<имя>" --plan <pro|max> --days <N> [--device "<комп>"] [--out <файл>] [--note "<пометка>"]`);
   console.log('    — выпустить лицензию: файл в --out (или в текущей папке) и отдать покупателю. Срок — либо пресет, либо --days.\n');

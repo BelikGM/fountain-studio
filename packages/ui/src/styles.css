@@ -190,6 +190,26 @@ body {
 }
 .license-modal { width: min(520px, calc(100vw - 48px)); }
 
+/* Полоса о конце подписки — поверх всех вкладок, под шапкой. Не модальная:
+   работать не мешает, но и не даёт забыть. */
+.license-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--warn-bg);
+  border-bottom: 1px solid var(--warn);
+  color: var(--warn-text);
+  font-size: 13px;
+}
+.license-banner span { flex: 1; }
+/* Льготные дни — счёт уже пошёл, поэтому тревожнее по цвету. */
+.license-banner-grace {
+  background: var(--danger-bg);
+  border-bottom-color: var(--danger);
+  color: var(--danger-text);
+}
+
 /* Экран приветствия для совсем новой установки (WelcomeView) — карточки тарифов. */
 .welcome-panel { max-width: 900px; }
 .plan-grid {

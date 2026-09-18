@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { EXPIRY_WARNING_DAYS, daysUntilExpiry } from '@fountain-studio/shared';
+import { VENDOR_EMAIL } from './plans';
 import { comboFromEvent, getCombo } from './hotkeys';
 import { registerTabNavigator } from './navigate';
 import { isOperatorLocked } from './operatorMode';
@@ -93,6 +94,9 @@ const TABS: { id: Tab; label: string; full: string }[] = [
  */
 const TAB_STORAGE_KEY = 'fs-tab';
 
+/** Дата (toDateString), когда полосу о подписке скрыли — назавтра она вернётся. */
+const LICENSE_BANNER_KEY = 'fs-license-banner-hidden-on';
+
 function loadTab(): Tab {
   try {
     const saved = localStorage.getItem(TAB_STORAGE_KEY);
@@ -161,6 +165,29 @@ export function App() {
   const daysLeft = licenseStatus?.licensed ? daysUntilExpiry(licenseStatus.expiresAt) : null;
   const inGrace = licenseStatus?.grace === true;
   const expiringSoon = inGrace || (daysLeft !== null && daysLeft <= EXPIRY_WARNING_DAYS);
+  /*
+   * «Скрыть» полосу о подписке — только до конца суток: храним дату, а не
+   * флаг. Насовсем прятать нельзя (человек забудет и встанет посреди
+   * сезона), но и не давать убрать с глаз на время работы — злить без
+   * пользы. Хранится на этом компьютере, в проект не попадает.
+   */
+  const [bannerHiddenOn, setBannerHiddenOn] = useState<string>(() => {
+    try {
+      return localStorage.getItem(LICENSE_BANNER_KEY) ?? '';
+    } catch {
+      return '';
+    }
+  });
+  const today = new Date().toDateString();
+  const bannerHidden = bannerHiddenOn === today;
+  const hideBannerForToday = (): void => {
+    setBannerHiddenOn(today);
+    try {
+      localStorage.setItem(LICENSE_BANNER_KEY, today);
+    } catch {
+      // Приватный режим — полоса просто останется до перезагрузки страницы.
+    }
+  };
   const [showSaved, setShowSaved] = useState(false);
   const [licenseOpen, setLicenseOpen] = useState(false);
   /**
@@ -437,6 +464,28 @@ export function App() {
       </header>
       <ConfirmHost />
       <HintHost />
+      {/*
+        Полоса о конце подписки. Значка в шапке мало: человек работает во
+        вкладках и на маленькую иконку не смотрит, а пропустить окончание —
+        это встать посреди сезона. Полоса висит на ВСЕХ вкладках; закрыть её
+        можно, но только до конца суток — назавтра вернётся, и чем ближе
+        конец, тем меньше остаётся способов «не заметить».
+      */}
+      {(expiringSoon || inGrace) && !bannerHidden && (
+        <div className={inGrace ? 'license-banner license-banner-grace' : 'license-banner'}>
+          <span>
+            {inGrace
+              ? `⚠ Оплата просрочена. Программа закроется через ${licenseStatus?.graceDaysLeft ?? 0} дн. — продлите подписку: ${VENDOR_EMAIL}`
+              : `⚠ Подписка заканчивается через ${daysLeft} дн. Продлите заранее: ${VENDOR_EMAIL}`}
+          </span>
+          <button className="btn btn-small" onClick={() => setLicenseOpen(true)}>
+            Подробнее
+          </button>
+          <button className="btn btn-small" data-hint="Скрыть до завтра — полоса вернётся на следующий день" onClick={hideBannerForToday}>
+            Скрыть
+          </button>
+        </div>
+      )}
       {helpOpen && <HelpView onClose={() => setHelpOpen(false)} />}
       {licenseOpen && <LicenseView engine={engine} onClose={() => setLicenseOpen(false)} />}
       {/*
