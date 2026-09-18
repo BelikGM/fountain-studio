@@ -247,6 +247,8 @@ export interface TelegramStatus {
   queued: number;
   dailyHour: number;
   alarms: boolean;
+  /** Принимать ли команды и кнопки из чата — единственная дорога снаружи внутрь. */
+  commands: boolean;
   /** Имя бота (@name) по токену — чтобы знать, куда слать /start. */
   botName: string;
   /** Номера тем форума по разделам; 0 — раздел идёт в общий чат. */
@@ -470,6 +472,7 @@ export type ClientMessage =
       enabled?: boolean;
       dailyHour?: number;
       alarms?: boolean;
+      commands?: boolean;
       topicAlarm?: number;
       topicReport?: number;
       topicState?: number;

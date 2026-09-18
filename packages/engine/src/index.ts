@@ -91,6 +91,16 @@ const telegram = new TelegramNotifier(
   () => namesForRdm(store.project.devices),
 );
 
+/**
+ * Команды из чата → действие на объекте. Отправщик уведомлений намеренно не
+ * знает про движок (он про чат), поэтому связь делается здесь — в одном месте,
+ * где видно и то и другое.
+ */
+telegram.onAction = (action) => {
+  if (action.type === 'stopAll') engine.stopAllPlayback();
+  else if (action.type === 'blackout') engine.blackout();
+};
+
 engine.playback.onShowAudio = (show) => {
   if (show && show.audioFile) player.play(show.audioFile, show.cuts);
   else player.stop();

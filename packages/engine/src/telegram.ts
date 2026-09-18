@@ -11,8 +11,18 @@ import {
   type SiteSnapshot,
   type TelegramKind,
 } from './telegramFormat';
+import {
+  ackKeyboard,
+  botCommands,
+  handleTelegramUpdate,
+  type TelegramAction,
+  type TgEffect,
+  type TgKeyboard,
+  type TgUpdate,
+} from './telegramCommands';
 
 export type { TelegramKind } from './telegramFormat';
+export type { TelegramAction } from './telegramCommands';
 
 /**
  * Уведомления в Telegram — отчёты, аварии и состояние объекта.
@@ -62,6 +72,15 @@ export interface TelegramConfig {
   /** Слать ли аварии сразу. */
   alarms: boolean;
   /**
+   * Принимать ли команды и нажатия кнопок из чата.
+   *
+   * Отдельной галочкой, потому что это единственная дорога СНАРУЖИ ВНУТРЬ:
+   * всё остальное бот только рассказывает. Команды принимаются лишь из чата,
+   * заданного в `chatId`, а «стоп» и «погасить» ещё и спрашивают
+   * подтверждение — но выключить целиком всё равно должно быть можно.
+   */
+  commands: boolean;
+  /**
    * Номера тем форума по разделам — если чат сделан группой-форумом и темы
    * заведены вручную. 0 — раздел не привязан к теме.
    */
@@ -88,6 +107,7 @@ export function defaultTelegramConfig(): TelegramConfig {
     enabled: false,
     dailyHour: 9,
     alarms: true,
+    commands: true,
     topicAlarm: 0,
     topicReport: 0,
     topicState: 0,
@@ -104,6 +124,8 @@ interface Queued {
   /** Объект — по нему выбирается тема. */
   site: string;
   atMs: number;
+  /** Кнопки под сообщением: у аварий — «Принято». */
+  keyboard?: TgKeyboard;
 }
 
 const MAX_QUEUE = 500;
@@ -148,6 +170,27 @@ export class TelegramNotifier {
   /** Неотправленные сообщения — у объекта: это его события, а не программы. */
   private queueFile: string;
   private unsubscribe: (() => void) | null = null;
+  /**
+   * Что делать по команде из чата. Ставится снаружи (index.ts), потому что
+   * движок отправщику уведомлений знать незачем: здесь чат, там объект.
+   */
+  onAction: ((action: TelegramAction) => void) | null = null;
+  /** Следующий номер обновления для getUpdates — Telegram отдаёт их по одному разу. */
+  private updateOffset = 0;
+  /** Идёт ли длинный опрос: два одновременно Telegram не разрешает. */
+  private polling = false;
+  /** Совсем остановлены (закрытие программы) — цикл опроса не перезапускаем. */
+  private stopped = false;
+  /**
+   * Чат, который сам написал боту, пока получатель не задан. Длинный опрос
+   * съедает обновления, и прежний способ (перечитать getUpdates в
+   * discoverChatId) после его включения находил бы пустоту.
+   */
+  private lastCandidateChatId = '';
+  /** Меню команд у бота уже выставлено — второй раз незачем. */
+  private menuSet = false;
+  /** О чужом чате пишем в журнал не чаще раза в час: иначе завалит. */
+  private lastRejectLogMs = 0;
 
   constructor(
     files: { secretsFile: string; queueFile: string },
@@ -237,6 +280,7 @@ export class TelegramNotifier {
     queued: number;
     dailyHour: number;
     alarms: boolean;
+    commands: boolean;
     botName: string;
     topicAlarm: number;
     topicReport: number;
@@ -253,6 +297,7 @@ export class TelegramNotifier {
       queued: this.queue.length,
       dailyHour: this.cfg.dailyHour,
       alarms: this.cfg.alarms,
+      commands: this.cfg.commands,
       botName: this.botName,
       topicAlarm: this.cfg.topicAlarm,
       topicReport: this.cfg.topicReport,
@@ -295,6 +340,138 @@ export class TelegramNotifier {
     void this.whoAmI();
     this.timer = setInterval(() => void this.tick(), 60_000);
     void this.tick();
+    void this.startPolling();
+  }
+
+  /**
+   * Длинный опрос обновлений — команды и нажатия кнопок.
+   *
+   * Почему длинный опрос, а не раз в минуту вместе с очередью: человек нажал
+   * «Состояние» и ждёт ответа сейчас, а не через минуту. Telegram сам держит
+   * запрос до 25 секунд и отвечает сразу, как появится сообщение, — это и
+   * дешевле по трафику, чем частые пустые опросы.
+   *
+   * Почему не webhook: на объекте нет внешнего адреса и сертификата, а часто
+   * нет и интернета. Опрос работает через любой NAT и сам возобновляется,
+   * когда связь вернётся.
+   */
+  private async startPolling(): Promise<void> {
+    if (this.polling) return;
+    this.polling = true;
+    try {
+      while (!this.stopped && this.cfg.enabled && this.cfg.commands && this.cfg.token.trim() !== '') {
+        // Приоритет — не потерять обновления: offset двигаем только после
+        // разбора, иначе упавший разбор проглотил бы команду молча.
+        const list = await this.api<TgUpdate[]>('getUpdates', { offset: this.updateOffset, timeout: 25, limit: 20 }, 40_000);
+        if (list === null) {
+          // Связи нет или Telegram отказал — подождём и попробуем снова.
+          // Без паузы при отсутствии интернета получился бы цикл впустую.
+          await sleep(10_000);
+          continue;
+        }
+        for (const u of list) {
+          if (typeof u.update_id === 'number') this.updateOffset = Math.max(this.updateOffset, u.update_id + 1);
+          this.rememberChatCandidate(u);
+          try {
+            await this.applyEffects(handleTelegramUpdate(u, this.getSiteName(), this.commandContext()), topicOf(u));
+          } catch (err) {
+            console.error('[telegram] не смог обработать команду:', err);
+          }
+        }
+      }
+    } finally {
+      this.polling = false;
+    }
+  }
+
+  private commandContext(): Parameters<typeof handleTelegramUpdate>[2] {
+    const leftMs = this.cfg.quietUntilMs - Date.now();
+    return {
+      chatId: this.cfg.chatId.trim(),
+      botName: this.botName,
+      commands: this.cfg.commands,
+      quietHoursLeft: leftMs > 0 ? Math.ceil(leftMs / 3600_000) : 0,
+    };
+  }
+
+  /**
+   * Пока получатель не задан, запоминаем, кто написал боту /start в личку или
+   * куда его добавили. Те же два случая, что и в discoverChatId: в Guest Chat
+   * Mode боту пишут из чужих чатов, и посторонний не должен стать получателем
+   * аварий объекта.
+   */
+  private rememberChatCandidate(u: TgUpdate): void {
+    if (this.cfg.chatId.trim() !== '') return;
+    const privateStart = u.message?.chat?.type === 'private' && (u.message.text ?? '').startsWith('/start');
+    const added = u.my_chat_member?.chat && u.my_chat_member.chat.type !== 'private';
+    const id = privateStart ? u.message?.chat?.id : added ? u.my_chat_member?.chat?.id : undefined;
+    if (typeof id === 'number') this.lastCandidateChatId = String(id);
+  }
+
+  /** Выполнить решения разбора по порядку. */
+  private async applyEffects(effects: TgEffect[], topicId: number): Promise<void> {
+    for (const e of effects) {
+      switch (e.kind) {
+        case 'skip':
+          // Чужой чат — след в журнале нужен (это попытка управлять объектом),
+          // но не чаще раза в час, иначе бот в открытой группе завалит журнал.
+          if (e.why.startsWith('чужой чат') || e.why.startsWith('нажатие из чужого')) {
+            if (Date.now() - this.lastRejectLogMs > 3600_000) {
+              this.lastRejectLogMs = Date.now();
+              eventLog.log('telegram', `команда из постороннего чата отклонена (${e.why})`, 'warn');
+            }
+          }
+          break;
+        case 'reply':
+          await this.send(e.html, topicId > 0 ? topicId : await this.siteTopic(this.getSiteName()), e.keyboard);
+          break;
+        case 'toast':
+          await this.api('answerCallbackQuery', { callback_query_id: e.callbackId, text: e.text });
+          break;
+        case 'setButtons':
+          await this.api('editMessageReplyMarkup', {
+            chat_id: this.cfg.chatId,
+            message_id: e.messageId,
+            reply_markup: { inline_keyboard: toInline(e.keyboard) },
+          });
+          break;
+        case 'do':
+          await this.runAction(e.action, topicId);
+          break;
+      }
+    }
+  }
+
+  /**
+   * Действие по команде. «Состояние» и «отчёт» отвечаем СРАЗУ, минуя очередь:
+   * очередь существует, чтобы авария дошла через час, когда появится связь, а
+   * ответ на вопрос через час не нужен никому.
+   */
+  private async runAction(action: TelegramAction, topicId: number): Promise<void> {
+    switch (action.type) {
+      case 'state': {
+        const snap = this.getSnapshot();
+        await this.send(formatState(snap), topicId > 0 ? topicId : await this.siteTopic(snap.site));
+        return;
+      }
+      case 'report': {
+        const snap = this.getSnapshot();
+        await this.send(formatReport(snap), topicId > 0 ? topicId : await this.siteTopic(snap.site));
+        return;
+      }
+      case 'quiet':
+        this.setQuiet(action.hours);
+        return;
+      case 'stopAll':
+      case 'blackout':
+        if (!this.onAction) {
+          eventLog.log('telegram', `команда «${action.type}» пришла, но выполнять её некому`, 'warn');
+          return;
+        }
+        eventLog.log('telegram', action.type === 'stopAll' ? 'остановка воспроизведения по команде из Telegram' : 'гашение по команде из Telegram', 'warn');
+        this.onAction(action);
+        return;
+    }
   }
 
   /** Событие журнала → авария в очередь, одинаковые подряд — одним сообщением. */
@@ -331,6 +508,10 @@ export class TelegramNotifier {
       'alarm',
       formatAlarm(site, { level: e.level, source: e.source, message: this.withNames(e.message), tsMs: e.tsMs }, repeats),
       site,
+      // Кнопка «Принято» — чтобы по чату было видно, кто взял аварию в работу,
+      // и двое не поехали на объект одновременно. Только когда команды
+      // включены: иначе нажатие никто не обработает и часики будут крутиться.
+      this.cfg.commands ? ackKeyboard() : undefined,
     );
   }
 
@@ -360,8 +541,8 @@ export class TelegramNotifier {
     }
   }
 
-  enqueue(kind: TelegramKind, html: string, site = this.getSiteName()): void {
-    this.queue.push({ kind, html, site, atMs: Date.now() });
+  enqueue(kind: TelegramKind, html: string, site = this.getSiteName(), keyboard?: TgKeyboard): void {
+    this.queue.push({ kind, html, site, atMs: Date.now(), keyboard });
     if (this.queue.length > MAX_QUEUE) this.queue = this.queue.slice(-MAX_QUEUE);
     this.saveQueue();
   }
@@ -399,7 +580,7 @@ export class TelegramNotifier {
       while (this.queue.length > 0) {
         const item = this.queue[0];
         if (!item) break;
-        const ok = await this.deliver(item.kind, item.site, item.html);
+        const ok = await this.deliver(item.kind, item.site, item.html, item.keyboard);
         if (!ok) break; // связи нет — оставляем в очереди, попробуем позже
         this.queue.shift();
         this.saveQueue();
@@ -412,7 +593,9 @@ export class TelegramNotifier {
   /** Кому слать: если не задано — узнаём из того, кто написал боту. */
   private async ensureChat(): Promise<boolean> {
     if (this.cfg.chatId.trim() !== '') return true;
-    const found = await this.discoverChatId();
+    // Сначала то, что уже видел цикл опроса: он забирает обновления себе, и
+    // повторный getUpdates в discoverChatId нашёл бы пустоту.
+    const found = this.lastCandidateChatId !== '' ? this.lastCandidateChatId : await this.discoverChatId();
     if (!found) return false;
     this.cfg.chatId = found;
     this.saveSecrets();
@@ -468,16 +651,16 @@ export class TelegramNotifier {
   }
 
   /** Отправить в нужное место; тему, которую удалили руками, заводим заново. */
-  private async deliver(kind: TelegramKind, site: string, html: string): Promise<boolean> {
+  private async deliver(kind: TelegramKind, site: string, html: string, keyboard?: TgKeyboard): Promise<boolean> {
     const manual = this.manualTopic(kind);
     const topic = manual > 0 ? manual : await this.siteTopic(site);
-    const r = await this.send(html, topic);
+    const r = await this.send(html, topic, keyboard);
     if (r.ok) return true;
     if (topic > 0 && manual === 0 && /thread|topic/i.test(r.description)) {
       delete this.cfg.siteTopics[site];
       this.saveSecrets();
       const again = await this.siteTopic(site);
-      return (await this.send(html, again)).ok;
+      return (await this.send(html, again, keyboard)).ok;
     }
     if (r.description !== '') console.error('[telegram] не отправлено:', r.description);
     return false;
@@ -490,6 +673,12 @@ export class TelegramNotifier {
     if (!j) return;
     if (j.username) this.botName = '@' + j.username;
     this.botTopics = j.has_topics_enabled === true;
+    // Меню команд — чтобы в Telegram они были видны списком и нажимались, а
+    // не набирались по памяти. Выставляем один раз за запуск: список меняется
+    // только с версией программы.
+    if (!this.menuSet && this.cfg.commands) {
+      this.menuSet = (await this.api('setMyCommands', { commands: botCommands() })) !== null;
+    }
   }
 
   /**
@@ -517,22 +706,33 @@ export class TelegramNotifier {
     return null;
   }
 
-  /** Вызов Bot API: результат или null (нет связи, отказ). */
-  private async api<T>(method: string, body: Record<string, unknown>): Promise<T | null> {
+  /**
+   * Вызов Bot API: результат или null (нет связи, отказ).
+   *
+   * Свой таймаут обязателен: у длинного опроса запрос висит 25 секунд штатно,
+   * а на подвисшем модеме fetch без ограничения не вернётся никогда — цикл
+   * опроса встанет намертво и команды перестанут приходить совсем.
+   */
+  private async api<T>(method: string, body: Record<string, unknown>, timeoutMs = 15_000): Promise<T | null> {
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), timeoutMs);
     try {
       const r = await fetch(`https://api.telegram.org/bot${this.cfg.token}/${method}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
+        signal: abort.signal,
       });
       const j = (await r.json()) as { ok: boolean; result?: T };
       return j.ok && j.result !== undefined ? j.result : null;
     } catch {
       return null;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
-  private async send(html: string, topicId = 0): Promise<{ ok: boolean; description: string }> {
+  private async send(html: string, topicId = 0, keyboard?: TgKeyboard): Promise<{ ok: boolean; description: string }> {
     try {
       const body: Record<string, unknown> = {
         chat_id: this.cfg.chatId,
@@ -541,6 +741,7 @@ export class TelegramNotifier {
         link_preview_options: { is_disabled: true },
       };
       if (topicId > 0) body.message_thread_id = topicId;
+      if (keyboard && keyboard.length > 0) body.reply_markup = { inline_keyboard: toInline(keyboard) };
       const r = await fetch(`https://api.telegram.org/bot${this.cfg.token}/sendMessage`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -592,6 +793,7 @@ export class TelegramNotifier {
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     this.unsubscribe?.();
   }
@@ -599,4 +801,18 @@ export class TelegramNotifier {
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** Кнопки в вид, который понимает Bot API. */
+function toInline(keyboard: TgKeyboard): { text: string; callback_data: string }[][] {
+  return keyboard.map((row) => row.map((b) => ({ text: b.text, callback_data: b.data })));
+}
+
+/** Тема, из которой пришла команда: отвечать надо туда же, где спросили. */
+function topicOf(u: TgUpdate): number {
+  return u.message?.message_thread_id ?? u.callback_query?.message?.message_thread_id ?? 0;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

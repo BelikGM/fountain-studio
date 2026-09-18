@@ -616,6 +616,7 @@ export function startServer(
           if (typeof msg.enabled === 'boolean') patch.enabled = msg.enabled;
           if (typeof msg.dailyHour === 'number') patch.dailyHour = Math.max(0, Math.min(23, Math.round(msg.dailyHour)));
           if (typeof msg.alarms === 'boolean') patch.alarms = msg.alarms;
+          if (typeof msg.commands === 'boolean') patch.commands = msg.commands;
           const topic = (v: unknown): number | undefined =>
             typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.round(v)) : undefined;
           const ta = topic(msg.topicAlarm);

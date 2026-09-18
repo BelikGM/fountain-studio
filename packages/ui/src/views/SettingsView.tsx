@@ -599,6 +599,17 @@ function TelegramPanel({ engine }: { engine: EngineConnection }) {
           />{' '}
           Слать аварии
         </label>
+        <label
+          className="field"
+          data-hint="Разрешить управление из чата: /state, /report, /quiet, кнопка «Принято» под аварией. «Стоп» и «Погасить» спрашивают подтверждение кнопкой. Команды принимаются только из чата-получателя, указанного ниже."
+        >
+          <input
+            type="checkbox"
+            checked={telegram.commands}
+            onChange={(e) => send({ type: 'updateTelegram', commands: e.target.checked })}
+          />{' '}
+          Команды из чата
+        </label>
         <label className="field">
           Отчёт в:{' '}
           <input
