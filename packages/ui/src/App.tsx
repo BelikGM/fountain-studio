@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { EXPIRY_WARNING_DAYS, daysUntilExpiry } from '@fountain-studio/shared';
 import { comboFromEvent, getCombo } from './hotkeys';
 import { registerTabNavigator } from './navigate';
 import { isOperatorLocked } from './operatorMode';
@@ -151,6 +152,14 @@ export function App() {
    */
   const access = licenseStatus?.access ?? 'max';
   const unlicensed = access !== 'max';
+  /*
+   * Сколько осталось до конца подписки. Предупреждаем заранее (порог —
+   * EXPIRY_WARNING_DAYS), чтобы продление не сваливалось человеку как
+   * неожиданность в день, когда фонтан уже должен работать: списаться и
+   * оплатить нужно время.
+   */
+  const daysLeft = licenseStatus?.licensed ? daysUntilExpiry(licenseStatus.expiresAt) : null;
+  const expiringSoon = daysLeft !== null && daysLeft <= EXPIRY_WARNING_DAYS;
   const [showSaved, setShowSaved] = useState(false);
   const [licenseOpen, setLicenseOpen] = useState(false);
   /**
@@ -400,7 +409,7 @@ export function App() {
           ))}
         </nav>
         <button
-          className={unlicensed ? 'help-btn license-btn license-btn-warn' : 'help-btn license-btn'}
+          className={unlicensed || expiringSoon ? 'help-btn license-btn license-btn-warn' : 'help-btn license-btn'}
           data-hint={
             access === 'none'
               ? 'Лицензия не активирована — нажмите, чтобы выбрать тариф'
@@ -408,11 +417,13 @@ export function App() {
                 ? licenseStatus?.licensed
                   ? 'Тариф Pro — воспроизведение и расписание. Нужен полный доступ? Оформите Max'
                   : `${licenseStatus?.reason ?? 'Срок истёк'} — доступны воспроизведение и расписание`
-                : 'Лицензия'
+                : expiringSoon
+                  ? `Подписка заканчивается через ${daysLeft} дн. — напишите нам, чтобы продлить`
+                  : 'Лицензия'
           }
           onClick={() => setLicenseOpen(true)}
         >
-          {access === 'none' ? '🔒' : access === 'pro' ? '⏳' : '🔑'}
+          {access === 'none' ? '🔒' : access === 'pro' ? '⏳' : expiringSoon ? '⏳' : '🔑'}
         </button>
         <button className="help-btn" data-hint="Справка" onClick={() => setHelpOpen(true)}>
           ?

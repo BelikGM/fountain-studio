@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { PLANS, priceLine } from '../plans';
+import { EXPIRY_WARNING_DAYS, daysUntilExpiry } from '@fountain-studio/shared';
+import { PLANS, VENDOR_EMAIL, priceLine } from '../plans';
 import type { EngineConnection } from '../useEngine';
 
 /**
@@ -38,6 +39,7 @@ export function LicenseView({ engine, onClose }: { engine: EngineConnection; onC
   };
 
   const planInfo = licenseStatus ? PLANS.find((p) => p.id === licenseStatus.plan) : undefined;
+  const daysLeft = licenseStatus?.licensed ? daysUntilExpiry(licenseStatus.expiresAt) : null;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -57,12 +59,25 @@ export function LicenseView({ engine, onClose }: { engine: EngineConnection; onC
         ) : (
           <>
             {licenseStatus.licensed ? (
-              <p className="ok-text">
-                ✔ {planInfo?.title ?? 'Лицензия'} активна — {licenseStatus.licenseeName}
-                {licenseStatus.expiresAt
-                  ? `, до ${new Date(licenseStatus.expiresAt).toLocaleDateString('ru-RU')}`
-                  : ' (бессрочно)'}
-              </p>
+              <>
+                <p className="ok-text">
+                  ✔ {planInfo?.title ?? 'Лицензия'} активна — {licenseStatus.licenseeName}
+                  {licenseStatus.expiresAt
+                    ? `, до ${new Date(licenseStatus.expiresAt).toLocaleDateString('ru-RU')}`
+                    : ' (бессрочно)'}
+                </p>
+                {/*
+                  Предупреждаем заранее: продление — это списаться с продавцом и
+                  оплатить, на это нужно время. В день окончания узнавать поздно.
+                */}
+                {daysLeft !== null && daysLeft <= EXPIRY_WARNING_DAYS && (
+                  <p className="warn">
+                    ⚠ {daysLeft > 0 ? `Остаётся ${daysLeft} дн.` : 'Последний день'} — напишите нам заранее, чтобы
+                    продлить: {VENDOR_EMAIL}. Когда срок выйдет, останутся только воспроизведение готового и
+                    расписание.
+                  </p>
+                )}
+              </>
             ) : licenseStatus.access === 'pro' ? (
               // Настоящая лицензия была, но кончилась (истёк срок) — не блокировка,
               // а понижение: фонтан продолжает играть по расписанию то, что уже

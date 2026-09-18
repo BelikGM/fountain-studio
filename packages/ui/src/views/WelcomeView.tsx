@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ANNUAL_DISCOUNT, CUSTOM_DEV_NOTE, PLANS, priceLine } from '../plans';
+import { ANNUAL_DISCOUNT, CUSTOM_DEV_NOTE, PLANS, VENDOR_CONTACTS, priceLine } from '../plans';
 import type { EngineConnection } from '../useEngine';
 
 /**
@@ -11,13 +11,7 @@ import type { EngineConnection } from '../useEngine';
  * Отдельно от «истёк срок» (access: 'pro') — тот случай мягче: фонтан
  * продолжает играть по расписанию, здесь же — вообще ничего не настроено.
  */
-const CONTACTS = {
-  email: 'belikgeorgij4@gmail.com',
-  // TODO(георгий): пришлите — впишу телефон/Telegram/ВКонтакте сюда же.
-  phone: '',
-  telegram: '',
-  vk: '',
-};
+const CONTACTS = VENDOR_CONTACTS;
 
 export function WelcomeView({ engine }: { engine: EngineConnection }) {
   const { licenseStatus, activateLicense } = engine;

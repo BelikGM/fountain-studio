@@ -17,7 +17,7 @@ import path from 'node:path';
 import { accessFor, canonicalPayload, loadLicenseStatus, machineFingerprint, verifyLicenseFile } from '../license';
 import { isMachineRevoked, refreshRevocationList, revocationCacheInfo } from '../licenseRevocation';
 import crypto from 'node:crypto';
-import type { LicenseFile, LicensePayload } from '@fountain-studio/shared';
+import { EXPIRY_WARNING_DAYS, daysUntilExpiry, type LicenseFile, type LicensePayload } from '@fountain-studio/shared';
 
 let failed = 0;
 let passed = 0;
@@ -112,6 +112,23 @@ function makeLicense(payload: Partial<LicensePayload>, signWith: crypto.KeyObjec
   check('истекла (была MAX) → падает до pro, а не остаётся max', accessFor(expired, 'max') === 'pro');
   check('истекла старая (плана не было) → тоже до pro, не до max', accessFor(expired, null) === 'pro');
   check('подпись не сошлась → доступ none, даже если план был указан', accessFor(invalid, 'max') === 'none');
+}
+
+// ---- Предупреждение «скоро закончится» ------------------------------------
+{
+  const DAY = 86_400_000;
+  const now = Date.UTC(2026, 8, 18, 12, 0, 0);
+  const inDays = (d: number): string => new Date(now + d * DAY).toISOString();
+
+  check('бессрочная — предупреждать не о чем', daysUntilExpiry(null, now) === null);
+  check('осталось 10 дней — так и считаем', daysUntilExpiry(inDays(10), now) === 10);
+  check('последний день — 0, а не «уже истекла»', daysUntilExpiry(inDays(0.5), now) === 0);
+  check('истекла позавчера — отрицательное число', daysUntilExpiry(inDays(-2), now) === -2);
+  check('битая дата не роняет счёт', daysUntilExpiry('не дата', now) === null);
+  check(
+    'порог предупреждения — две недели, и он меньше месячного срока продавца',
+    EXPIRY_WARNING_DAYS === 14 && EXPIRY_WARNING_DAYS < 30,
+  );
 }
 
 // ---- Отзыв понижает access до none — строже, чем истечение срока ----------

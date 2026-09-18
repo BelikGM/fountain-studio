@@ -53,6 +53,22 @@ export const CUSTOM_DEV_NOTE =
   'Нужна разработка 3D-схемы и шоу «под ключ» нашими силами? Это личное время разработчика — обсуждается ' +
   'индивидуально, стоимость по проекту.';
 
+/**
+ * Контакты продавца — в одном месте, потому что нужны и на экране
+ * приветствия, и в панели лицензии (там предупреждение «пора продлить»).
+ *
+ * TODO(георгий): пришлите телефон, Telegram и ВКонтакте — впишу сюда, и они
+ * появятся на экране приветствия сами (пустые строки просто не рисуются).
+ */
+export const VENDOR_CONTACTS = {
+  email: 'belikgeorgij4@gmail.com',
+  phone: '',
+  telegram: '',
+  vk: '',
+};
+
+export const VENDOR_EMAIL = VENDOR_CONTACTS.email;
+
 export function priceLine(plan: PlanInfo): string {
   const annual = Math.round(plan.monthlyPriceUsd * 12 * (1 - ANNUAL_DISCOUNT));
   return `$${plan.monthlyPriceUsd}/мес, или $${annual}/год при оплате сразу (−${Math.round(ANNUAL_DISCOUNT * 100)}%)`;
