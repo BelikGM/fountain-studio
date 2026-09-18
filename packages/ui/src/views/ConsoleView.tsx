@@ -351,28 +351,33 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
                 }}
               />
             </label>
-            {/*
-              Три разных состояния, и путать их нельзя. Ветер введён, но
-              коррекция ещё не началась — идёт выдержка (10 с): без этой
-              подписи оператор решил бы, что ограничение не работает.
-            */}
-            {windState && windState.limitPercent < 100 && (
+          </div>
+        )}
+        {/*
+          Состояние ветра — ОТДЕЛЬНОЙ группой, а не рядом с полем ввода: внутри
+          группы перенос строки не делается, и длинная подпись выдавила бы
+          панель за край окна. Между группами панель переносится сама.
+
+          Три состояния, и путать их нельзя. Ветер введён, но коррекция ещё не
+          началась — идёт выдержка: без этой подписи оператор решил бы, что
+          ограничение не работает.
+        */}
+        {project?.windLimit.enabled && windState && (
+          <div className="group">
+            {windState.limitPercent < 100 && (
               <span className="warn">
                 ⚠ струи ограничены до {windState.limitPercent}%
                 {windState.calcSpeedMs !== null ? ` (расчётные ${windState.calcSpeedMs.toFixed(1)} м/с)` : ''}
               </span>
             )}
-            {windState &&
-              !windState.correcting &&
+            {!windState.correcting &&
               windState.speedMs !== null &&
               windState.speedMs >= windState.config.deadbandSpeed && (
                 <span className="dim">⏳ ждём {windState.config.activateHoldSec} с подряд — потом снизим</span>
               )}
-            {windState &&
-              windState.speedMs !== null &&
-              windState.speedMs < windState.config.deadbandSpeed && (
-                <span className="dim">ниже порога {windState.config.deadbandSpeed} м/с — не реагируем</span>
-              )}
+            {windState.speedMs !== null && windState.speedMs < windState.config.deadbandSpeed && (
+              <span className="dim">ниже порога {windState.config.deadbandSpeed} м/с — не реагируем</span>
+            )}
           </div>
         )}
 
