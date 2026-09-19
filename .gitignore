@@ -21,6 +21,7 @@ logs/
 
 # Артефакты сборки настольного приложения (packages/app)
 packages/app/engine.cjs
+packages/app/playback-worker.cjs
 packages/app/ui/
 packages/app/release/
 
