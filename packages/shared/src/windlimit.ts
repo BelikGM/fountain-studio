@@ -99,7 +99,8 @@
  *    строгую сторону, и это осознанно.
  */
 
-import type { Bowl, Nozzle } from './layout';
+import { airDropM, nozzleDropM, referenceAirDropM, windTauFromDrop } from './jetdrop';
+import { clampSpray, type Bowl, type Nozzle } from './layout';
 
 const G = 9.81;
 
@@ -181,12 +182,22 @@ export interface WindLimitConfig {
    */
   edgeReserveM: number;
   /**
-   * Постоянная разгона воды ветром, с. Плотная связная струя — 5–6, обычная —
-   * 4, сильно распылённая или туман — 2–2,5. Одна на весь объект: движок
-   * снижает напор общим решением и не знает, какая форсунка сидит на этом
-   * насосе, поэтому значение взято в строгую сторону.
+   * Строгость расчёта сноса, множитель. 1,0 — как считает модель капли
+   * (`jetdrop.ts`), откалиброванная по замерам с объекта.
+   *
+   * Отдельного «времени сцепки с ветром» в настройках больше нет, и это
+   * принципиально: сцепка зависит от КОНКРЕТНОГО сопла (тип, диаметр,
+   * распыление) и от того, как высоко бьёт струя, — всё это уже есть в схеме,
+   * и вводить ещё одно число на весь объект значило бы спорить со схемой.
+   * Прежние 4 с на весь объект давали для пятиметровой струи 20 мм при 15 м/с
+   * снос 6,5 м против замеренных на объекте 2 м — ограничение было втрое
+   * строже реальности.
+   *
+   * Этот множитель — запас поверх расчёта, если на объекте видно, что сносит
+   * сильнее (открытая площадка, порывистое место): 1,3 значит «считать снос на
+   * 30 % больше». Меньше единицы ставить не стоит без своих замеров.
    */
-  tauSec: number;
+  driftFactor: number;
   /** 0–100 — ниже этого предел не опускаем: совсем сухой фонтан тоже не нужен. */
   minPercent: number;
   /** м/с — выше этого ветра фонтан выключается совсем (0 — не выключать). */
@@ -213,7 +224,7 @@ export function defaultWindLimitConfig(): WindLimitConfig {
     levelFallPerSec: 0.5,
     marginM: 0.6,
     edgeReserveM: 0.3,
-    tauSec: 4,
+    driftFactor: 1,
     minPercent: 25,
     stopSpeed: 12,
     maxPlausibleSpeed: 40,
@@ -353,6 +364,13 @@ function coversWholeWindow(w: WindSample[], holdSec: number): boolean {
 export interface WindNozzle {
   /** Высота струи при полном насосе (значение 255), м. */
   maxHeightM: number;
+  /**
+   * Аэродинамический калибр капли этой струи, м (см. `jetdrop.ts`). Из него и
+   * из скорости вылета получается сцепка с ветром: туман сдувает почти сразу,
+   * плотный столб почти нет. Считается один раз при загрузке схемы — от высоты
+   * зависит только поправка на скорость.
+   */
+  airDropM: number;
   /** Наклон от вертикали, °. 0 — строго вверх. */
   tiltDeg: number;
   /**
@@ -369,9 +387,13 @@ export interface WindNozzle {
   roomM: number;
 }
 
-/** Вертикальная форсунка без чаши — для предпросмотра и запасного случая. */
+/**
+ * Опорная форсунка: вертикальная прямая струя 20 мм без чаши. Для
+ * предпросмотра в настройках и для насосов, не привязанных к схеме — про них
+ * ничего не известно, и выдумывать тип сопла нельзя.
+ */
 export function plainWindNozzle(maxHeightM: number): WindNozzle {
-  return { maxHeightM, tiltDeg: 0, tiltOutward: 0, roomM: Infinity };
+  return { maxHeightM, airDropM: referenceAirDropM(), tiltDeg: 0, tiltOutward: 0, roomM: Infinity };
 }
 
 /**
@@ -430,7 +452,17 @@ export function windNozzleFor(n: Nozzle, bowls: Bowl[]): WindNozzle {
     const h = (n.headingDeg * Math.PI) / 180;
     tiltOutward = Math.cos(h) * outX + Math.sin(h) * outY;
   }
-  return { maxHeightM: Math.max(0.05, n.maxHeightM), tiltDeg: n.tiltDeg, tiltOutward, roomM };
+  const spray = clampSpray(n.kind, n.sprayFactor);
+  return {
+    maxHeightM: Math.max(0.05, n.maxHeightM),
+    // Тип сопла входит в расчёт именно здесь: калибр капли у тумана и у
+    // ламинарной струи различается на порядок, а от него и зависит, насколько
+    // ветер вообще способен эту воду унести.
+    airDropM: airDropM(nozzleDropM(n.kind, n.widthM, spray), spray),
+    tiltDeg: n.tiltDeg,
+    tiltOutward,
+    roomM,
+  };
 }
 
 // ══ Физика полёта ══════════════════════════════════════════════════════════
@@ -441,33 +473,47 @@ export function windFlightSec(heightM: number): number {
 }
 
 /**
+ * Разложение полёта на то, что нужно обоим пределам: время, множитель инерции
+ * и сцепка с ветром для ЭТОЙ высоты.
+ *
+ * τ зависит от высоты, а не только от сопла: высокая струя бьёт быстрее, вода
+ * рвётся на капли мельче, и сносит её сильнее, чем только за счёт долгого
+ * полёта (см. speedDropFactor в jetdrop.ts).
+ */
+function flightParts(heightM: number, nz: WindNozzle): { t: number; vz: number; k: number } {
+  const h = Math.max(0.0001, heightM);
+  const vz = Math.sqrt(2 * G * h);
+  const t = (2 * vz) / G;
+  const tau = Math.max(0.2, windTauFromDrop(nz.airDropM, vz));
+  return { t, vz, k: tau * (1 - Math.exp(-t / tau)) };
+}
+
+/**
  * Насколько ветер уводит струю от её обычного места, м — предел по КАРТИНКЕ.
  * Наклон сопла здесь не участвует: он сдвигает и место падения, и «обычное»
  * место одинаково, поэтому в разности сокращается.
  */
-export function windDriftM(speedMs: number, heightM: number, tauSec: number): number {
-  const t = windFlightSec(heightM);
-  const tau = Math.max(0.2, tauSec);
-  return Math.max(0, speedMs) * (t - tau * (1 - Math.exp(-t / tau)));
+export function windDriftM(speedMs: number, heightM: number, nz: WindNozzle, driftFactor = 1): number {
+  const { t, k } = flightParts(heightM, nz);
+  return Math.max(0, speedMs) * (t - k) * Math.max(0, driftFactor);
 }
 
 /**
  * Куда падает вода относительно сопла в сторону борта, м (наружу — плюс).
  * Отрицательное значение — вода падает внутрь чаши, дальше от борта, чем
  * вылетела: так бывает у сопла, наклонённого к центру.
+ *
+ * Строгость (`driftFactor`) применяется только к ВЕТРОВОЙ части: собственный
+ * бросок наклонной струи от неё не зависит, это геометрия сопла.
  */
-export function windLandingM(speedMs: number, heightM: number, nz: WindNozzle, tauSec: number): number {
-  const h = Math.max(0.0001, heightM);
-  const vz = Math.sqrt(2 * G * h);
-  const t = (2 * vz) / G;
-  const tau = Math.max(0.2, tauSec);
-  const k = tau * (1 - Math.exp(-t / tau));
+export function windLandingM(speedMs: number, heightM: number, nz: WindNozzle, driftFactor = 1): number {
+  const { t, vz, k } = flightParts(heightM, nz);
   // Наклон 90° и больше физически не струя, а слив: ограничиваем, иначе
   // тангенс уходит в бесконечность и расчёт теряет смысл.
   const tilt = Math.max(0, Math.min(80, nz.tiltDeg));
-  const v0 = Math.tan((tilt * Math.PI) / 180) * vz * nz.tiltOutward;
+  const own = Math.tan((tilt * Math.PI) / 180) * vz * nz.tiltOutward * k;
   const u = Math.max(0, speedMs);
-  return u * t + (v0 - u) * k;
+  return own + u * (t - k) * Math.max(0, driftFactor);
 }
 
 /** Высота струи при доле насоса L (0..1), м. Нелинейно: H ∝ L². */
@@ -524,11 +570,11 @@ export function windAllowedLevel(speedMs: number, cfg: WindLimitConfig, nz: Wind
     const level = i / LEVEL_STEPS;
     const h = jetHeightM(level, nz.maxHeightM);
     if (pictureOk) {
-      if (windDriftM(speedMs, h, cfg.tauSec) > cfg.marginM) pictureOk = false;
+      if (windDriftM(speedMs, h, nz, cfg.driftFactor) > cfg.marginM) pictureOk = false;
       else byPicture = level;
     }
     if (edgeOk) {
-      if (windLandingM(speedMs, h, nz, cfg.tauSec) > room) edgeOk = false;
+      if (windLandingM(speedMs, h, nz, cfg.driftFactor) > room) edgeOk = false;
       else byEdge = level;
     }
     if (!pictureOk && !edgeOk) break;
@@ -593,7 +639,10 @@ export function sanitizeWindLimitConfig(raw: unknown): WindLimitConfig {
     levelFallPerSec: num(r.levelFallPerSec, d.levelFallPerSec, 0.01, 20),
     marginM: num(r.marginM, d.marginM, 0.05, 10),
     edgeReserveM: num(r.edgeReserveM, d.edgeReserveM, 0, 5),
-    tauSec: num(r.tauSec, d.tauSec, 0.5, 20),
+    // Прежнее «время сцепки с ветром» (tauSec) осознанно НЕ переносим: оно
+    // было одним числом на объект и втрое завышало снос. Проекты открываются с
+    // расчётом по модели капли, это исправление, а не потеря настройки.
+    driftFactor: num(r.driftFactor, d.driftFactor, 0.3, 5),
     minPercent: Math.round(num(r.minPercent, d.minPercent, 0, 100)),
     // Старые проекты знали maxSpeed вместо stopSpeed — переносим по смыслу:
     // там это была скорость «дальше некуда снижать», здесь — «глушим».

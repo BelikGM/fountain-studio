@@ -1866,8 +1866,8 @@ async function main(): Promise<void> {
       'ветер: слабый ветер шестиметровую струю не трогает (100%)',
     );
     check(
-      computeWindLimitPercent(2, testCfg, 2) === 100 && computeWindLimitPercent(2, testCfg, 15) < 60,
-      'ветер: при 2 м/с низкая струя цела, высокая срезана заметно',
+      computeWindLimitPercent(4, testCfg, 2) === 100 && computeWindLimitPercent(4, testCfg, 15) < 70,
+      'ветер: при 4 м/с низкая струя цела, высокая срезана заметно',
     );
     {
       const low = computeWindLimitPercent(4, testCfg, 2);

@@ -14,7 +14,18 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { instantiateModel } from './models';
 import { onViewPrefs, viewPrefs } from './viewPrefs';
-import { clampSpray, nozzleLightIds, type FountainLayout, type Nozzle, type NozzleKind } from '@fountain-studio/shared';
+import {
+  airDropM,
+  clampSpray,
+  jetWindTauSec,
+  nozzleDropM,
+  nozzleLightIds,
+  speedDropFactor,
+  windGripPerSec,
+  type FountainLayout,
+  type Nozzle,
+  type NozzleKind,
+} from '@fountain-studio/shared';
 
 export type SelectedElement = { type: 'nozzle' | 'light' | 'bowl'; id: string } | null;
 
@@ -52,7 +63,7 @@ export interface SceneHooks {
  * в собранном положении: две записи с одинаковыми цифрами рано или поздно
  * разъехались бы — так уже и было.
  */
-const STRAIGHT_PHYSICS = { spreadDeg: 0.6, rate: 900, dropScale: 1.1, jitter: 0.02, solidFrac: 0.85 };
+const STRAIGHT_PHYSICS = { spreadDeg: 0.6, rate: 900, jitter: 0.02, solidFrac: 0.85 };
 
 /** Поведение струи по типу форсунки. */
 const KIND_PHYSICS: Record<
@@ -81,24 +92,6 @@ const KIND_PHYSICS: Record<
      * Множитель подобран расчётом подъёма с этим же торможением.
      */
     heightComp?: number;
-    /**
-     * ЗАМЕНЕНО на dropScale. Оставлено ради истории: размер капли на экране, м. Это НЕ физический диаметр капли: настоящая
-     * капля на дистанции обзора заняла бы меньше пикселя. Частица здесь —
-     * порция воды: столько, чтобы струя читалась сплошной. Раньше размер был
-     * один на всю сцену (9 см) и вода выглядела кубиками; у тумана капли не
-     * должны различаться глазом вовсе.
-     */
-    /**
-     * Размер капли ОТНОСИТЕЛЬНО диаметра сопла. Раньше это была константа в
-     * метрах, одна на тип: у ламинарной 30 мм независимо от того, что сопло
-     * 2 мм. Струя выходила в 15 раз толще собственного сопла и переставала
-     * читаться прозрачной — именно это и было видно на 2-миллиметровой.
-     * Теперь капля привязана к соплу: у пенной она крупнее сопла, у тумана
-     * много мельче.
-     */
-    dropScale: number;
-    /** Нижняя и верхняя границы размера капли, м — чтобы тонкая струя не пропала совсем. */
-    dropMinM?: number;
     /**
      * Разброс скорости вылета, доля. У тугих струй он должен быть крошечным:
      * дальность полёта пропорциональна квадрату скорости, и ±6 % скорости
@@ -139,11 +132,11 @@ const KIND_PHYSICS: Record<
   straight: STRAIGHT_PHYSICS,
   // Ламинарная — стеклянный шнур: разброс почти нулевой, брызг нет, вода
   // прозрачная. Смысл ламинарной насадки именно в отсутствии воздуха внутри.
-  laminar: { spreadDeg: 0.12, rate: 1400, dropScale: 0.8, jitter: 0.004, clear: true, solidFrac: 0.97 },
-  fan: { spreadDeg: 55, rate: 3000, planar: true, dropScale: 0.5, dropMinM: 0.004, jitter: 0.05, solidFrac: 0 },
-  canopy: { spreadDeg: 3, rate: 1100, ringDeg: 40, dropScale: 1.2, jitter: 0.04, solidFrac: 0 },
-  flower: { spreadDeg: 3, rate: 1100, ringDeg: 28, central: true, dropScale: 1.2, jitter: 0.04, solidFrac: 0 },
-  veil: { spreadDeg: 5, rate: 1800, ringDeg: 55, dropScale: 0.8, dropMinM: 0.004, jitter: 0.05, solidFrac: 0 },
+  laminar: { spreadDeg: 0.12, rate: 1400, jitter: 0.004, clear: true, solidFrac: 0.97 },
+  fan: { spreadDeg: 55, rate: 3000, planar: true, jitter: 0.05, solidFrac: 0 },
+  canopy: { spreadDeg: 3, rate: 1100, ringDeg: 40, jitter: 0.04, solidFrac: 0 },
+  flower: { spreadDeg: 3, rate: 1100, ringDeg: 28, central: true, jitter: 0.04, solidFrac: 0 },
+  veil: { spreadDeg: 5, rate: 1800, ringDeg: 55, jitter: 0.05, solidFrac: 0 },
   /**
    * Туман — это не струя воды, а водяная пыль: у каталожных распыляющих
    * головок капля не крупнее 1 мм. Такая капля почти невесома по сравнению с
@@ -159,21 +152,21 @@ const KIND_PHYSICS: Record<
     drag: 1.6,
     gScale: 0.09,
     maxAgeRise: 2.6,
-    dropScale: 0.03,
-    dropMinM: 0.0009,
+   
+   
     jitter: 0.3,
     solidFrac: 0,
     haze: true,
   },
   // Пенная: разброс уменьшен с 7° — при нижнем пороге распыления она должна
   // давать плотный кипящий столб, а не веер брызг.
-  foam: { spreadDeg: 4.5, rate: 1800, foam: true, dropScale: 1.6, jitter: 0.08, solidFrac: 0 },
+  foam: { spreadDeg: 4.5, rate: 1800, foam: true, jitter: 0.08, solidFrac: 0 },
   // Скорость вращения — per-nozzle из n.rotationSpeedDegPerSec (см. simulate()), не константа типа.
-  rotating: { spreadDeg: 0.8, rate: 1100, dropScale: 1.1, jitter: 0.03, solidFrac: 0 },
+  rotating: { spreadDeg: 0.8, rate: 1100, jitter: 0.03, solidFrac: 0 },
   // Моторная — это обычная плотная струя; необычен только её путь по кольцу.
   // Сплошного тела нет: сопло едет, а труба строится по неподвижной дуге и за
   // водой не поспевает — расхождение видно сразу. Рисуем одними каплями.
-  orbit: { spreadDeg: 0.7, rate: 1000, dropScale: 1.0, jitter: 0.03, solidFrac: 0 },
+  orbit: { spreadDeg: 0.7, rate: 1000, jitter: 0.03, solidFrac: 0 },
   /**
    * Вариативная в собранном положении — ЭТО ПРЯМАЯ СТРУЯ, и параметры у неё те
    * же самые, буквально тот же набор. Раскрытие конуса вторым насосом
@@ -297,25 +290,12 @@ const SPEED_HIST_STEP = 1 / 60;
  * Длина истории скорости, шагов — на всё время полёта самой высокой струи.
  * 3 с хватает: даже с 10 м вода возвращается быстрее.
  */
-/**
- * Во сколько раз капля данного калибра цепляется за ветер (см. windGrip).
- *
- * Подобран по картине на объекте (пользователь, 15.09.2026): 5-метровую прямую
- * струю 20 мм при ветре 15 м/с сносит примерно на 2 м, 10-метровую — на
- * 4–5 м. Прежние 0,001 давали 4,6 м уже для 5 м — ветер был втрое сильнее
- * настоящего. Форма сноса — прежняя кривая: капля набирает скорость воздуха
- * постепенно, струя у сопла стоит, а к вершине огибающая уходит по ветру.
+/*
+ * Модель капли (калибр, сцепка с ветром, поправка на скорость) переехала в
+ * shared/jetdrop.ts — там же её калибровка по замерам с объекта. Здесь её
+ * больше нет намеренно: пока расчётов было два, картинка в 3D и предел, по
+ * которому движок режет насосы, расходились втрое.
  */
-const WIND_GRIP_COEF = 0.0004;
-/**
- * Высокая струя бьёт быстрее, и вода рвётся на капли мельче, — поэтому её
- * сносит сильнее, чем только за счёт более долгого полёта. Калибр капли
- * струи для ветра умножается на (V_REF / v0)^POW; V_REF — скорость воды
- * 5-метровой струи. Без этой поправки 10-метровую сносило лишь вдвое дальше
- * 5-метровой (3,8 м против 2), с ней — 4,3 м, как на объекте.
- */
-const WIND_DROP_V_REF = 9.9;
-const WIND_DROP_V_POW = 0.35;
 
 /**
  * Раскрытие вариативной насадки при малом втором насосе — по видео с объекта.
@@ -1203,8 +1183,8 @@ export class FountainScene {
    * 30-миллиметровой. Нижняя граница — чтобы тонкая струя не исчезла совсем
    * на дальнем плане.
    */
-  private jetDropM(n: Nozzle, phys: (typeof KIND_PHYSICS)[NozzleKind], spray: number): number {
-    return Math.min(0.08, Math.max(phys.dropMinM ?? 0.003, n.widthM * phys.dropScale * (0.7 + 0.9 * spray)));
+  private jetDropM(n: Nozzle, spray: number): number {
+    return nozzleDropM(n.kind, n.widthM, spray);
   }
 
   /** Пересчитать габариты корпусов форсунок (см. bodies). */
@@ -1422,55 +1402,33 @@ export class FountainScene {
     }
   }
 
-  /** Калибр капли струи для ветра с поправкой на скорость воды (см. WIND_DROP_V_REF). */
+  /**
+   * Калибр капли струи для ветра с поправкой на скорость воды.
+   * Расчёт — общий с ветровым ограничением насосов, см. shared/jetdrop.ts.
+   */
   private jetAirDrop(dropM: number, spray: number, v0: number): number {
-    const k = Math.min(1.6, Math.max(0.5, Math.pow(WIND_DROP_V_REF / Math.max(1, v0), WIND_DROP_V_POW)));
-    return this.airDrop(dropM, spray) * k;
+    return airDropM(dropM, spray) * speedDropFactor(v0);
   }
 
   /**
    * Постоянная сноса капель этой струи ветром, с. Тело струи сдвигается с
    * ТОЙ ЖЕ постоянной, что и её капли: иначе цилиндр и брызги расходятся.
    */
-  private jetWindTau(n: Nozzle, phys: (typeof KIND_PHYSICS)[NozzleKind], spray: number, v0: number): number {
-    return 1 / this.windGrip(this.jetAirDrop(this.jetDropM(n, phys, spray), spray, v0));
+  private jetWindTau(n: Nozzle, spray: number, v0: number): number {
+    return jetWindTauSec(n.kind, n.widthM, spray, v0);
   }
   /**
-   * Аэродинамический диаметр капли, м — по толщине струи и распылению.
-   *
-   * Потолок не выдуман: свободно летящая капля крупнее примерно 6 мм
-   * неустойчива и разваливается набегающим воздухом — тот самый предел, по
-   * которому и дождевые капли не бывают больше. Распыление калибр мельчит:
-   * вода, уже разбитая в сопле, летит облаком и сдувается охотнее при той же
-   * толщине струи.
-   *
-   * Подходим к потолку ПЛАВНО (гиперболический тангенс), а не отрезаем по
-   * нему. Жёсткое ограничение стирало разницу между соплами: и 8 мм, и 30 мм
-   * упирались в один и тот же калибр и получали одинаковый снос, хотя тонкая
-   * струя заметно парусит сильнее толстой. У мелких значений tanh почти
-   * ничего не меняет — туман и веер остаются со своим калибром.
+   * Аэродинамический диаметр капли и сцепка с ветром — ОДНА модель с ветровым
+   * ограничением насосов (shared/jetdrop.ts). Раньше здесь был свой расчёт, а
+   * в ограничении — одно число на объект: картинка и предел расходились втрое.
    */
   private airDrop(dropM: number, spray: number): number {
-    const dMax = 0.006;
-    const raw = Math.max(0.0002, dropM * (1.25 - 0.5 * spray));
-    return Math.max(0.0005, dMax * Math.tanh(raw / dMax));
+    return airDropM(dropM, spray);
   }
 
   /** Насколько быстро капля диаметром d разгоняется ветром, 1/с. */
   private windGrip(dMeters: number): number {
-    /**
-     * Капля догоняет скорость воздуха тем быстрее, чем она мельче: сила
-     * сопротивления идёт с площади (d²), а масса — с объёма (d³), поэтому
-     * ускорение ∝ 1/d. Отсюда и картина на объекте: пыль сдувает сразу, а
-     * плотную струю почти нет.
-     *
-     * Коэффициент взят ИЗ ТОГО ЖЕ расчёта, по которому работает ветровое
-     * ограничение насосов (windlimit.ts): там постоянная разгона обычной струи
-     * 4 с, значит для 4-миллиметровой капли grip = 1/4 с⁻¹, отсюда и 0,001.
-     * Иначе картинка в 3D показывала бы втрое больший снос, чем тот, по
-     * которому движок режет насосы, — и одно противоречило бы другому.
-     */
-    return Math.min(8, WIND_GRIP_COEF / Math.max(0.0004, dMeters));
+    return windGripPerSec(dMeters);
   }
 
   setSelected(sel: SelectedElement): void {
@@ -2586,7 +2544,7 @@ export class FountainScene {
     mesh.position.set(n.x + org.x, n.y + org.y, n.z).addScaledVector(dir, NOZZLE_MOUTH_M);
     mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
     // Ветер — каждый кадр, геометрию он не трогает (см. makeJetMaterial).
-    setJetWind(mesh, this.windVec.x, this.windVec.y, this.jetWindTau(n, phys, spray, jetV0));
+    setJetWind(mesh, this.windVec.x, this.windVec.y, this.jetWindTau(n, spray, jetV0));
 
     // В ключ входит и скорость воды на верхнем конце: пока по телу поднимается
     // вода разгона, форма меняется даже при уже устоявшемся напоре.
@@ -2660,7 +2618,7 @@ export class FountainScene {
       // Столб летит той же водой, что и капли вокруг, — и сносит его так же.
       const slugPhys = KIND_PHYSICS[nozzle.kind];
       const slugSpray = clampSpray(nozzle.kind, nozzle.sprayFactor ?? 0.3);
-      setJetWind(mesh, this.windVec.x, this.windVec.y, this.jetWindTau(nozzle, slugPhys, slugSpray, s.v0));
+      setJetWind(mesh, this.windVec.x, this.windVec.y, this.jetWindTau(nozzle, slugSpray, s.v0));
       const gLocal = new THREE.Vector3(0, 0, -G).applyQuaternion(mesh.quaternion.clone().invert());
       mesh.geometry = buildJetGeometry(
         (a) => this.speedAtAge(s.nozzleId, a),
@@ -2833,7 +2791,7 @@ export class FountainScene {
       if (strength > 0.01) {
         const phys = KIND_PHYSICS[n.kind];
         const spray = clampSpray(n.kind, n.sprayFactor ?? 0.3);
-        const dropM = this.jetDropM(n, phys, spray);
+        const dropM = this.jetDropM(n, spray);
         // Выдача копится дробями: за кадр капель бывает меньше одной.
         s.hit.acc += HAMMER_RATE * strength * dt;
         const count = Math.floor(s.hit.acc);
@@ -3137,7 +3095,7 @@ export class FountainScene {
           ? phys.maxAgeRise * riseTimeSec(v0, phys.gScale, phys.drag)
           : 0;
       const color = this.nozzleColor(n, phys.foam === true, phys.haze === true);
-      const dropM = this.jetDropM(n, phys, spray);
+      const dropM = this.jetDropM(n, spray);
       /**
        * Сборка сопел: капли раздаются по ним по очереди, поэтому каждое сопло
        * получает свою долю воды, а общая подача не растёт от их числа.

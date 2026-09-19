@@ -9,7 +9,12 @@
  * Запуск: npm -w @fountain-studio/engine run wind-test
  */
 import {
+  airDropM,
   bowlRoom,
+  jetWindTauSec,
+  nozzleDropM,
+  NOZZLE_KINDS,
+  referenceAirDropM,
   edgeRoomM,
   defaultWindLimitConfig,
   initialWindCorrectionState,
@@ -230,11 +235,22 @@ console.log('— Предел по текущему значению, а не п
 
 console.log('— Высокие струи режутся раньше низких —');
 {
-  const low = windAllowedLevel(3, cfg, plainWindNozzle(2));
-  const mid = windAllowedLevel(3, cfg, plainWindNozzle(6));
-  const high = windAllowedLevel(3, cfg, plainWindNozzle(15));
-  check(low > mid && mid > high, `при 3 м/с: 2 м → ${(low * 100) | 0}%, 6 м → ${(mid * 100) | 0}%, 15 м → ${(high * 100) | 0}%`);
-  check(low === 1, 'двухметровой струе 3 м/с не мешают вовсе');
+  // Ветер выбран такой, чтобы разница была видна на всех трёх высотах: при
+  // 3 м/с низкие струи ещё вообще не ограничиваются.
+  const low = windAllowedLevel(6, cfg, plainWindNozzle(2));
+  const mid = windAllowedLevel(6, cfg, plainWindNozzle(6));
+  const high = windAllowedLevel(6, cfg, plainWindNozzle(15));
+  check(low > mid && mid > high, `при 6 м/с: 2 м → ${(low * 100) | 0}%, 6 м → ${(mid * 100) | 0}%, 15 м → ${(high * 100) | 0}%`);
+  check(windAllowedLevel(3, cfg, plainWindNozzle(2)) === 1, 'двухметровой струе 3 м/с не мешают вовсе');
+  // Предел не растёт с высотой ни на одном шаге — иначе где-то ошибка знака.
+  let prevH = 2;
+  let monoH = true;
+  for (let h = 2; h <= 20; h += 0.5) {
+    const v = windAllowedLevel(6, cfg, plainWindNozzle(h));
+    if (v > windAllowedLevel(6, cfg, plainWindNozzle(prevH)) + 1e-9) monoH = false;
+    prevH = h;
+  }
+  check(monoH, 'чем выше струя, тем ниже её предел — без исключений');
   // Порог начала снижения у каждой высоты свой.
   const threshold = (maxH: number): number => {
     for (let u = 0.1; u <= 20; u += 0.1) if (windAllowedLevel(u, cfg, plainWindNozzle(maxH)) < 1) return u;
@@ -248,28 +264,90 @@ console.log('— Высокие струи режутся раньше низк�
 
 console.log('— Снос и наклон сопла —');
 {
-  const vertical: WindNozzle = { maxHeightM: 6, tiltDeg: 0, tiltOutward: 0, roomM: Infinity };
-  const inward: WindNozzle = { maxHeightM: 6, tiltDeg: 30, tiltOutward: -1, roomM: Infinity };
-  const outward: WindNozzle = { maxHeightM: 6, tiltDeg: 30, tiltOutward: 1, roomM: Infinity };
+  const drop = referenceAirDropM();
+  const vertical: WindNozzle = { maxHeightM: 6, airDropM: drop, tiltDeg: 0, tiltOutward: 0, roomM: Infinity };
+  const inward: WindNozzle = { maxHeightM: 6, airDropM: drop, tiltDeg: 30, tiltOutward: -1, roomM: Infinity };
+  const outward: WindNozzle = { maxHeightM: 6, airDropM: drop, tiltDeg: 30, tiltOutward: 1, roomM: Infinity };
+  const misty: WindNozzle = { ...vertical, airDropM: airDropM(nozzleDropM('mist', 0.02, 0.9), 0.9) };
 
-  check(windDriftM(0, 6, 4) === 0, 'без ветра уводить струю нечему');
-  check(windDriftM(5, 6, 4) > windDriftM(5, 2, 4), 'высокую струю уводит дальше низкой');
-  check(windDriftM(10, 6, 4) > windDriftM(5, 6, 4), 'сильнее ветер — дальше уводит');
-  check(windDriftM(5, 6, 2) > windDriftM(5, 6, 6), 'распылённую воду (меньше τ) уводит сильнее плотной');
+  check(windDriftM(0, 6, vertical) === 0, 'без ветра уводить струю нечему');
+  check(windDriftM(5, 6, vertical) > windDriftM(5, 2, vertical), 'высокую струю уводит дальше низкой');
+  check(windDriftM(10, 6, vertical) > windDriftM(5, 6, vertical), 'сильнее ветер — дальше уводит');
+  check(windDriftM(5, 6, misty) > windDriftM(5, 6, vertical), 'туман сносит сильнее плотной струи той же высоты');
+  check(
+    windDriftM(5, 6, vertical, 2) > windDriftM(5, 6, vertical),
+    'строгость ×2 считает снос больше — запас на порывистое место',
+  );
 
   // Наклон внутрь: вода падает ближе к центру, наружу — дальше от него.
-  check(windLandingM(0, 6, inward, 4) < 0, 'сопло к центру: без ветра вода падает внутрь чаши');
-  check(windLandingM(0, 6, outward, 4) > 0, 'сопло к борту: без ветра вода падает в сторону борта');
-  check(Math.abs(windLandingM(0, 6, vertical, 4)) < 1e-9, 'вертикальное сопло без ветра падает туда же, откуда вылетело');
+  check(windLandingM(0, 6, inward) < 0, 'сопло к центру: без ветра вода падает внутрь чаши');
+  check(windLandingM(0, 6, outward) > 0, 'сопло к борту: без ветра вода падает в сторону борта');
+  check(Math.abs(windLandingM(0, 6, vertical)) < 1e-9, 'вертикальное сопло без ветра падает туда же, откуда вылетело');
   check(
-    windLandingM(6, 6, inward, 4) < windLandingM(6, 6, vertical, 4),
+    windLandingM(6, 6, inward) < windLandingM(6, 6, vertical),
     'при одном ветре наклонённая к центру струя оказывается дальше от борта, чем вертикальная',
   );
   // Уход ОТ ВЕТРА одинаков — наклон в разности сокращается, и это не случайность.
-  const dv = windLandingM(6, 6, vertical, 4) - windLandingM(0, 6, vertical, 4);
-  const di = windLandingM(6, 6, inward, 4) - windLandingM(0, 6, inward, 4);
+  const dv = windLandingM(6, 6, vertical) - windLandingM(0, 6, vertical);
+  const di = windLandingM(6, 6, inward) - windLandingM(0, 6, inward);
   check(Math.abs(dv - di) < 1e-6, 'ветер уводит наклонную и вертикальную струю на одинаковую величину');
-  check(Math.abs(dv - windDriftM(6, 6, 4)) < 1e-6, 'и эта величина — ровно windDriftM (предел по картинке)');
+  check(Math.abs(dv - windDriftM(6, 6, vertical)) < 1e-6, 'и эта величина — ровно windDriftM (предел по картинке)');
+}
+
+console.log('— Сцепка с ветром: сверка с замерами на объекте —');
+{
+  /*
+   * Это не «проверка кода», а проверка КАЛИБРОВКИ, и она важнее остальных.
+   * Заказчик замерил с натуры (15.09.2026): прямую струю 20 мм высотой 5 м при
+   * ветре 15 м/с сносит примерно на 2 м, десятиметровую — на 4–5 м. До
+   * объединения ветровое ограничение считало по одному числу τ = 4 с и давало
+   * для пятиметровой 6,5 м — втрое больше замеренного, то есть резало струи
+   * куда раньше, чем требует реальность.
+   *
+   * Если кто-то поправит коэффициенты модели капли, эти три строки упадут — и
+   * это правильно: менять их можно только вместе с новыми замерами.
+   */
+  const jet = (maxHeightM: number): WindNozzle => ({
+    maxHeightM,
+    airDropM: airDropM(nozzleDropM('straight', 0.02, 0.3), 0.3),
+    tiltDeg: 0,
+    tiltOutward: 0,
+    roomM: Infinity,
+  });
+  const d5 = windDriftM(15, 5, jet(5));
+  const d10 = windDriftM(15, 10, jet(10));
+  check(Math.abs(d5 - 2) < 0.4, `струя 5 м при 15 м/с сносится на ${d5.toFixed(2)} м — замерено «примерно 2 м»`);
+  check(d10 > 4 && d10 < 5.2, `струя 10 м при 15 м/с — ${d10.toFixed(2)} м, замерено «4–5 м»`);
+  check(d10 / d5 > 2.05, `десятиметровую сносит БОЛЬШЕ чем вдвое дальше пятиметровой (${(d10 / d5).toFixed(2)}×) — поправка на скорость работает`);
+
+  // Порядок величин τ по типам сопел.
+  const tau = (kind: Parameters<typeof jetWindTauSec>[0], widthM: number, spray: number, h: number): number =>
+    jetWindTauSec(kind, widthM, spray, Math.sqrt(2 * 9.81 * h));
+  const tauStraight = tau('straight', 0.02, 0.3, 5);
+  const tauMist = tau('mist', 0.02, 0.9, 5);
+  const tauLaminar = tau('laminar', 0.02, 0.05, 5);
+  check(tauStraight > 12 && tauStraight < 17, `прямая струя 20 мм: сцепка ${tauStraight.toFixed(1)} с (ожидаем 14–15)`);
+  check(tauMist < 3, `туман: ${tauMist.toFixed(1)} с — сдувает почти сразу`);
+  check(tauMist < tauStraight / 4, 'туман цепляется за ветер в разы сильнее плотной струи');
+  check(tauLaminar >= tauStraight * 0.8, `ламинарная не парусит сильнее прямой (${tauLaminar.toFixed(1)} с)`);
+  check(tau('straight', 0.02, 0.3, 15) < tauStraight, 'высокая струя бьёт быстрее — её сцепка меньше, сносит сильнее');
+
+  // Таблица калибров заполнена для ВСЕХ типов: забытый тип дал бы undefined и
+  // расчёт молча съехал бы в NaN.
+  const kinds = NOZZLE_KINDS.map((k) => k.id);
+  check(
+    kinds.every((k) => Number.isFinite(nozzleDropM(k, 0.02, 0.3)) && nozzleDropM(k, 0.02, 0.3) > 0),
+    'калибр капли посчитан для всех типов форсунок',
+    kinds.filter((k) => !Number.isFinite(nozzleDropM(k, 0.02, 0.3))).join(),
+  );
+  check(
+    kinds.every((k) => Number.isFinite(tau(k, 0.02, 0.3, 5)) && tau(k, 0.02, 0.3, 5) > 0),
+    'сцепка с ветром посчитана для всех типов форсунок',
+  );
+  // Тип сопла действительно входит в расчёт насоса, а не только в картинку.
+  const capMist = windCapDmx(4, 1, cfg, { ...jet(6), airDropM: airDropM(nozzleDropM('mist', 0.02, 0.9), 0.9) });
+  const capStraight = windCapDmx(4, 1, cfg, jet(6));
+  check(capMist < capStraight, `туман режется сильнее прямой струи той же высоты (${capMist} против ${capStraight})`);
 }
 
 console.log('— Расстояние до борта чаши —');
@@ -362,12 +440,15 @@ console.log('— Форсунка у борта режется сильнее ц
    * безопасности.
    */
   const floorDmx = Math.round((cfg.minPercent / 100) * 255);
+  // Форсунка вплотную к борту (5 см) при сильном ветре: тут уже никакая
+  // «минимальная мощность» не спасает — вода пойдёт наружу.
+  const hugRim = windNozzleFor({ ...base, x: 4.95, y: 0 }, [bowl]);
   check(
-    windCapDmx(9, 1, cfg, atRim) < floorDmx,
-    `при 9 м/с форсунка у борта режется ниже минимальной мощности (${windCapDmx(9, 1, cfg, atRim)} против пола ${floorDmx})`,
+    windCapDmx(11, 1, cfg, hugRim) < floorDmx,
+    `при 11 м/с форсунка в 5 см от борта режется ниже минимальной мощности (${windCapDmx(11, 1, cfg, hugRim)} против пола ${floorDmx})`,
   );
   check(
-    windCapDmx(9, 1, cfg, center) >= floorDmx,
+    windCapDmx(11, 1, cfg, center) >= floorDmx,
     'а центральная ниже минимальной мощности не опускается: там ограничение только по картинке',
   );
 }
@@ -382,7 +463,12 @@ console.log('— Чтение настроек с диска —');
   check(sanitizeWindLimitConfig({ maxSpeed: 9 }).stopSpeed === 9, 'старое поле maxSpeed переносится в stopSpeed');
   check(sanitizeWindLimitConfig({ releaseHoldSec: 25 }).deactivateHoldSec === 25, 'старая выдержка на возврат становится выдержкой на снятие');
   check(sanitizeWindLimitConfig({ attackSec: 2 }).adjustHoldSec === 2, 'старая attackSec становится выдержкой подтверждения');
-  check(sanitizeWindLimitConfig({ tauSec: 0 }).tauSec === 0.5, 'нулевая сцепка с ветром не пропускается — расчёт потерял бы смысл');
+  check(sanitizeWindLimitConfig({ driftFactor: 0 }).driftFactor === 0.3, 'нулевая строгость не пропускается — она обнулила бы весь расчёт');
+  check(sanitizeWindLimitConfig({ driftFactor: 99 }).driftFactor === 5, 'запредельная строгость обрезана');
+  // Прежнее «время сцепки» в проектах игнорируется намеренно: оно было одним
+  // числом на объект и втрое завышало снос. Открытие старого проекта — это
+  // исправление расчёта, а не потеря настройки.
+  check(sanitizeWindLimitConfig({ tauSec: 4 }).driftFactor === d.driftFactor, 'старое поле tauSec не переносится — считаем по модели капли');
   check(sanitizeWindLimitConfig({ minPercent: 33.7 }).minPercent === 34, 'минимальная мощность — целое');
 }
 
@@ -461,10 +547,35 @@ async function liveEngineCheck(): Promise<void> {
     // путь с 15 до 5 м/с занял бы двадцать секунд, а проверяется здесь не он.
     levelFallPerSec: 20,
   };
+  // Со СХЕМОЙ, а не на запасной форсунке: у запасной (4 м, прямая 20 мм) снос
+  // при умеренном ветре ещё укладывается в допуск, и предел просто не действует —
+  // проверять на ней «предел устоялся» было бы нечего.
   engine.setProject(
     sanitizeProject({
       ...emptyProject('Проверка ветра'),
       devices: [{ id: 'p1', name: 'Насос', profileId: 'pump', universe: 1, address: 1 }],
+      layout: {
+        bowls: [],
+        lights: [],
+        nozzles: [
+          {
+            id: 'n1',
+            name: 'Высокая',
+            kind: 'straight',
+            x: 0,
+            y: 0,
+            z: 0,
+            tiltDeg: 0,
+            headingDeg: 0,
+            maxHeightM: 12,
+            widthM: 0.02,
+            sprayFactor: 0.3,
+            pumpDeviceId: 'p1',
+            pump2DeviceId: null,
+            valveDeviceId: null,
+          },
+        ],
+      },
       windLimit: fast,
     } as never),
   );

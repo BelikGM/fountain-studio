@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import {
-  computeWindLimitPercent,
+  plainWindNozzle,
+  windAllowedLevel,
+  windNozzleFor,
   type BackupInfo,
   type ConfigOutput,
   type ConfigUniverse,
@@ -857,18 +859,27 @@ function WindLimitPanel({ engine }: { engine: EngineConnection }) {
   const update = (patch: Partial<typeof cfg>): void => updateProject({ ...project, windLimit: { ...cfg, ...patch } });
 
   /**
-   * Предпросмотр — таблицей по высотам струй: одно число тут ничего не скажет,
-   * потому что ограничение у каждой струи своё. Высоты берём реальные, какие
-   * есть в схеме, плюс опорные — чтобы было видно и то, чего на объекте пока
-   * нет.
+   * Предпросмотр — таблицей по НАСТОЯЩИМ форсункам схемы, а не по абстрактным
+   * высотам. Раньше хватало высоты, потому что и считалась только она. Теперь в
+   * предел входят тип сопла (калибр капли), наклон и расстояние до борта — и
+   * «струя 6 м» без этого ничего не говорит: у тумана и у ламинарной струи той
+   * же высоты пределы разойдутся в разы.
+   *
+   * Показываем самые уязвимые: сортируем по пределу при среднем ветре и берём
+   * первые шесть. Если схема пустая — опорные струи, чтобы настройки можно было
+   * прикинуть заранее.
    */
-  const heights = [
-    ...new Set([...project.layout.nozzles.map((n) => Math.round(n.maxHeightM)), 2, 6, 15]),
-  ]
-    .filter((h) => h > 0)
-    .sort((a, b) => a - b)
-    .slice(0, 6);
-  const speeds = [1, 2, 3, 4, 6, 8, 10];
+  const speeds = [2, 3, 4, 6, 8, 10];
+  const preview = (() => {
+    const nozzles = project.layout.nozzles;
+    if (nozzles.length === 0) {
+      return [2, 6, 15].map((h) => ({ key: `ref-${h}`, name: `Опорная ${h} м`, nz: plainWindNozzle(h) }));
+    }
+    return nozzles
+      .map((n) => ({ key: n.id, name: n.name, nz: windNozzleFor(n, project.layout.bowls) }))
+      .sort((a, b) => windAllowedLevel(5, cfg, a.nz) - windAllowedLevel(5, cfg, b.nz))
+      .slice(0, 6);
+  })();
 
   return (
     <section className="panel">
@@ -949,17 +960,20 @@ function WindLimitPanel({ engine }: { engine: EngineConnection }) {
             onChange={(e) => update({ edgeReserveM: Math.max(0, Math.min(5, Number(e.target.value) || 0)) })}
           />
         </label>
-        <label className="field" data-hint="Насколько быстро ветер разгоняет воду. Плотная связная струя — 5–6 с, обычная — 4, сильно распылённая или туман — 2–2,5. Чем меньше, тем сильнее сносит.">
-          Сцепка с ветром, с:{' '}
+        <label
+          className="field"
+          data-hint="Запас поверх расчёта. 1,0 — как считает модель капли: она откалибрована по замерам с объекта (струю 20 мм высотой 5 м при ветре 15 м/с сносит ~2 м). Поставьте 1,3, если на открытой площадке видно, что сносит сильнее. Сцепку с ветром вводить больше не нужно — она считается по типу сопла, его диаметру и распылению из схемы."
+        >
+          Строгость, ×:{' '}
           <input
             className="input input-num"
             type="number"
-            min={0.5}
-            max={20}
-            step={0.5}
+            min={0.3}
+            max={5}
+            step={0.1}
             disabled={!cfg.enabled}
-            value={cfg.tauSec}
-            onChange={(e) => update({ tauSec: Math.max(0.5, Math.min(20, Number(e.target.value) || 4)) })}
+            value={cfg.driftFactor}
+            onChange={(e) => update({ driftFactor: Math.max(0.3, Math.min(5, Number(e.target.value) || 1)) })}
           />
         </label>
         <label className="field" data-hint="Выше этого ветра фонтан глушится совсем: картины всё равно нет, а вода уходит за борт чаши. 0 — не глушить никогда.">
@@ -991,26 +1005,32 @@ function WindLimitPanel({ engine }: { engine: EngineConnection }) {
       {cfg.enabled && (
         <>
           <p className="dim">
-            Снос растёт с высотой струи, поэтому предел у каждой струи свой: высокие режутся заметно
-            раньше низких. В таблице — предел мощности для струи, которая сейчас работает НА ПОЛНУЮ;
-            приглушённой струи коррекция не касается, пока её высота укладывается в допуск. Расстояние
-            до борта здесь не учтено — у форсунок у самого борта предел будет ниже.
+            Предел у каждой форсунки свой: он зависит от высоты струи, от типа сопла (туман сдувает в
+            разы сильнее плотного столба) и от того, сколько до борта чаши. В таблице — предел мощности
+            для струи, которая работает НА ПОЛНУЮ; приглушённой коррекция не касается, пока её высота
+            укладывается в допуск. «стоп» — форсунка при таком ветре не работает.
           </p>
           <table className="table">
             <thead>
               <tr>
-                <th>Высота струи</th>
+                <th>Форсунка</th>
+                <th>Высота</th>
+                <th>До борта</th>
                 {speeds.map((s) => (
                   <th key={s}>{s} м/с</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {heights.map((h) => (
-                <tr key={h}>
-                  <td>{h} м</td>
+              {preview.map((row) => (
+                <tr key={row.key}>
+                  <td>{row.name}</td>
+                  <td>{row.nz.maxHeightM} м</td>
+                  <td className="dim">
+                    {Number.isFinite(row.nz.roomM) ? `${Math.round(row.nz.roomM * 10) / 10} м` : '—'}
+                  </td>
                   {speeds.map((s) => {
-                    const p = computeWindLimitPercent(s, cfg, h);
+                    const p = Math.round(windAllowedLevel(s, cfg, row.nz) * 100);
                     return (
                       <td key={s} className={p === 0 ? 'error-text' : p < 100 ? 'warn' : 'dim'}>
                         {p === 0 ? 'стоп' : `${p}%`}
@@ -1021,6 +1041,13 @@ function WindLimitPanel({ engine }: { engine: EngineConnection }) {
               ))}
             </tbody>
           </table>
+          {project.layout.nozzles.length === 0 && (
+            <p className="dim">
+              В схеме нет форсунок, поэтому показаны опорные: прямая струя 20 мм без чаши. Нарисуйте
+              схему — и здесь появятся настоящие форсунки объекта со своим типом сопла и расстоянием
+              до борта.
+            </p>
+          )}
         </>
       )}
     </section>
