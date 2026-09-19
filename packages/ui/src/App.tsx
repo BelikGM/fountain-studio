@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { EXPIRY_WARNING_DAYS, daysUntilExpiry } from '@fountain-studio/shared';
+import { canEditShows, EXPIRY_WARNING_DAYS, daysUntilExpiry } from '@fountain-studio/shared';
 import { VENDOR_EMAIL } from './plans';
 import { comboFromEvent, getCombo } from './hotkeys';
 import { registerTabNavigator } from './navigate';
@@ -546,8 +546,12 @@ export function App() {
       {effectiveTab === 'layout' && <LayoutView engine={engine} />}
       {effectiveTab === 'scenes' && <ScenesView engine={engine} />}
       {effectiveTab === 'sequences' && <SequencesView engine={engine} />}
-      {effectiveTab === 'show' && <ShowView engine={engine} />}
-      {effectiveTab === 'playlists' && <PlaylistsView engine={engine} />}
+      {/*
+        Тариф Pro видит Шоу и Плейлисты, но только смотрит и запускает: правки —
+        в тарифе Max. Признак считается здесь, в одном месте, и передаётся вниз.
+      */}
+      {effectiveTab === 'show' && <ShowView engine={engine} readOnly={!canEditShows(access)} />}
+      {effectiveTab === 'playlists' && <PlaylistsView engine={engine} readOnly={!canEditShows(access)} />}
       {effectiveTab === 'schedule' && <ScheduleView engine={engine} />}
       {effectiveTab === 'stream' && <StreamView engine={engine} />}
       {effectiveTab === 'network' && <NetworkView engine={engine} />}

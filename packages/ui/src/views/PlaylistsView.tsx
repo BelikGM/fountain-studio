@@ -10,8 +10,10 @@ import { NextIcon, PlayIcon, PrevIcon, StopIcon } from '../components/Icons';
  * Плейлисты: последовательности шоу с паузами. Исполняет движок автономно
  * (его тик — мастер-часы, звук — системный ffplay на ПК движка).
  */
-export function PlaylistsView({ engine }: { engine: EngineConnection }) {
-  const { project, playback, send, updateProject } = engine;
+export function PlaylistsView({ engine, readOnly = false }: { engine: EngineConnection; readOnly?: boolean }) {
+  const { project, playback, send } = engine;
+  /** Тариф Pro: плейлист можно выбрать и запустить, но не менять (см. ShowView). */
+  const updateProject = readOnly ? () => {} : engine.updateProject;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
 
@@ -56,14 +58,20 @@ export function PlaylistsView({ engine }: { engine: EngineConnection }) {
   return (
     <main className="view view-split">
       <aside className="sidebar">
-        <div className="sidebar-actions">
-          <button className="btn" onClick={addPlaylist}>
-            + Плейлист
-          </button>
-          <button className="btn" onClick={() => void removePlaylist()} disabled={!selected}>
-            Удалить
-          </button>
-        </div>
+        {readOnly ? (
+          <p className="dim">
+            Тариф Pro: плейлисты можно выбирать и запускать, но не менять. Для правок нужен тариф Max.
+          </p>
+        ) : (
+          <div className="sidebar-actions">
+            <button className="btn" onClick={addPlaylist}>
+              + Плейлист
+            </button>
+            <button className="btn" onClick={() => void removePlaylist()} disabled={!selected}>
+              Удалить
+            </button>
+          </div>
+        )}
         {playlists.length > 5 && <ListFilter value={filter} onChange={setFilter} />}
         <ul className="list">
           {visiblePlaylists.map((p) => (
@@ -92,7 +100,7 @@ export function PlaylistsView({ engine }: { engine: EngineConnection }) {
             вода и свет без музыки).
           </div>
         ) : (
-          <PlaylistEditor playlist={selected} engine={engine} onChange={updatePlaylist} />
+          <PlaylistEditor playlist={selected} engine={engine} onChange={updatePlaylist} readOnly={readOnly} />
         )}
       </section>
     </main>
@@ -103,10 +111,13 @@ function PlaylistEditor({
   playlist,
   engine,
   onChange,
+  readOnly,
 }: {
   playlist: Playlist;
   engine: EngineConnection;
   onChange: (p: Playlist) => void;
+  /** Тариф Pro: только смотреть и запускать. */
+  readOnly: boolean;
 }) {
   const { project, playback, send } = engine;
   const shows = project?.shows ?? [];
@@ -150,9 +161,11 @@ function PlaylistEditor({
         <input
           className="input input-title"
           value={playlist.name}
+          readOnly={readOnly}
           onChange={(e) => onChange({ ...playlist, name: e.target.value })}
         />
         <select
+          disabled={readOnly}
           value={playlist.mode}
           onChange={(e) => onChange({ ...playlist, mode: e.target.value as Playlist['mode'] })}
         >
@@ -160,6 +173,7 @@ function PlaylistEditor({
           <option value="once">Один раз</option>
         </select>
         <select
+          disabled={readOnly}
           value={playlist.onStart}
           data-hint="Поведение при запуске: с начала или с места прошлой остановки"
           onChange={(e) => onChange({ ...playlist, onStart: e.target.value as Playlist['onStart'] })}
@@ -266,6 +280,7 @@ function PlaylistEditor({
                       <input
                         className="input input-num"
                         type="number"
+                        readOnly={readOnly}
                         min={0}
                         step={1}
                         value={Math.round(item.gapMs / 1000)}
@@ -280,6 +295,10 @@ function PlaylistEditor({
                       />
                     </td>
                     <td>
+                      {readOnly ? (
+                        <span className="dim">—</span>
+                      ) : (
+                        <>
                       <button className="btn btn-small" disabled={i === 0} onClick={() => moveItem(i, -1)}>
                         ↑
                       </button>
@@ -306,27 +325,31 @@ function PlaylistEditor({
                       >
                         ✕
                       </button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-          <div className="form-row">
-            <button
-              className="btn"
-              onClick={() =>
-                onChange({ ...playlist, items: [...playlist.items, { showId: shows[0]!.id, gapMs: 5000 }] })
-              }
-            >
-              + Шоу в плейлист
-            </button>
-            {hasItemClip && (
-              <button className="btn btn-small" onClick={pasteItem}>
-                Вставить пункт
+          {!readOnly && (
+            <div className="form-row">
+              <button
+                className="btn"
+                onClick={() =>
+                  onChange({ ...playlist, items: [...playlist.items, { showId: shows[0]!.id, gapMs: 5000 }] })
+                }
+              >
+                + Шоу в плейлист
               </button>
-            )}
-          </div>
+              {hasItemClip && (
+                <button className="btn btn-small" onClick={pasteItem}>
+                  Вставить пункт
+                </button>
+              )}
+            </div>
+          )}
         </>
       )}
     </>

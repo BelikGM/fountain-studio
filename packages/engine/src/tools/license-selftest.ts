@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { accessFor, canonicalPayload, expiryState, loadLicenseStatus, machineFingerprint, verifyLicenseFile } from '../license';
+import { canEditShows } from '@fountain-studio/shared';
 import { isMachineRevoked, refreshRevocationList, revocationCacheInfo } from '../licenseRevocation';
 import crypto from 'node:crypto';
 import { EXPIRY_WARNING_DAYS, GRACE_PERIOD_DAYS, daysUntilExpiry, type LicenseFile, type LicensePayload } from '@fountain-studio/shared';
@@ -114,6 +115,16 @@ function makeLicense(payload: Partial<LicensePayload>, signWith: crypto.KeyObjec
   check('истекла (была max) → доступа нет вовсе', accessFor(expired, 'max') === 'none');
   check('истекла старая (плана не было) → тоже none', accessFor(expired, null) === 'none');
   check('подпись не сошлась → доступ none, даже если план был указан', accessFor(invalid, 'max') === 'none');
+
+  /*
+   * Что тариф РАЗРЕШАЕТ ПРАВИТЬ. Это условие продажи, и проверяться оно должно
+   * тестом, а не глазами по разметке: Pro видит Шоу и Плейлисты и запускает с
+   * них программу — это его работа, «текущая эксплуатация объекта», — а
+   * постановка шоу продаётся в Max.
+   */
+  check('Max правит шоу и плейлисты', canEditShows('max'));
+  check('Pro НЕ правит: только смотрит и запускает', !canEditShows('pro'));
+  check('без лицензии править тоже нечего', !canEditShows('none'));
   // Льготные дни — это ВАЛИДНАЯ лицензия: доступ полный, просто интерфейс
   // просит оплатить. Иначе фонтан вставал бы из-за задержки платежа на день.
   const grace = { valid: true, grace: true, graceDaysLeft: 3 } as const;

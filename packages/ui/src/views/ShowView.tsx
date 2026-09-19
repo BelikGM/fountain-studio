@@ -68,8 +68,15 @@ function toMono(buffer: AudioBuffer): Float32Array {
 }
 
 /** Шоу: таймлайн с музыкой, дорожки блоков (сцены/секвенсоры) и огибающих каналов. */
-export function ShowView({ engine }: { engine: EngineConnection }) {
-  const { project, playback, send, updateProject } = engine;
+export function ShowView({ engine, readOnly = false }: { engine: EngineConnection; readOnly?: boolean }) {
+  const { project, playback, send } = engine;
+  /*
+   * Тариф Pro: шоу можно выбрать и запустить, но не менять. Запрет стоит ЗДЕСЬ,
+   * в единственной точке, через которую вьюха правит проект, — а не только на
+   * кнопках. Кнопок в этой вьюхе десятки, пропустить одну легко, и тогда правка
+   * ушла бы в проект тихо. Так — не уйдёт даже если кнопка осталась на виду.
+   */
+  const updateProject = readOnly ? () => {} : engine.updateProject;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showFilter, setShowFilter] = useState('');
   const [templateId, setTemplateId] = useState('');
@@ -147,18 +154,24 @@ export function ShowView({ engine }: { engine: EngineConnection }) {
   return (
     <main className="view view-split">
       <aside className="sidebar">
-        <div className="sidebar-actions">
-          <button className="btn" onClick={addShow}>
-            + Шоу
-          </button>
-          <button className="btn" onClick={duplicateShow} disabled={!selected}>
-            Дублировать
-          </button>
-          <button className="btn" onClick={() => void removeShow()} disabled={!selected}>
-            Удалить
-          </button>
-        </div>
-        {shows.length > 0 && (
+        {readOnly ? (
+          <p className="dim">
+            Тариф Pro: шоу можно выбирать и запускать, но не менять. Для правок нужен тариф Max.
+          </p>
+        ) : (
+          <div className="sidebar-actions">
+            <button className="btn" onClick={addShow}>
+              + Шоу
+            </button>
+            <button className="btn" onClick={duplicateShow} disabled={!selected}>
+              Дублировать
+            </button>
+            <button className="btn" onClick={() => void removeShow()} disabled={!selected}>
+              Удалить
+            </button>
+          </div>
+        )}
+        {!readOnly && shows.length > 0 && (
           <div className="sidebar-actions" data-hint="Новое шоу с той же структурой дорожек (имена, виды, привязки огибающих), но без содержимого и своего аудио — задел под новую песню">
             <select className="input-mini" value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
               <option value="">по шаблону…</option>
@@ -203,6 +216,7 @@ export function ShowView({ engine }: { engine: EngineConnection }) {
             key={selected.id}
             show={selected}
             engine={engine}
+            readOnly={readOnly}
             onChange={(next) =>
               updateProject({ ...project, shows: project.shows.map((s) => (s.id === next.id ? next : s)) })
             }
@@ -236,10 +250,17 @@ function ShowEditor({
   show,
   engine,
   onChange,
+  readOnly,
 }: {
   show: Show;
   engine: EngineConnection;
   onChange: (show: Show) => void;
+  /**
+   * Тариф Pro: только смотреть и запускать. Правки в проект всё равно не
+   * уходят (запрет стоит выше, в одной точке), но органы, которые ничего не
+   * делают, показывать нельзя — человек решит, что программа сломалась.
+   */
+  readOnly: boolean;
 }) {
   const { project, send, requestAudio } = engine;
   const [pxPerSec, setPxPerSec] = useState(30);
@@ -1144,12 +1165,22 @@ function ShowEditor({
 
   return (
     <>
+      {readOnly && (
+        <p className="dim">
+          Тариф Pro: шоу можно смотреть и запускать, дорожки и блоки не правятся. Перемотка и
+          масштаб работают. Для правок нужен тариф Max.
+        </p>
+      )}
       <div className="form-row">
         <input
           className="input input-title"
           value={show.name}
+          readOnly={readOnly}
           onChange={(e) => onChange({ ...show, name: e.target.value })}
         />
+        {readOnly ? (
+          <span className="dim">{show.audioFile ? `♪ ${show.audioFile}` : 'без музыки'}</span>
+        ) : (
         <label className="btn">
           {show.audioFile ? `♪ ${show.audioFile}` : '♪ Загрузить аудио…'}
           <input
@@ -1163,9 +1194,10 @@ function ShowEditor({
             }}
           />
         </label>
+        )}
         {audioStatus === 'loading' && <span className="dim">загрузка аудио…</span>}
         {audioStatus === 'missing' && <span className="warn">аудиофайл не найден в хранилище движка</span>}
-        {!show.audioFile && (
+        {!readOnly && !show.audioFile && (
           <label className="dim">
             длительность, с:{' '}
             <input
@@ -1209,12 +1241,16 @@ function ShowEditor({
         <button className="btn btn-small" onClick={() => setPxPerSec((z) => Math.min(400, z * 1.5))}>
           +
         </button>
-        <button className="btn" onClick={addBlocksTrack}>
-          + Дорожка блоков
-        </button>
-        <button className="btn" onClick={addEnvelopeTrack} disabled={devices.length === 0}>
-          + Огибающая
-        </button>
+        {!readOnly && (
+          <>
+            <button className="btn" onClick={addBlocksTrack}>
+              + Дорожка блоков
+            </button>
+            <button className="btn" onClick={addEnvelopeTrack} disabled={devices.length === 0}>
+              + Огибающая
+            </button>
+          </>
+        )}
         <button
           className="btn"
           onClick={autoStage}
@@ -1318,6 +1354,7 @@ function ShowEditor({
               )}
             </div>
             <WaveLane
+              readOnly={readOnly}
               laneW={laneW}
               scale={scale}
               buffer={buffer}
@@ -1457,14 +1494,17 @@ function ShowEditor({
                   >
                     ↓
                   </button>
-                  <button className="btn btn-small" onClick={() => removeTrack(track.id)}>
-                    ✕
-                  </button>
+                  {!readOnly && (
+                    <button className="btn btn-small" onClick={() => removeTrack(track.id)}>
+                      ✕
+                    </button>
+                  )}
                 </div>
               </div>
 
               {track.kind === 'blocks' ? (
                 <BlocksLane
+                  readOnly={readOnly}
                   track={track}
                   laneW={laneW}
                   scale={scale}
@@ -1520,6 +1560,7 @@ function ShowEditor({
                 />
               ) : (
                 <EnvelopeLane
+                  readOnly={readOnly}
                   track={track}
                   laneW={laneW}
                   scale={scale}
@@ -1742,6 +1783,7 @@ function WaveLane({
   sel,
   onSelect,
   onSeek,
+  readOnly,
 }: {
   laneW: number;
   scale: number;
@@ -1750,6 +1792,8 @@ function WaveLane({
   sel: CutRange | null;
   onSelect: (sel: CutRange | null) => void;
   onSeek: (ms: number) => void;
+  /** Тариф Pro: правки в таймлайне запрещены. */
+  readOnly: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -1799,6 +1843,7 @@ function WaveLane({
       className="tl-lane wave"
       style={{ width: laneW }}
       onMouseDown={(e) => {
+        if (readOnly) return;
         const el = e.currentTarget;
         const startMs = msAt(e, el);
         let moved = false;
@@ -1849,6 +1894,7 @@ function BlocksLane({
   onAdd,
   onStartDrag,
   onBand,
+  readOnly,
 }: {
   track: BlocksTrack;
   laneW: number;
@@ -1867,6 +1913,8 @@ function BlocksLane({
   onStartDrag: (block: ShowBlock, kind: 'move' | 'resize', clientX: number, additive: boolean) => void;
   /** Начата рамка выделения — с Shift по пустому месту ленты. */
   onBand: (clientX: number, clientY: number) => void;
+  /** Тариф Pro: правки в таймлайне запрещены. */
+  readOnly: boolean;
 }) {
   return (
     <div
@@ -1880,6 +1928,7 @@ function BlocksLane({
       }}
       data-hint="Двойной щелчок — добавить блок · Shift и протяжка — выделить блоки рамкой"
       onMouseDown={(e) => {
+        if (readOnly) return;
         if (!e.shiftKey || (e.target as HTMLElement).closest('.block')) return;
         e.preventDefault();
         onBand(e.clientX, e.clientY);
@@ -1912,6 +1961,7 @@ function BlocksLane({
             }
             style={{ left: (b.startMs / 1000) * scale, width: Math.max(8, (b.durationMs / 1000) * scale) }}
             onMouseDown={(e) => {
+        if (readOnly) return;
               e.preventDefault();
               const r = e.currentTarget.getBoundingClientRect();
               const kind = e.clientX > r.right - 8 ? 'resize' : 'move';
@@ -1937,6 +1987,7 @@ function EnvelopeLane({
   onAddPoint,
   onRemovePoint,
   onStartDrag,
+  readOnly,
 }: {
   track: EnvelopeTrack;
   laneW: number;
@@ -1945,6 +1996,8 @@ function EnvelopeLane({
   onAddPoint: (tMs: number, value: number) => void;
   onRemovePoint: (i: number) => void;
   onStartDrag: (i: number) => void;
+  /** Тариф Pro: правки в таймлайне запрещены. */
+  readOnly: boolean;
 }) {
   const points = pointDrag
     ? track.points
@@ -1974,6 +2027,7 @@ function EnvelopeLane({
               r={4.5}
               className="env-point"
               onMouseDown={(e) => {
+        if (readOnly) return;
                 e.preventDefault();
                 e.stopPropagation();
                 onStartDrag(i);
