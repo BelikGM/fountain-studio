@@ -58,6 +58,21 @@ export interface EngineConfig {
   /** OSC-пульт (TouchOSC и т.п.): слушаем адрес/действие из project.oscBindings. Выключено по умолчанию. */
   osc?: { enabled: boolean; port: number };
   /**
+   * Считать воспроизведение в ОТДЕЛЬНОМ потоке (worker_threads).
+   *
+   * Зачем: такты расчёта и отправки уже разделены, но поток Node один — если
+   * расчёт заблокирует event loop, встанут оба такта. В отдельном потоке
+   * блокировка расчёта физически не может задержать кадр (см.
+   * playbacksource.ts).
+   *
+   * По умолчанию ВЫКЛЮЧЕНО, и это осознанно: на объектах играет проверенный
+   * путь, а новый включается тем, кто может посмотреть на результат. Включить —
+   * `{"playbackWorker": true}` в app-config.json рядом с настройками программы.
+   * Если поток не поднимется, движок сам вернётся к расчёту в главном потоке и
+   * напишет причину в журнал — фонтан не встанет.
+   */
+  playbackWorker?: boolean;
+  /**
    * Отзыв лицензии (§27 доработки, «Продукт») — необязательный слой поверх
    * офлайн-проверки подписи, см. licenseRevocation.ts. Без revocationUrl
    * ничего никуда не стучится: по умолчанию выключено.
@@ -111,6 +126,7 @@ export function loadAppConfig(appDataDir: string): EngineConfig & { configFile: 
     ...(raw.osc ? { osc: raw.osc } : {}),
     ...(raw.mqtt ? { mqtt: raw.mqtt } : {}),
     ...(raw.license ? { license: raw.license } : {}),
+    ...(raw.playbackWorker === true ? { playbackWorker: true } : {}),
   };
 }
 
@@ -134,6 +150,7 @@ export function loadConfig(argv: string[]): EngineConfig & { configFile: string 
     configFile: file,
     ...(raw.osc ? { osc: raw.osc } : {}),
     ...(raw.mqtt ? { mqtt: raw.mqtt } : {}),
+    ...(raw.playbackWorker === true ? { playbackWorker: true } : {}),
   };
   if (config.universes.length === 0) {
     throw new Error(`В ${file} не задано ни одной вселенной (universes)`);

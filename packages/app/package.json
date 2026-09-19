@@ -8,8 +8,9 @@
   "scripts": {
     "dev": "electron .",
     "build:engine": "esbuild ../engine/src/index.ts --bundle --platform=node --format=cjs --outfile=engine.cjs --external:bufferutil --external:utf-8-validate --external:serialport --external:@serialport/* --external:koffi",
+    "build:worker": "esbuild ../engine/src/playbackworker.ts --bundle --platform=node --format=cjs --outfile=playback-worker.cjs --external:bufferutil --external:utf-8-validate --external:serialport --external:@serialport/* --external:koffi",
     "build:ui": "node -e \"const fs=require('fs');fs.rmSync('ui',{recursive:true,force:true});fs.cpSync('../ui/dist','ui',{recursive:true})\"",
-    "build": "npm run build:engine && npm run build:ui",
+    "build": "npm run build:engine && npm run build:worker && npm run build:ui",
     "dist": "electron-builder --win nsis"
   },
   "devDependencies": {
@@ -28,6 +29,7 @@
       "main.cjs",
       "preload.cjs",
       "engine.cjs",
+      "playback-worker.cjs",
       "ui/**",
       {
         "from": "../../node_modules/serialport",

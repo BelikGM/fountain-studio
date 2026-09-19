@@ -54,6 +54,8 @@ import { UsbDmxOutput } from './drivers/usb-dmx';
 import { MusidoraOutput } from './drivers/musidora';
 import type { UniverseOutput } from './drivers/output';
 import { Playback } from './playback';
+import { createPlaybackSource, type PlaybackSource } from './playbacksource';
+import { WorkerPlayback } from './workerplayback';
 import { PumpModbusManager } from './pumpmodbus';
 
 interface UniverseState {
@@ -79,7 +81,7 @@ interface UniverseState {
  */
 export class Engine {
   readonly universes: UniverseState[] = [];
-  readonly playback: Playback;
+  readonly playback: PlaybackSource;
   /** Насосы с прямым управлением по Modbus (§12 п.9) — читают то же u.out, что уходит в DMX. */
   readonly pumps = new PumpModbusManager();
   /** Расчётчик: собирает кадр (сцены, шоу, консоль, ветер, переадресация). */
@@ -230,7 +232,22 @@ export class Engine {
         outputs: u.outputs.map(createOutput),
       });
     }
-    this.playback = new Playback(this.universes.map((u) => u.id));
+    /**
+     * Где считается воспроизведение — здесь же или в отдельном потоке. Выбор
+     * один на всю жизнь движка: менять его на ходу значило бы терять состояние
+     * воспроизведения посреди шоу.
+     */
+    this.playback = createPlaybackSource(
+      config.playbackWorker === true,
+      this.universes.map((u) => u.id),
+      config.timing.tickMs,
+      config.timing.spinMs,
+      {
+        inline: (ids) => new Playback(ids),
+        worker: (tickMs, spinMs, ids) => WorkerPlayback.create(tickMs, spinMs, ids),
+        log: (text, level) => eventLog.log('engine', text, level),
+      },
+    );
     this.ticker = new Ticker(config.timing.tickMs, config.timing.spinMs, (n) => this.tick(n));
     this.sender = new Ticker(config.timing.tickMs, config.timing.spinMs, () => this.sendFrames());
   }
@@ -249,6 +266,7 @@ export class Engine {
   stop(): void {
     this.ticker.stop();
     this.sender.stop();
+    this.playback.dispose();
     for (const u of this.universes) for (const o of u.outputs) o.close();
     this.pumps.stop();
   }
@@ -462,7 +480,14 @@ export class Engine {
 
     const stalled = this.stallSinceMs > 0;
     const linkLost = this.linkBadSinceMs > 0 && now - this.linkBadSinceMs > limitMs;
-    const active = stalled || linkLost;
+    // 3. Расчёт в отдельном потоке: поток умер или встал. Кадр при этом
+    //    формально продолжает уходить в линию (последний посчитанный), но
+    //    воспроизведения за ним больше нет — вода осталась бы стоять на
+    //    последней уставке шоу. Это как раз то, от чего есть аварийное
+    //    отключение. У расчёта в главном потоке healthy всегда true.
+    const calcLost = !this.playback.healthy;
+
+    const active = stalled || linkLost || calcLost;
     if (active === this.failsafe.active) return;
     this.setFailsafe(
       active,
@@ -470,7 +495,9 @@ export class Engine {
         ? `такт движка вставал на ${(gap / 1000).toFixed(1)} с`
         : linkLost
           ? `выход на линию не доставляет дольше ${this.failsafeConfig.timeoutSec} с`
-          : '',
+          : calcLost
+            ? 'поток расчёта кадра встал или умер'
+            : '',
     );
   }
 
@@ -538,10 +565,13 @@ export class Engine {
 
   pauseAll(): void {
     this.paused = true;
+    // Расчёт в отдельном потоке ведёт свои часы — про паузу ему надо сказать.
+    this.playback.setPausedAll(true);
   }
 
   resumeAll(): void {
     this.paused = false;
+    this.playback.setPausedAll(false);
   }
 
   // ── Проект и транспорт воспроизведения ────────────────────────────────────
