@@ -88,6 +88,12 @@ export interface EngineConfig {
    */
   playbackLookaheadMs?: number;
   /**
+   * Откуда прочитаны настройки программы. Нужен, чтобы дописать в тот же файл
+   * переключатель подготовки кадров: в установленном приложении человек до
+   * этого файла руками не доберётся.
+   */
+  configFile?: string;
+  /**
    * Отзыв лицензии (§27 доработки, «Продукт») — необязательный слой поверх
    * офлайн-проверки подписи, см. licenseRevocation.ts. Без revocationUrl
    * ничего никуда не стучится: по умолчанию выключено.
@@ -147,6 +153,27 @@ export function loadAppConfig(appDataDir: string): EngineConfig & { configFile: 
       ? { playbackLookaheadMs: Math.max(0, Math.min(2000, Math.round(raw.playbackLookaheadMs))) }
       : {}),
   };
+}
+
+/**
+ * Дописать настройки ПРОГРАММЫ, не потеряв остальное.
+ *
+ * Читаем-правим-пишем, а не перезаписываем целиком: в этом файле лежит и то,
+ * чего мы тут не касаемся, — адрес списка отозванных лицензий, настройки MQTT,
+ * порт OSC. Перезапись «своим» объектом стёрла бы их молча, и на объекте это
+ * выяснилось бы через неделю неработающим отзывом.
+ */
+export function saveAppConfigPatch(configFile: string, patch: Partial<EngineConfig>): void {
+  try {
+    let all: Record<string, unknown> = {};
+    if (fs.existsSync(configFile)) {
+      all = JSON.parse(fs.readFileSync(configFile, 'utf8')) as Record<string, unknown>;
+    }
+    fs.mkdirSync(path.dirname(configFile), { recursive: true });
+    fs.writeFileSync(configFile, JSON.stringify({ ...all, ...patch }, null, 2), 'utf8');
+  } catch (err) {
+    console.error('[config] не удалось сохранить настройки программы:', err);
+  }
 }
 
 /** Ищет fountain.config.json вверх от cwd; путь можно задать через --config. */

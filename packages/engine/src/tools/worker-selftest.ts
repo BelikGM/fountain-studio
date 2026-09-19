@@ -19,6 +19,11 @@ import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import {
   DMX_UNIVERSE_SIZE,
+  FRAME_LOOKAHEAD_MS,
+  FRAME_MODES,
+  frameModeFromConfig,
+  frameModeLabel,
+  frameModeToConfig,
   emptyProject,
   sanitizeProject,
   type Project,
@@ -351,6 +356,85 @@ async function main(): Promise<void> {
     worker.tick(0);
     check(worker.levels(1) !== undefined, 'после сокращения набора первая вселенная на месте');
     worker.dispose();
+  }
+
+  console.log('— Режим подготовки кадров: раскладка на настройки —');
+  {
+    // Наружу один список из трёх вариантов, внутри — две величины. Ошибка в
+    // раскладке означала бы, что переключатель в настройках врёт.
+    check(FRAME_MODES.length === 3, 'три варианта: заранее, сразу в потоке, в главном потоке');
+    check(
+      FRAME_MODES.every((m) => m.label.trim() !== '' && m.hint.length > 40),
+      'у каждого есть понятная подпись и объяснение',
+    );
+    const ahead = frameModeToConfig('ahead');
+    check(ahead.playbackWorker && ahead.playbackLookaheadMs === FRAME_LOOKAHEAD_MS, 'заранее = поток + запас');
+    const instant = frameModeToConfig('instant');
+    check(instant.playbackWorker && instant.playbackLookaheadMs === 0, 'сразу в потоке = поток без запаса');
+    const inline = frameModeToConfig('inline');
+    check(!inline.playbackWorker, 'в главном потоке = без потока');
+    // Обратное преобразование должно быть согласовано с прямым, иначе настройки
+    // с диска прочитались бы как другой режим.
+    for (const m of FRAME_MODES) {
+      const c = frameModeToConfig(m.id);
+      check(frameModeFromConfig(c.playbackWorker, c.playbackLookaheadMs) === m.id, `режим «${m.label}» читается обратно собой`);
+    }
+    check(frameModeFromConfig(false, 500) === 'inline', 'без потока запас не имеет значения');
+    check(frameModeLabel('ahead').includes('Заранее'), 'подпись режима берётся из списка');
+  }
+
+  console.log('— Переключение режима на живом движке —');
+  {
+    const { Engine } = await import('../engine');
+    const engine = new Engine({
+      server: { port: 9596 },
+      timing: { tickMs: 50, spinMs: 10, uiFrameMs: 1000 },
+      audio: { player: 'none', ffplayPath: '' },
+      universes: [{ id: 1, label: 'В1', outputs: [] }],
+      backup: { enabled: false, intervalMin: 60 },
+    } as never);
+    engine.setProject(project);
+    engine.start();
+    try {
+      await sleep(400);
+      check(engine.frameModeChosen() === 'ahead', 'по умолчанию — заранее, в отдельном потоке');
+      check(engine.frameModeActive() === 'ahead', 'и он действительно работает');
+
+      // Сцена играет, переключаем режим — воспроизведение обязано остановиться:
+      // состояние расчёта через смену потока не переносится, и врать об этом нельзя.
+      engine.setScene('s1');
+      await sleep(APPLY_MS);
+      check(engine.universes[0]!.out[0] === 255, 'сцена играет до переключения');
+      engine.setFrameMode('inline');
+      await sleep(300);
+      check(engine.frameModeActive() === 'inline', 'переключились на главный поток');
+      check(engine.playbackState().activeSceneId === null, 'воспроизведение остановлено — как и обещано в интерфейсе');
+      check(engine.universes[0]!.out[0] === 0, 'и в линии больше нет прежней сцены');
+
+      // В главном потоке всё работает как раньше — сцена включается сразу.
+      engine.setScene('s1');
+      await sleep(200);
+      check(engine.universes[0]!.out[0] === 255, 'в главном потоке сцена играет');
+
+      engine.setFrameMode('instant');
+      await sleep(500);
+      check(engine.frameModeActive() === 'instant', 'вернулись в поток без запаса');
+      engine.setScene('s2');
+      await sleep(APPLY_MS);
+      check(engine.universes[0]!.out[1] === 255, 'и он считает кадры (зелёная сцена)');
+
+      engine.setFrameMode('ahead');
+      await sleep(500);
+      check(engine.frameModeActive() === 'ahead', 'и обратно на заводской режим');
+      // Повторное присвоение того же режима не должно ничего ломать и останавливать.
+      engine.setScene('s1');
+      await sleep(APPLY_MS);
+      engine.setFrameMode('ahead');
+      await sleep(150);
+      check(engine.playbackState().activeSceneId === 's1', 'тот же режим повторно — воспроизведение не тронуто');
+    } finally {
+      engine.stop();
+    }
   }
 
   console.log(`\nпоток расчёта: пройдено ${passed}, ошибок ${failed}`);

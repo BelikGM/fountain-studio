@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
+  FRAME_MODES,
+  frameModeLabel,
   plainWindNozzle,
   windAllowedLevel,
   windNozzleFor,
@@ -852,6 +854,59 @@ function FailsafePanel({ engine }: { engine: EngineConnection }) {
   );
 }
 
+/**
+ * Как готовятся кадры для линии.
+ *
+ * Вынесено в интерфейс потому, что в установленном приложении человек до
+ * `app-config.json` руками не доберётся, а на объекте сравнить «как сейчас» с
+ * «как было раньше» — это первое, что понадобится, если что-то покажется не так.
+ *
+ * Списком, а не полем с числом: глубина запаса замерена, и глубже сотни
+ * миллисекунд она не даёт ничего (разбор — в `framemode.ts`). Свободное поле
+ * приглашало бы искать там, где искать нечего.
+ */
+function FrameModePanel({ engine }: { engine: EngineConnection }) {
+  const { engineConfig, send } = engine;
+  if (!engineConfig) return null;
+  const chosen = engineConfig.frameMode;
+  const active = engineConfig.frameModeActive;
+  return (
+    <section className="panel">
+      <h2>Подготовка кадров</h2>
+      <p className="dim">
+        Кадр в линию уходит каждый такт. Здесь — где он считается и считается ли заранее. Заводской
+        режим ровнее держит поток под тяжёлым шоу; остальные оставлены на случай, если на объекте
+        что-то пойдёт не так.
+      </p>
+      <div className="form-column">
+        {FRAME_MODES.map((m) => (
+          <label key={m.id} className="field" data-hint={m.hint}>
+            <input
+              type="radio"
+              name="frame-mode"
+              checked={chosen === m.id}
+              onChange={() => send({ type: 'setFrameMode', mode: m.id })}
+            />{' '}
+            {m.label}
+            {m.id === 'ahead' ? ' — рекомендуется' : ''}
+          </label>
+        ))}
+      </div>
+      <p className="warn">
+        Переключение ОСТАНАВЛИВАЕТ воспроизведение: состояние расчёта (где середина шоу, какой шаг у
+        секвенсора) через смену потока не переносится, а угадывать его нельзя.
+      </p>
+      {active !== chosen && (
+        <p className="error-text">
+          Выбрано «{frameModeLabel(chosen)}», но работает «{frameModeLabel(active)}»: поток расчёта не
+          поднялся, и движок перешёл на запасной путь. Причина — в журнале событий на вкладке
+          «Поток». Фонтан при этом играет как играл.
+        </p>
+      )}
+    </section>
+  );
+}
+
 function WindLimitPanel({ engine }: { engine: EngineConnection }) {
   const { project, updateProject } = engine;
   if (!project) return null;
@@ -1586,6 +1641,14 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
           </span>
         </div>
       </section>
+
+      <FrameModePanel engine={engine} />
+
+      <p className="dim">
+        Подготовка кадров — настройка ПРОГРАММЫ, а не объекта: она про машину, на которой всё
+        крутится, и при переключении объектов не меняется. Сохраняется сразу, кнопка «Применить»
+        ниже к ней не относится.
+      </p>
 
       <div className="form-row">
         <button className="btn active" disabled={!dirty || !valid} onClick={apply}>

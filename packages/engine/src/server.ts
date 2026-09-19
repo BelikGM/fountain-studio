@@ -9,8 +9,11 @@ import {
   type RdmAction,
   type RdmSensorReading,
   type ServerMessage,
+  FRAME_MODES,
+  frameModeToConfig,
 } from '@fountain-studio/shared';
 import type { AudioStore } from './audio';
+import { saveAppConfigPatch } from './config';
 import { isAutostartEnabled, isAutostartSupported, setAutostart, unsupportedReason } from './autostart';
 import type { BackupStore } from './backups';
 import type { TelegramNotifier } from './telegram';
@@ -110,6 +113,8 @@ export function startServer(
     type: 'config',
     tickMs: engine.config.timing.tickMs,
     universes: engine.config.universes as ConfigUniverse[],
+    frameMode: engine.frameModeChosen(),
+    frameModeActive: engine.frameModeActive(),
   });
   const broadcastNetwork = (): void => {
     if (net) broadcast({ type: 'network', state: net.state() });
@@ -442,6 +447,19 @@ export function startServer(
         case 'rdmRequest':
           void handleRdmRequest(net, msg, ws);
           break;
+        case 'setFrameMode': {
+          if (!FRAME_MODES.some((m) => m.id === msg.mode)) {
+            console.error('[server] setFrameMode отклонён: неизвестный режим', msg.mode);
+            break;
+          }
+          engine.setFrameMode(msg.mode);
+          // Это настройка ПРОГРАММЫ, не объекта: она про машину, на которой всё
+          // крутится, и при переключении объектов меняться не должна.
+          saveAppConfigPatch(engine.config.configFile ?? '', frameModeToConfig(msg.mode));
+          broadcast(configMessage());
+          broadcastPlayback();
+          break;
+        }
         case 'updateConfig': {
           // Валидация: непустой список, уникальные id, у каждой линии есть
           // выходы, разумный тик. Проверяем придирчиво не из педантизма: на

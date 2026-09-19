@@ -17,6 +17,7 @@ import type {
   UniverseInfo,
   UsbDmxScan,
   WindLimitConfig,
+  FrameMode,
 } from '@fountain-studio/shared';
 
 /** Сколько записей журнала событий держим на клиенте (движок и так капает историю до 500). */
@@ -66,6 +67,10 @@ export interface WindState {
 export interface EngineConfigState {
   tickMs: number;
   universes: ConfigUniverse[];
+  /** Выбранный режим подготовки кадров (настройка программы, не объекта). */
+  frameMode: FrameMode;
+  /** Что реально работает: отличается, если поток не поднялся. */
+  frameModeActive: FrameMode;
 }
 
 export interface RemoteStatus {
@@ -265,7 +270,12 @@ export function useEngine(): EngineConnection {
             setUniverses(msg.universes);
             break;
           case 'config':
-            setEngineConfig({ tickMs: msg.tickMs, universes: msg.universes });
+            setEngineConfig({
+              tickMs: msg.tickMs,
+              universes: msg.universes,
+              frameMode: msg.frameMode,
+              frameModeActive: msg.frameModeActive,
+            });
             break;
           case 'stats':
             setStats(msg.stats);

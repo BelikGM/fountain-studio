@@ -4,6 +4,7 @@
  */
 
 import type { FailsafeState } from './failsafe';
+import type { FrameMode } from './framemode';
 import type { LicenseStatus } from './license';
 import type { Project } from './project';
 import type { WindLimitConfig } from './windlimit';
@@ -457,6 +458,13 @@ export type ClientMessage =
   // применяет на лету (воспроизведение останавливается) и сохраняет в
   // fountain.config.json.
   | { type: 'updateConfig'; tickMs: number; universes: ConfigUniverse[] }
+  /**
+   * Как готовить кадры: отдельный поток и запас вперёд (см. framemode.ts).
+   * Настройка ПРОГРАММЫ, не объекта: она про машину, на которой всё крутится.
+   * Переключение останавливает воспроизведение — состояние расчёта при смене
+   * потока не переносится, и угадывать середину шоу нельзя.
+   */
+  | { type: 'setFrameMode'; mode: FrameMode }
   // Авто-бэкапы проекта (§27 доработки, УХ п.5) — отдельно от updateConfig: смена
   // интервала не трогает воспроизведение.
   | { type: 'updateBackupConfig'; enabled: boolean; intervalMin: number }
@@ -516,7 +524,18 @@ export interface ProjectsState {
 export type ServerMessage =
   | { type: 'hello'; version: string; tickMs: number; universes: UniverseInfo[] }
   /** Редактируемая конфигурация движка (шлётся при подключении и после updateConfig). */
-  | { type: 'config'; tickMs: number; universes: ConfigUniverse[] }
+  | {
+      type: 'config';
+      tickMs: number;
+      universes: ConfigUniverse[];
+      /** Выбранный режим подготовки кадров. */
+      frameMode: FrameMode;
+      /**
+       * Что РЕАЛЬНО работает. Отличается от выбранного, если поток не
+       * поднялся и движок сам перешёл на расчёт в главном потоке.
+       */
+      frameModeActive: FrameMode;
+    }
   | { type: 'stats'; stats: EngineStats }
   /**
    * Кадр вселенной. data — РАСЧЁТНЫЙ кадр по адресам проекта (по нему работают

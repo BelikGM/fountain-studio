@@ -30,6 +30,12 @@ import {
   defaultFailsafeConfig,
   type FailsafeConfig,
   type FailsafeState,
+  FRAME_LOOKAHEAD_MS,
+  frameModeFromConfig,
+  frameModeLabel,
+  frameModeToConfig,
+  type FrameMode,
+  type Show,
 } from '@fountain-studio/shared';
 import { Ticker } from './clock';
 import { eventLog } from './eventlog';
@@ -81,7 +87,26 @@ interface UniverseState {
  */
 export class Engine {
   readonly universes: UniverseState[] = [];
-  readonly playback: PlaybackSource;
+  /** Где считается воспроизведение — см. makePlayback и setFrameMode. */
+  private playbackSource: PlaybackSource;
+  /** Выбранный режим подготовки кадров. */
+  private frameMode: FrameMode;
+  /** Проект помним: при смене режима его надо отдать новому источнику. */
+  private lastProject: Project | null = null;
+  /**
+   * Смена шоу в автономном воспроизведении: играть звук умеет только процесс
+   * движка. Раньше это вешали прямо на источник, но источник теперь сменный —
+   * значит обработчик живёт у движка, а источники к нему подключаются сами.
+   */
+  onShowAudio: ((show: Show | null) => void) | null = null;
+
+  /** Источник уровней воспроизведения (сцены, секвенсоры, шоу). */
+  get playback(): PlaybackSource {
+    return this.playbackSource;
+  }
+  private set playback(v: PlaybackSource) {
+    this.playbackSource = v;
+  }
   /** Насосы с прямым управлением по Modbus (§12 п.9) — читают то же u.out, что уходит в DMX. */
   readonly pumps = new PumpModbusManager();
   /** Расчётчик: собирает кадр (сцены, шоу, консоль, ветер, переадресация). */
@@ -232,24 +257,66 @@ export class Engine {
         outputs: u.outputs.map(createOutput),
       });
     }
-    /**
-     * Где считается воспроизведение — здесь же или в отдельном потоке. Выбор
-     * один на всю жизнь движка: менять его на ходу значило бы терять состояние
-     * воспроизведения посреди шоу.
-     */
-    this.playback = createPlaybackSource(
-      config.playbackWorker !== false,
+    this.frameMode = frameModeFromConfig(config.playbackWorker !== false, config.playbackLookaheadMs ?? FRAME_LOOKAHEAD_MS);
+    this.playbackSource = this.makePlayback(this.frameMode);
+    this.ticker = new Ticker(config.timing.tickMs, config.timing.spinMs, (n) => this.tick(n));
+    this.sender = new Ticker(config.timing.tickMs, config.timing.spinMs, () => this.sendFrames());
+  }
+
+  /**
+   * Собрать источник уровней под выбранный режим. Звук остаётся на движке:
+   * играть его умеет только главный поток, а источник может смениться.
+   */
+  private makePlayback(mode: FrameMode): PlaybackSource {
+    const cfg = frameModeToConfig(mode);
+    const src = createPlaybackSource(
+      cfg.playbackWorker,
       this.universes.map((u) => u.id),
-      config.timing.tickMs,
-      config.timing.spinMs,
+      this.config.timing.tickMs,
+      this.config.timing.spinMs,
       {
         inline: (ids) => new Playback(ids),
-        worker: (tickMs, spinMs, ids) => WorkerPlayback.create(tickMs, spinMs, ids, config.playbackLookaheadMs),
+        worker: (tickMs, spinMs, ids) => WorkerPlayback.create(tickMs, spinMs, ids, cfg.playbackLookaheadMs),
         log: (text, level) => eventLog.log('engine', text, level),
       },
     );
-    this.ticker = new Ticker(config.timing.tickMs, config.timing.spinMs, (n) => this.tick(n));
-    this.sender = new Ticker(config.timing.tickMs, config.timing.spinMs, () => this.sendFrames());
+    src.onShowAudio = (show) => this.onShowAudio?.(show);
+    return src;
+  }
+
+  /** Что выбрано в настройках. */
+  frameModeChosen(): FrameMode {
+    return this.frameMode;
+  }
+
+  /**
+   * Что РЕАЛЬНО работает. Отличается от выбранного, если поток не поднялся и
+   * движок сам перешёл на расчёт в главном потоке: человеку надо видеть правду,
+   * а не галочку.
+   */
+  frameModeActive(): FrameMode {
+    if (this.playback instanceof WorkerPlayback) return this.frameMode === 'inline' ? 'ahead' : this.frameMode;
+    return 'inline';
+  }
+
+  /**
+   * Сменить режим подготовки кадров на ходу.
+   *
+   * Воспроизведение при этом ОСТАНАВЛИВАЕТСЯ, и это не лень: состояние расчёта
+   * (где середина шоу, какой шаг у секвенсора) живёт внутри источника и через
+   * смену потока не переносится. Угадывать позицию и «продолжать» — хуже всего:
+   * на объекте это прыжок картинки, а вода при этом уже может литься не туда.
+   * Поэтому останавливаемся честно и говорим об этом в интерфейсе.
+   */
+  setFrameMode(mode: FrameMode): void {
+    if (mode === this.frameMode) return;
+    this.playback.stopAll();
+    this.playback.dispose();
+    this.frameMode = mode;
+    this.playback = this.makePlayback(mode);
+    if (this.lastProject) this.playback.setProject(this.lastProject);
+    this.playback.setPausedAll(this.paused);
+    eventLog.log('engine', `подготовка кадров: ${frameModeLabel(mode)} — воспроизведение остановлено`);
   }
 
   start(): void {
@@ -577,6 +644,7 @@ export class Engine {
   // ── Проект и транспорт воспроизведения ────────────────────────────────────
 
   setProject(project: Project): void {
+    this.lastProject = project;
     this.playback.setProject(project);
     this.trims.clear();
     const profiles = profileMap(project);

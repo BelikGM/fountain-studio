@@ -5,6 +5,7 @@ export * from './dmxcycle';
 export * from './dxf';
 export * from './svgplan';
 export * from './keys';
+export * from './framemode';
 export * from './jetdrop';
 export * from './layout';
 export * from './license';
