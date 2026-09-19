@@ -238,13 +238,13 @@ export class Engine {
      * воспроизведения посреди шоу.
      */
     this.playback = createPlaybackSource(
-      config.playbackWorker === true,
+      config.playbackWorker !== false,
       this.universes.map((u) => u.id),
       config.timing.tickMs,
       config.timing.spinMs,
       {
         inline: (ids) => new Playback(ids),
-        worker: (tickMs, spinMs, ids) => WorkerPlayback.create(tickMs, spinMs, ids),
+        worker: (tickMs, spinMs, ids) => WorkerPlayback.create(tickMs, spinMs, ids, config.playbackLookaheadMs),
         log: (text, level) => eventLog.log('engine', text, level),
       },
     );

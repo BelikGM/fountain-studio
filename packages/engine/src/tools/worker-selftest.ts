@@ -27,9 +27,12 @@ import {
 import { Playback } from '../playback';
 import {
   createPlaybackSource,
-  workerBufferBytes,
+  workerGridMs,
+  workerLayout,
+  workerSlotIndex,
+  workerSlots,
   WorkerHeader,
-  WORKER_FRAMES_OFFSET,
+  WORKER_LOOKAHEAD_MS,
   WORKER_MAX_UNIVERSES,
   type PlaybackSource,
 } from '../playbacksource';
@@ -47,6 +50,15 @@ function check(ok: boolean, name: string, detail = ''): void {
   }
 }
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+/**
+ * Сколько ждать, чтобы команда транспорта дошла до КАДРОВ.
+ *
+ * Не мгновенно, и это не дефект: кадры на WORKER_LOOKAHEAD_MS вперёд уже
+ * посчитаны, а воспроизведение назад не отматывается. Команда попадает в
+ * кадры, начиная с первого непосчитанного. На объекте это незаметно: клапан
+ * идёт 0,5–0,7 с, то есть железо медленнее нас втрое.
+ */
+const APPLY_MS = WORKER_LOOKAHEAD_MS + 3 * 50;
 
 /** Проект с двумя вселенными, статической сценой и секвенсором из трёх шагов. */
 function makeProject(): Project {
@@ -145,7 +157,7 @@ async function main(): Promise<void> {
       inline.setScene(sceneId, 0);
       inline.tick(1000);
       worker.setScene(sceneId, 0);
-      await sleep(200);
+      await sleep(APPLY_MS);
       worker.tick(0);
       const a = snap(inline);
       const b = snap(worker);
@@ -157,7 +169,7 @@ async function main(): Promise<void> {
     inline.setScene('s1', 0);
     inline.tick(1000);
     worker.setScene('s1', 0);
-    await sleep(200);
+    await sleep(APPLY_MS);
     worker.tick(0);
     const lv2 = worker.levels(2);
     check(lv2 !== undefined && lv2[11] === 255, 'вселенная 2 пришла своей: синий на адресе 12', String(lv2?.[11]));
@@ -167,7 +179,7 @@ async function main(): Promise<void> {
     check(worker.state(0, false).activeSceneId === 's1', 'состояние из потока дошло: активная сцена видна');
     check(worker.version > 0, 'счётчик изменений растёт — сервер узнает, что пора разослать состояние');
     worker.setScene(null, 0);
-    await sleep(200);
+    await sleep(APPLY_MS);
     check(worker.state(0, false).activeSceneId === null, 'и обновляется при снятии сцены');
     check(worker.state(0, true).pausedAll === true, 'пауза всего подставляется главным потоком');
 
@@ -186,14 +198,14 @@ async function main(): Promise<void> {
     {
       worker.start('q1', 0);
       await sleep(100);
-      const before = Atomics.load(new Int32Array((worker as unknown as { buffer: SharedArrayBuffer }).buffer, 0, WorkerHeader.Size), WorkerHeader.Ticks);
+      const before = Atomics.load(new Int32Array((worker as unknown as { buffer: SharedArrayBuffer }).buffer, 0, WorkerHeader.Size), WorkerHeader.Produced);
       // Держим главный поток занятым по-настоящему: синхронный цикл, который не
       // отдаёт event loop. Именно от этого и защищает развязка.
       const until = Date.now() + 600;
       while (Date.now() < until) {
         // пустой синхронный цикл — event loop заблокирован
       }
-      const after = Atomics.load(new Int32Array((worker as unknown as { buffer: SharedArrayBuffer }).buffer, 0, WorkerHeader.Size), WorkerHeader.Ticks);
+      const after = Atomics.load(new Int32Array((worker as unknown as { buffer: SharedArrayBuffer }).buffer, 0, WorkerHeader.Size), WorkerHeader.Produced);
       const grew = after - before;
       check(grew > 6, `главный поток стоял 0,6 с, а поток посчитал ${grew} кадров (ожидаем ~12)`);
       worker.stopAll();
@@ -201,6 +213,62 @@ async function main(): Promise<void> {
 
     worker.dispose();
     inline.dispose();
+  }
+
+  console.log('— Предрасчёт: запас вперёд и мгновенный «стоп» —');
+  {
+    const worker: PlaybackSource = WorkerPlayback.create(50, 10, [1, 2]);
+    worker.setProject(project);
+    for (let i = 0; i < 100 && !worker.levels(1); i++) {
+      worker.tick(0);
+      await sleep(20);
+    }
+
+    /*
+     * Главное свойство предрасчёта: кадр на ТЕКУЩИЙ момент уже лежит готовым.
+     * Проверяем через счётчик повторов: если кадры приходят вовремя, повторять
+     * прошлый почти не приходится. Без запаса каждый пропущенный тик потока
+     * давал бы повтор.
+     */
+    worker.start('q1', 0);
+    await sleep(APPLY_MS);
+    const inner = worker as unknown as { frameStats(): { repeats: number; taken: number } };
+    const before = inner.frameStats();
+    for (let i = 0; i < 40; i++) {
+      worker.tick(0);
+      await sleep(50);
+    }
+    const after = inner.frameStats();
+    const taken = after.taken - before.taken;
+    const repeats = after.repeats - before.repeats;
+    check(taken >= 35, `кадров взято ${taken} из 40 запросов`);
+    check(repeats * 10 < taken, `повторов ${repeats} из ${taken} — меньше 10%: кадр на свой момент почти всегда готов`);
+
+    // «Стоп» не ждёт запаса: вклад воспроизведения обнуляется в тот же тик.
+    worker.tick(0);
+    check(worker.levels(1) !== undefined, 'до стопа уровни есть');
+    worker.stopAll();
+    worker.tick(0);
+    check(worker.levels(1) === undefined, 'сразу после «стоп» вклад воспроизведения обнулён — вода уходит в тот же тик');
+    // И заглушка держится всю глубину запаса, а не снимается по состоянию.
+    await sleep(WORKER_LOOKAHEAD_MS / 2);
+    worker.tick(0);
+    check(worker.levels(1) === undefined, 'на середине запаса всё ещё заглушено — старые кадры в линию не уходят');
+    await sleep(APPLY_MS);
+    worker.tick(0);
+    check(worker.levels(1) !== undefined, 'после запаса заглушка снята — кадры снова идут (уже пустые)');
+    const lv = worker.levels(1);
+    check(lv !== undefined && lv.every((v) => v === 0), 'и они действительно пустые: воспроизведение остановлено');
+
+    // Снятие сцены — тоже мгновенно.
+    worker.setScene('s1', 0);
+    await sleep(APPLY_MS);
+    worker.tick(0);
+    check(worker.levels(1)?.[0] === 255, 'сцена включилась');
+    worker.setScene(null, 0);
+    worker.tick(0);
+    check(worker.levels(1) === undefined, 'снятие сцены гасит вклад немедленно');
+    worker.dispose();
   }
 
   console.log('— Смерть потока замечена —');
@@ -237,16 +305,31 @@ async function main(): Promise<void> {
 
   console.log('— Общая память: seqlock и границы —');
   {
-    const buf = new SharedArrayBuffer(workerBufferBytes());
-    check(workerBufferBytes() === WorkerHeader.Size * 4 + WORKER_MAX_UNIVERSES * DMX_UNIVERSE_SIZE, 'размер буфера сходится с раскладкой');
-    const header = new Int32Array(buf, 0, WorkerHeader.Size);
-    const frames = new Uint8Array(buf, WORKER_FRAMES_OFFSET, WORKER_MAX_UNIVERSES * DMX_UNIVERSE_SIZE);
-    check(frames.length === WORKER_MAX_UNIVERSES * DMX_UNIVERSE_SIZE, 'поле кадров вмещает все вселенные');
-    // Нечётный счётчик означает «идёт запись» — читатель обязан взять прошлый кадр.
-    Atomics.add(header, WorkerHeader.Seq, 1);
-    check(Atomics.load(header, WorkerHeader.Seq) % 2 === 1, 'после начала записи счётчик нечётный');
-    Atomics.add(header, WorkerHeader.Seq, 1);
-    check(Atomics.load(header, WorkerHeader.Seq) % 2 === 0, 'после окончания — чётный');
+    // Кольцо адресуется прямо по времени: читателю не надо ничего искать,
+    // он считает номер ячейки и проверяет метку времени в ней.
+    const slots = workerSlots(50, WORKER_LOOKAHEAD_MS);
+    const layout = workerLayout(slots);
+    check(slots >= WORKER_LOOKAHEAD_MS / 50 + 1, `ячеек хватает на запас (${slots} при ${WORKER_LOOKAHEAD_MS} мс)`);
+    check(layout.targetOffset % 8 === 0, 'метки времени выровнены по 8 байт — иначе Float64Array не создать');
+    check(layout.bytes === layout.dataOffset + slots * WORKER_MAX_UNIVERSES * DMX_UNIVERSE_SIZE, 'размер буфера сходится с раскладкой');
+    check(layout.bytes < 1_000_000, `кольцо весит ${Math.round(layout.bytes / 1024)} КБ — памяти это не стоит почти ничего`);
+    const buf = new SharedArrayBuffer(layout.bytes);
+    const seq = new Int32Array(buf, layout.seqOffset, slots);
+    const target = new Float64Array(buf, layout.targetOffset, slots);
+    check(target.length === slots, 'метка времени есть у каждой ячейки');
+    // Номер ячейки: соседние моменты — соседние ячейки, через оборот — та же.
+    check(workerSlotIndex(1000, 50, slots) !== workerSlotIndex(1050, 50, slots), 'соседние моменты ложатся в разные ячейки');
+    check(
+      workerSlotIndex(1000, 50, slots) === workerSlotIndex(1000 + slots * 50, 50, slots),
+      'через полный оборот ячейка та же — кольцо замыкается',
+    );
+    check(workerGridMs(1234, 50) === 1200, 'сетка времени округляет вниз до такта');
+    check(workerGridMs(1200, 50) === 1200, 'ровный момент остаётся собой');
+    // Нечётный счётчик ячейки означает «идёт запись» — читатель берёт прошлый кадр.
+    Atomics.add(seq, 0, 1);
+    check(Atomics.load(seq, 0) % 2 === 1, 'после начала записи счётчик ячейки нечётный');
+    Atomics.add(seq, 0, 1);
+    check(Atomics.load(seq, 0) % 2 === 0, 'после окончания — чётный');
   }
 
   console.log('— Смена вселенных и проекта на ходу —');
@@ -259,12 +342,12 @@ async function main(): Promise<void> {
     }
     worker.setUniverses([1, 2, 3]);
     worker.setScene('s1', 0);
-    await sleep(300);
+    await sleep(APPLY_MS);
     worker.tick(0);
     check(worker.levels(3) !== undefined, 'добавленная вселенная появилась');
     check(worker.levels(1)?.[0] === 255, 'и прежние не сломались');
     worker.setUniverses([1]);
-    await sleep(300);
+    await sleep(APPLY_MS);
     worker.tick(0);
     check(worker.levels(1) !== undefined, 'после сокращения набора первая вселенная на месте');
     worker.dispose();

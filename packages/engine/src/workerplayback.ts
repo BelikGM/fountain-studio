@@ -26,12 +26,17 @@ import { Worker } from 'node:worker_threads';
 import { DMX_UNIVERSE_SIZE, type PlaybackState, type Project, type Show } from '@fountain-studio/shared';
 import { eventLog } from './eventlog';
 import {
-  workerBufferBytes,
+  workerGridMs,
+  workerLayout,
+  workerSlotIndex,
+  workerSlots,
   WorkerHeader,
-  WORKER_FRAMES_OFFSET,
+  WORKER_LOOKAHEAD_MS,
   WORKER_MAX_UNIVERSES,
+  type WorkerLayout,
   type PlaybackSource,
   type WorkerCommand,
+  type WorkerCommandBody,
   type WorkerEvent,
   type WorkerInit,
 } from './playbacksource';
@@ -95,9 +100,36 @@ export class WorkerPlayback implements PlaybackSource {
   private worker: Worker | null = null;
   private readonly buffer: SharedArrayBuffer;
   private readonly header: Int32Array;
-  private readonly frames: Uint8Array;
+  private readonly layout: WorkerLayout;
+  private readonly slotSeq: Int32Array;
+  private readonly slotTarget: Float64Array;
+  private readonly slotData: Uint8Array;
   /** Последний целиком прочитанный кадр на вселенную — отдаём его движку. */
   private readonly lastGood = new Map<number, Uint8Array>();
+  /** На какое время был кадр, который мы отдаём сейчас. */
+  private lastTakenTarget = -1;
+  /**
+   * Сколько раз кадра на нужный момент не оказалось и пришлось повторить
+   * прежний. Ради этого предрасчёт и делался — по этому числу видно, помогает
+   * ли он (см. stats движка).
+   */
+  private repeats = 0;
+  private taken = 0;
+  /**
+   * До какого момента (стенные часы) глушим вклад воспроизведения. 0 — не глушим.
+   *
+   * Это главный ответ на возражение против предрасчёта: «стоп» не должен ждать
+   * буфер. Отменить уже посчитанные кадры нельзя (воспроизведение не
+   * отматывается назад), но ВНИЗ главный поток может всегда: отдаём движку
+   * пустые уровни, и вода уходит в тот же тик.
+   *
+   * Держим заглушку ПО ВРЕМЕНИ, а не по подтверждению от потока, и это важно:
+   * поток разбирает команду сразу, его состояние мгновенно становится «ничего
+   * не играет», а кадры на запас вперёд ещё лежат старые. Снимать заглушку по
+   * состоянию значило бы вернуть в линию как раз то, что человек остановил, —
+   * ровно это и поймала самопроверка.
+   */
+  private muteUntilMs = 0;
   private universeIds: number[] = [];
   /** Проект помним, чтобы восстановить поток после смерти. */
   private project: Project | null = null;
@@ -108,6 +140,8 @@ export class WorkerPlayback implements PlaybackSource {
   private lastTicks = -1;
   private sameTicks = 0;
   private respawnTimer: NodeJS.Timeout | null = null;
+  /** Отложенный старт звука — см. startAudio. */
+  private audioTimer: NodeJS.Timeout | null = null;
   private disposed = false;
 
   onShowAudio: ((show: Show | null) => void) | null = null;
@@ -117,10 +151,18 @@ export class WorkerPlayback implements PlaybackSource {
     private readonly tickMs: number,
     private readonly spinMs: number,
     universeIds: number[],
+    private readonly lookaheadMs: number,
   ) {
-    this.buffer = new SharedArrayBuffer(workerBufferBytes());
+    this.layout = workerLayout(workerSlots(tickMs, lookaheadMs));
+    this.buffer = new SharedArrayBuffer(this.layout.bytes);
     this.header = new Int32Array(this.buffer, 0, WorkerHeader.Size);
-    this.frames = new Uint8Array(this.buffer, WORKER_FRAMES_OFFSET, WORKER_MAX_UNIVERSES * DMX_UNIVERSE_SIZE);
+    this.slotSeq = new Int32Array(this.buffer, this.layout.seqOffset, this.layout.slots);
+    this.slotTarget = new Float64Array(this.buffer, this.layout.targetOffset, this.layout.slots);
+    this.slotData = new Uint8Array(
+      this.buffer,
+      this.layout.dataOffset,
+      this.layout.slots * WORKER_MAX_UNIVERSES * DMX_UNIVERSE_SIZE,
+    );
     this.universeIds = [...universeIds];
     this.spawn();
   }
@@ -129,10 +171,10 @@ export class WorkerPlayback implements PlaybackSource {
    * Создать поток. Бросает, если не получилось: точка сборки поймает и перейдёт
    * на расчёт в главном потоке.
    */
-  static create(tickMs: number, spinMs: number, universeIds: number[]): WorkerPlayback {
+  static create(tickMs: number, spinMs: number, universeIds: number[], lookaheadMs = WORKER_LOOKAHEAD_MS): WorkerPlayback {
     const file = resolveWorkerFile();
     if (!file) throw new Error('не найден файл потока расчёта (playback-worker.cjs / playbackworker.ts)');
-    return new WorkerPlayback(file, tickMs, spinMs, universeIds);
+    return new WorkerPlayback(file, tickMs, spinMs, universeIds, lookaheadMs);
   }
 
   private spawn(): void {
@@ -141,6 +183,7 @@ export class WorkerPlayback implements PlaybackSource {
       universeIds: this.universeIds,
       tickMs: this.tickMs,
       spinMs: this.spinMs,
+      lookaheadMs: this.lookaheadMs,
     };
     const w = new Worker(this.file, {
       workerData: init,
@@ -173,7 +216,7 @@ export class WorkerPlayback implements PlaybackSource {
         this.cachedVersion = e.version;
         return;
       case 'showAudio':
-        this.onShowAudio?.(e.show);
+        this.startAudio(e.show);
         return;
       case 'ready':
         eventLog.log('engine', 'расчёт кадра идёт в отдельном потоке');
@@ -207,9 +250,61 @@ export class WorkerPlayback implements PlaybackSource {
     this.respawnTimer.unref?.();
   }
 
-  private send(c: WorkerCommand): void {
-    this.worker?.postMessage(c);
+  /**
+   * Отправить команду, поставив ей стенное время. Время нужно воркеру, чтобы
+   * сдвинуть позицию на глубину запаса (см. WorkerCommand).
+   */
+  /**
+   * Запуск и остановка звука с поправкой на глубину запаса.
+   *
+   * Поток сообщает «пора играть шоу» в тот момент, когда РАЗОБРАЛ команду, а
+   * свет этого шоу появится на линии на глубину запаса позже: кадры до этого
+   * момента уже посчитаны и переписать их нельзя. Если запустить звук сразу,
+   * музыка ушла бы вперёд света ровно на запас — а это самое заметное, что
+   * можно испортить в светомузыкальном фонтане.
+   *
+   * Поэтому СТАРТ задерживаем на ту же глубину, и начало сходится точно.
+   * ОСТАНОВКА идёт немедленно: тишина раньше времени — мелочь, а музыка,
+   * играющая после «стоп», — нет. Ожидающий старт при остановке снимается,
+   * иначе звук включился бы уже после того, как всё остановили.
+   */
+  private startAudio(show: Show | null): void {
+    if (this.audioTimer) {
+      clearTimeout(this.audioTimer);
+      this.audioTimer = null;
+    }
+    if (!show) {
+      this.onShowAudio?.(null);
+      return;
+    }
+    const delay = this.lookaheadMs + this.tickMs;
+    if (delay <= 0) {
+      this.onShowAudio?.(show);
+      return;
+    }
+    this.audioTimer = setTimeout(() => {
+      this.audioTimer = null;
+      this.onShowAudio?.(show);
+    }, delay);
+    this.audioTimer.unref?.();
   }
+
+  private send(c: WorkerCommandBody): void {
+    this.worker?.postMessage({ ...c, atMs: Date.now() } as WorkerCommand);
+  }
+
+  /**
+   * Команда «всё выключить»: заглушаем вклад воспроизведения сразу и ждём
+   * подтверждения от потока. Без этого «стоп» ждал бы конца посчитанного
+   * запаса — до 200 мс воды, которую человек уже остановил.
+   */
+  private sendAndMute(c: WorkerCommandBody): void {
+    // Запас плюс два такта: за это время все уже посчитанные кадры уйдут в
+    // линию, и дальше пойдут те, что поток посчитал уже с учётом команды.
+    this.muteUntilMs = Date.now() + this.lookaheadMs + 2 * this.tickMs;
+    this.send(c);
+  }
+
 
   // ── PlaybackSource ───────────────────────────────────────────────────────
 
@@ -233,38 +328,73 @@ export class WorkerPlayback implements PlaybackSource {
   }
 
   /**
-   * Забрать последний готовый кадр. Поток считает сам, поэтому здесь только
-   * чтение общей памяти — и оно никогда не ждёт.
+   * Забрать из кольца кадр НА ЭТОТ МОМЕНТ. Поток считает сам и с запасом
+   * вперёд, поэтому здесь только чтение общей памяти — оно никогда не ждёт.
+   *
+   * Кадр ищется не «последний посчитанный», а ровно на текущий момент сетки: в
+   * этом и смысл предрасчёта. Не нашёлся (поток запнулся, кольцо ещё не
+   * заполнено) — пробуем предыдущие моменты, и только если и там ничего,
+   * повторяем прошлый кадр и считаем это в `repeats`.
    */
   tick(_nowMs: number): void {
-    const ticks = Atomics.load(this.header, WorkerHeader.Ticks);
-    if (ticks === this.lastTicks) {
+    const produced = Atomics.load(this.header, WorkerHeader.Produced);
+    if (produced === this.lastTicks) {
       // Поток не посчитал ни одного кадра с прошлого раза. Одиночный пропуск —
       // обычное дело (сборка мусора), долгий — уже авария (см. STALL_TICKS).
       this.sameTicks++;
-      return;
+    } else {
+      this.lastTicks = produced;
+      this.sameTicks = 0;
     }
-    this.lastTicks = ticks;
-    this.sameTicks = 0;
 
-    const seq1 = Atomics.load(this.header, WorkerHeader.Seq);
-    if (seq1 % 2 !== 0) return; // поток пишет прямо сейчас — берём прошлый кадр
+    const want = workerGridMs(Date.now(), this.tickMs);
+    this.taken++;
+    // Назад смотрим не дальше, чем на длину кольца: дальше лежат уже
+    // перезаписанные ячейки от прошлых оборотов.
+    for (let back = 0; back < this.layout.slots - 1; back++) {
+      const target = want - back * this.tickMs;
+      if (target <= this.lastTakenTarget && back > 0) break;
+      if (this.readSlot(target)) {
+        this.lastTakenTarget = target;
+        if (back > 0) this.repeats++;
+        return;
+      }
+    }
+    this.repeats++;
+  }
+
+  /** Прочитать ячейку на это время. false — там не тот кадр или идёт запись. */
+  private readSlot(target: number): boolean {
+    const i = workerSlotIndex(target, this.tickMs, this.layout.slots);
+    const seq1 = Atomics.load(this.slotSeq, i);
+    if (seq1 % 2 !== 0) return false; // поток пишет прямо сейчас
+    if (this.slotTarget[i] !== target) return false; // в ячейке кадр другого момента
     const count = Math.min(Atomics.load(this.header, WorkerHeader.Count), WORKER_MAX_UNIVERSES);
+    const base = i * WORKER_MAX_UNIVERSES * DMX_UNIVERSE_SIZE;
     const staging: Uint8Array[] = [];
-    for (let i = 0; i < count; i++) {
-      const at = i * DMX_UNIVERSE_SIZE;
-      staging.push(this.frames.slice(at, at + DMX_UNIVERSE_SIZE));
+    for (let k = 0; k < count; k++) {
+      const at = base + k * DMX_UNIVERSE_SIZE;
+      staging.push(this.slotData.slice(at, at + DMX_UNIVERSE_SIZE));
     }
-    if (Atomics.load(this.header, WorkerHeader.Seq) !== seq1) return; // прочитали вперемешку
-    for (let i = 0; i < count; i++) {
-      const id = this.universeIds[i];
+    if (Atomics.load(this.slotSeq, i) !== seq1) return false; // прочитали вперемешку
+    for (let k = 0; k < count; k++) {
+      const id = this.universeIds[k];
       if (id === undefined) continue;
-      this.lastGood.set(id, staging[i]!);
+      this.lastGood.set(id, staging[k]!);
     }
+    return true;
   }
 
   levels(universeId: number): Uint8Array | undefined {
+    // Заглушка после «стоп»: вниз главный поток может немедленно, не дожидаясь,
+    // пока кончится посчитанный запас.
+    if (Date.now() < this.muteUntilMs) return undefined;
     return this.lastGood.get(universeId);
+  }
+
+  /** Сколько раз пришлось повторить кадр и сколько всего кадров взято. */
+  frameStats(): { repeats: number; taken: number } {
+    return { repeats: this.repeats, taken: this.taken };
   }
 
   state(nowMs: number, pausedAll: boolean): PlaybackState {
@@ -280,7 +410,8 @@ export class WorkerPlayback implements PlaybackSource {
   }
 
   setScene(sceneId: string | null): void {
-    this.send({ c: 'setScene', sceneId });
+    if (sceneId === null) this.sendAndMute({ c: 'setScene', sceneId });
+    else this.send({ c: 'setScene', sceneId });
   }
   start(id: string): void {
     this.send({ c: 'start', id });
@@ -307,7 +438,7 @@ export class WorkerPlayback implements PlaybackSource {
     this.send({ c: 'resumeGroup', id });
   }
   stopAll(): void {
-    this.send({ c: 'stopAll' });
+    this.sendAndMute({ c: 'stopAll' });
   }
   playPlaylist(id: string, itemIndex: number | undefined): void {
     this.send({ c: 'playPlaylist', id, itemIndex });
@@ -316,7 +447,7 @@ export class WorkerPlayback implements PlaybackSource {
     this.send({ c: 'skipPlaylist', dir });
   }
   stopPlaylist(): void {
-    this.send({ c: 'stopPlaylist' });
+    this.sendAndMute({ c: 'stopPlaylist' });
   }
   playShow(id: string, positionMs: number): void {
     this.send({ c: 'playShow', id, positionMs });
@@ -331,12 +462,13 @@ export class WorkerPlayback implements PlaybackSource {
     this.send({ c: 'syncShow', positionMs });
   }
   stopShow(): void {
-    this.send({ c: 'stopShow' });
+    this.sendAndMute({ c: 'stopShow' });
   }
 
   dispose(): void {
     this.disposed = true;
     if (this.respawnTimer) clearTimeout(this.respawnTimer);
+    if (this.audioTimer) clearTimeout(this.audioTimer);
     this.send({ c: 'shutdown' });
     void this.worker?.terminate();
     this.worker = null;
