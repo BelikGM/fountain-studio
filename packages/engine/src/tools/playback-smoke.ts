@@ -763,7 +763,11 @@ async function main(): Promise<void> {
   send({ type: 'setScene', sceneId: 'sceneA' });
   await waitFor('кадр сцены A', () => ch(1) === 200 && ch(2) === 255 && ch(10) === 255 && ch(12) === 40);
   check(true, 'сцена A на выходе: насос 200, клапан 255, RGB (255,0,40)');
-  check(playback.activeSceneId === 'sceneA', 'состояние воспроизведения: активна сцена A');
+  // Ждём, а не проверяем сразу: когда расчёт идёт в отдельном потоке, кадр
+  // приходит через общую память, а состояние — сообщением, и оно отстаёт на
+  // десяток миллисекунд. Для человека это незаметно, а для проверки — гонка.
+  await waitFor('состояние: активна сцена A', () => playback.activeSceneId === 'sceneA');
+  check(true, 'состояние воспроизведения: активна сцена A');
 
   console.log('— HTP: ручной слой против сцены —');
   send({ type: 'setChannel', universe: 1, channel: 1, value: 250 });

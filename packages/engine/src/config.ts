@@ -65,13 +65,28 @@ export interface EngineConfig {
    * блокировка расчёта физически не может задержать кадр (см.
    * playbacksource.ts).
    *
-   * По умолчанию ВЫКЛЮЧЕНО, и это осознанно: на объектах играет проверенный
-   * путь, а новый включается тем, кто может посмотреть на результат. Включить —
-   * `{"playbackWorker": true}` в app-config.json рядом с настройками программы.
-   * Если поток не поднимется, движок сам вернётся к расчёту в главном потоке и
-   * напишет причину в журнал — фонтан не встанет.
+   * ВКЛЮЧЕНО по умолчанию (19.09.2026, по решению заказчика): на объект должна
+   * уезжать сразу лучшая версия, а не «сначала проверим по кнопке». Выключить,
+   * если на объекте что-то пойдёт не так, — `{"playbackWorker": false}` в
+   * app-config.json рядом с настройками программы.
+   *
+   * Держать это выключаемым всё равно надо: если поток не поднимется (раскладка
+   * файлов, политика запуска на машине объекта), движок сам вернётся к расчёту
+   * в главном потоке и напишет причину в журнал — фонтан не встанет.
    */
   playbackWorker?: boolean;
+  /**
+   * Насколько вперёд поток считает кадры, мс (предрасчёт). 0 — считать только
+   * текущий кадр.
+   *
+   * Памяти запас почти не стоит: кадр — 512 байт на линию. Ограничивает
+   * ЗАДЕРЖКА РЕАКЦИИ: команда транспорта попадает в кадры не раньше, чем
+   * кончится посчитанный запас. 200 мс по умолчанию выбраны по железу объекта:
+   * клапан идёт 0,5–0,7 с, и задержка втрое меньше собственной задержки железа
+   * не видна. «Стоп» запаса не ждёт вовсе — главный поток глушит воду сам.
+   * Подробный разбор — в playbacksource.ts.
+   */
+  playbackLookaheadMs?: number;
   /**
    * Отзыв лицензии (§27 доработки, «Продукт») — необязательный слой поверх
    * офлайн-проверки подписи, см. licenseRevocation.ts. Без revocationUrl
@@ -126,7 +141,11 @@ export function loadAppConfig(appDataDir: string): EngineConfig & { configFile: 
     ...(raw.osc ? { osc: raw.osc } : {}),
     ...(raw.mqtt ? { mqtt: raw.mqtt } : {}),
     ...(raw.license ? { license: raw.license } : {}),
-    ...(raw.playbackWorker === true ? { playbackWorker: true } : {}),
+    // По умолчанию ВКЛЮЧЕНО: выключается только явным false в настройках.
+    playbackWorker: raw.playbackWorker !== false,
+    ...(typeof raw.playbackLookaheadMs === 'number' && Number.isFinite(raw.playbackLookaheadMs)
+      ? { playbackLookaheadMs: Math.max(0, Math.min(2000, Math.round(raw.playbackLookaheadMs))) }
+      : {}),
   };
 }
 
@@ -150,7 +169,11 @@ export function loadConfig(argv: string[]): EngineConfig & { configFile: string 
     configFile: file,
     ...(raw.osc ? { osc: raw.osc } : {}),
     ...(raw.mqtt ? { mqtt: raw.mqtt } : {}),
-    ...(raw.playbackWorker === true ? { playbackWorker: true } : {}),
+    // По умолчанию ВКЛЮЧЕНО: выключается только явным false в настройках.
+    playbackWorker: raw.playbackWorker !== false,
+    ...(typeof raw.playbackLookaheadMs === 'number' && Number.isFinite(raw.playbackLookaheadMs)
+      ? { playbackLookaheadMs: Math.max(0, Math.min(2000, Math.round(raw.playbackLookaheadMs))) }
+      : {}),
   };
   if (config.universes.length === 0) {
     throw new Error(`В ${file} не задано ни одной вселенной (universes)`);
