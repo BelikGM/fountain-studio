@@ -82,6 +82,16 @@ function makeProject(): Project {
     ],
     sequences: [
       {
+        id: 'q2',
+        name: 'Медленная',
+        loop: true,
+        steps: [
+          { sceneId: 's1', holdMs: 4000, fadeMs: 0 },
+          { sceneId: 's2', holdMs: 4000, fadeMs: 0 },
+          { sceneId: 's3', holdMs: 4000, fadeMs: 0 },
+        ],
+      },
+      {
         id: 'q1',
         name: 'Бегущая',
         loop: true,
@@ -380,7 +390,13 @@ async function main(): Promise<void> {
       check(frameModeFromConfig(c.playbackWorker, c.playbackLookaheadMs) === m.id, `режим «${m.label}» читается обратно собой`);
     }
     check(frameModeFromConfig(false, 500) === 'inline', 'без потока запас не имеет значения');
-    check(frameModeLabel('ahead').includes('Заранее'), 'подпись режима берётся из списка');
+    // Не цепляемся за конкретные слова: подписи пишутся для человека и будут
+    // переписываться. Проверяем, что подпись берётся из списка, а не выдумана.
+    check(
+      FRAME_MODES.every((m) => frameModeLabel(m.id) === m.label),
+      'подпись режима берётся из списка, а не выдумывается',
+    );
+    check(frameModeLabel('несуществующий' as never) === 'несуществующий', 'неизвестный режим не роняет подпись');
   }
 
   console.log('— Переключение режима на живом движке —');
@@ -405,11 +421,20 @@ async function main(): Promise<void> {
       engine.setScene('s1');
       await sleep(APPLY_MS);
       check(engine.universes[0]!.out[0] === 255, 'сцена играет до переключения');
+      // Переключение НЕ останавливает воспроизведение: играющее перекладывается
+      // в новый источник. Заказчик справедливо возразил, что останавливать всё
+      // незачем — состояние, которое важно человеку, движок знает целиком.
+      engine.startSequence('q1');
+      await sleep(APPLY_MS);
+      check(engine.playbackState().running.length === 1, 'секвенсор идёт до переключения');
       engine.setFrameMode('inline');
-      await sleep(300);
+      await sleep(400);
       check(engine.frameModeActive() === 'inline', 'переключились на главный поток');
-      check(engine.playbackState().activeSceneId === null, 'воспроизведение остановлено — как и обещано в интерфейсе');
-      check(engine.universes[0]!.out[0] === 0, 'и в линии больше нет прежней сцены');
+      check(engine.playbackState().activeSceneId === 's1', 'сцена перенесена — воспроизведение не остановлено');
+      check(engine.playbackState().running.length === 1, 'и секвенсор продолжает идти');
+      check((engine.universes[0]!.out[0] ?? 0) > 0, 'в линии есть картина, а не ноль');
+      engine.stopAllPlayback();
+      await sleep(200);
 
       // В главном потоке всё работает как раньше — сцена включается сразу.
       engine.setScene('s1');
@@ -432,6 +457,74 @@ async function main(): Promise<void> {
       engine.setFrameMode('ahead');
       await sleep(150);
       check(engine.playbackState().activeSceneId === 's1', 'тот же режим повторно — воспроизведение не тронуто');
+    } finally {
+      engine.stop();
+    }
+  }
+
+  console.log('— Перенос играющего при смене режима —');
+  {
+    /*
+     * Самое важное в переключении: что именно переживает смену места расчёта.
+     * «Перенести поток вместе с его памятью» нельзя, поэтому движок
+     * перекладывает состояние: сцену, шаг каждого секвенсора, позицию шоу,
+     * пункт плейлиста. Если что-то из этого потеряется, на объекте это будет
+     * выглядеть как самопроизвольный сброс программы.
+     */
+    const { Engine } = await import('../engine');
+    const engine = new Engine({
+      server: { port: 9595 },
+      timing: { tickMs: 50, spinMs: 10, uiFrameMs: 1000 },
+      audio: { player: 'none', ffplayPath: '' },
+      universes: [{ id: 1, label: 'В1', outputs: [] }],
+      backup: { enabled: false, intervalMin: 60 },
+    } as never);
+    engine.setProject(project);
+    engine.start();
+    try {
+      await sleep(400);
+
+      // Секвенсор доводим до НЕ НУЛЕВОГО шага: именно он и проверяет перенос —
+      // сброс на первый шаг был бы виден как прыжок картинки.
+      // Медленный секвенсор: шаги по 4 с, поэтому за время переключения он
+      // физически не может уйти дальше — проверка однозначна.
+      engine.startSequence('q2');
+      await sleep(APPLY_MS + 4300);
+      const stepBefore = engine.playbackState().running[0]?.stepIndex ?? 0;
+      check(stepBefore > 0, `секвенсор ушёл с первого шага (сейчас ${stepBefore})`);
+      engine.setFrameMode('instant');
+      await sleep(400);
+      const stepAfter = engine.playbackState().running[0]?.stepIndex ?? -1;
+      check(stepAfter === stepBefore, `шаг секвенсора перенесён (${stepBefore} → ${stepAfter})`);
+
+      // Пауза секвенсора тоже должна пережить переключение.
+      engine.pauseSequence('q2');
+      await sleep(200);
+      check(engine.playbackState().running[0]?.paused === true, 'секвенсор поставлен на паузу');
+      engine.setFrameMode('ahead');
+      await sleep(400);
+      check(engine.playbackState().running[0]?.paused === true, 'пауза секвенсора пережила переключение');
+      engine.stopAllPlayback();
+      await sleep(200);
+
+      // Сцена.
+      engine.setScene('s2');
+      await sleep(APPLY_MS);
+      engine.setFrameMode('inline');
+      await sleep(300);
+      check(engine.playbackState().activeSceneId === 's2', 'включённая сцена перенесена');
+      check(engine.universes[0]!.out[1] === 255, 'и она действительно в кадре (зелёная)');
+      engine.setScene(null);
+      await sleep(200);
+
+      // Пауза всего — это состояние движка, а не источника, но новый источник
+      // обязан о ней узнать: иначе часы шоу пойдут, пока картина заморожена.
+      engine.pauseAll();
+      engine.setFrameMode('ahead');
+      await sleep(300);
+      check(engine.playbackState().pausedAll === true, 'пауза всего пережила переключение');
+      engine.resumeAll();
+      await sleep(100);
     } finally {
       engine.stop();
     }

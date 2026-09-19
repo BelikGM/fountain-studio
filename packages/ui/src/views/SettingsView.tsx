@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import {
+  FRAME_MODE_ABOUT,
+  FRAME_MODE_CONFIRM,
   FRAME_MODES,
+  type FrameMode,
   frameModeLabel,
   plainWindNozzle,
   windAllowedLevel,
@@ -867,40 +870,65 @@ function FailsafePanel({ engine }: { engine: EngineConnection }) {
  */
 function FrameModePanel({ engine }: { engine: EngineConnection }) {
   const { engineConfig, send } = engine;
+  /**
+   * Панель свёрнута: видно только выбранное. Разворачивается кнопкой, а смена
+   * спрашивает подтверждение.
+   *
+   * Так сделано потому, что это настройка «поставил и забыл»: в обычной работе
+   * её трогать не надо вовсе, а случайно ткнуть в список из трёх строк легко —
+   * и человек не поймёт, что только что переключил.
+   */
+  const [open, setOpen] = useState(false);
   if (!engineConfig) return null;
   const chosen = engineConfig.frameMode;
   const active = engineConfig.frameModeActive;
+  const current = FRAME_MODES.find((m) => m.id === chosen);
+
+  const pick = (mode: FrameMode): void => {
+    if (mode === chosen) {
+      setOpen(false);
+      return;
+    }
+    if (!window.confirm(FRAME_MODE_CONFIRM)) return;
+    send({ type: 'setFrameMode', mode });
+    setOpen(false);
+  };
+
   return (
     <section className="panel">
-      <h2>Подготовка кадров</h2>
-      <p className="dim">
-        Кадр в линию уходит каждый такт. Здесь — где он считается и считается ли заранее. Заводской
-        режим ровнее держит поток под тяжёлым шоу; остальные оставлены на случай, если на объекте
-        что-то пойдёт не так.
-      </p>
-      <div className="form-column">
-        {FRAME_MODES.map((m) => (
-          <label key={m.id} className="field" data-hint={m.hint}>
-            <input
-              type="radio"
-              name="frame-mode"
-              checked={chosen === m.id}
-              onChange={() => send({ type: 'setFrameMode', mode: m.id })}
-            />{' '}
-            {m.label}
-            {m.id === 'ahead' ? ' — рекомендуется' : ''}
-          </label>
-        ))}
+      <h2>Подготовка значений для приборов</h2>
+      <div className="form-row">
+        <span>
+          Сейчас: <b>{frameModeLabel(chosen)}</b>
+        </span>
+        <button className="btn" onClick={() => setOpen((v) => !v)}>
+          {open ? 'Отмена' : 'Изменить'}
+        </button>
       </div>
-      <p className="warn">
-        Переключение ОСТАНАВЛИВАЕТ воспроизведение: состояние расчёта (где середина шоу, какой шаг у
-        секвенсора) через смену потока не переносится, а угадывать его нельзя.
-      </p>
+      {!open && current && <p className="dim">{current.hint}</p>}
+      {!open && <p className="dim">{FRAME_MODE_ABOUT}</p>}
+      {open && (
+        <>
+          <p className="dim">{FRAME_MODE_ABOUT}</p>
+          <div className="form-column">
+            {FRAME_MODES.map((m) => (
+              <label key={m.id} className="field">
+                <input type="radio" name="frame-mode" checked={chosen === m.id} onChange={() => pick(m.id)} />{' '}
+                <span>
+                  <b>{m.label}</b>
+                  <br />
+                  <span className="dim">{m.hint}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </>
+      )}
       {active !== chosen && (
         <p className="error-text">
-          Выбрано «{frameModeLabel(chosen)}», но работает «{frameModeLabel(active)}»: поток расчёта не
-          поднялся, и движок перешёл на запасной путь. Причина — в журнале событий на вкладке
-          «Поток». Фонтан при этом играет как играл.
+          Выбрано «{frameModeLabel(chosen)}», но работает «{frameModeLabel(active)}»: отдельный счёт
+          не запустился, и программа перешла на запасной путь. Причина — в журнале событий на вкладке
+          «Поток». Фонтан при этом работает как работал.
         </p>
       )}
     </section>
@@ -1645,9 +1673,8 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
       <FrameModePanel engine={engine} />
 
       <p className="dim">
-        Подготовка кадров — настройка ПРОГРАММЫ, а не объекта: она про машину, на которой всё
-        крутится, и при переключении объектов не меняется. Сохраняется сразу, кнопка «Применить»
-        ниже к ней не относится.
+        Это настройка программы, а не объекта: при переключении объектов она не меняется и
+        сохраняется сразу — кнопка «Применить» ниже к ней не относится.
       </p>
 
       <div className="form-row">

@@ -416,6 +416,9 @@ export class WorkerPlayback implements PlaybackSource {
   start(id: string): void {
     this.send({ c: 'start', id });
   }
+  startAt(id: string, stepIndex: number, paused: boolean): void {
+    this.send({ c: 'startAt', id, stepIndex, paused });
+  }
   pause(id: string): void {
     this.send({ c: 'pause', id });
   }

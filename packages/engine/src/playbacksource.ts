@@ -60,6 +60,8 @@ export interface PlaybackSource {
 
   setScene(sceneId: string | null, nowMs: number): void;
   start(sequenceId: string, nowMs: number): void;
+  /** Продолжить секвенсор с заданного шага — для переноса состояния при смене режима. */
+  startAt(sequenceId: string, stepIndex: number, paused: boolean, nowMs: number): void;
   pause(sequenceId: string, nowMs: number): void;
   resume(sequenceId: string, nowMs: number): void;
   stop(sequenceId: string): void;
@@ -221,6 +223,7 @@ export type WorkerCommand = { atMs: number } & (
   | { c: 'setPausedAll'; paused: boolean }
   | { c: 'setScene'; sceneId: string | null }
   | { c: 'start'; id: string }
+  | { c: 'startAt'; id: string; stepIndex: number; paused: boolean }
   | { c: 'pause'; id: string }
   | { c: 'resume'; id: string }
   | { c: 'stop'; id: string }

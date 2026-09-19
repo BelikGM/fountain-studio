@@ -300,23 +300,49 @@ export class Engine {
   }
 
   /**
-   * Сменить режим подготовки кадров на ходу.
+   * Сменить режим подготовки кадров на ходу, НЕ ОСТАНАВЛИВАЯ воспроизведение.
    *
-   * Воспроизведение при этом ОСТАНАВЛИВАЕТСЯ, и это не лень: состояние расчёта
-   * (где середина шоу, какой шаг у секвенсора) живёт внутри источника и через
-   * смену потока не переносится. Угадывать позицию и «продолжать» — хуже всего:
-   * на объекте это прыжок картинки, а вода при этом уже может литься не туда.
-   * Поэтому останавливаемся честно и говорим об этом в интерфейсе.
+   * Сначала здесь была честная остановка: состояние расчёта живёт внутри
+   * источника, и «перенести поток вместе с его памятью» нельзя. Но заказчик
+   * справедливо возразил — останавливать всё незачем. Состояние, которое
+   * человеку важно, движок и так знает целиком: какая сцена включена, какие
+   * секвенсоры идут и на каком шаге, какое шоу и с какой позиции, какой пункт
+   * плейлиста. Всё это перекладывается в новый источник.
+   *
+   * Что при этом ВСЁ ЖЕ сдвинется, и об этом честно сказано в интерфейсе: шаг
+   * секвенсора начнётся заново (позиция внутри шага не переносится) и на пару
+   * тактов картина замрёт на прежних значениях, пока новый источник считает
+   * первый кадр. Вода за это время никуда не денется: DMX — протокол
+   * состояния, приборы держат последнее значение, а аварийное отключение ждёт
+   * секунды, а не миллисекунды.
    */
   setFrameMode(mode: FrameMode): void {
     if (mode === this.frameMode) return;
-    this.playback.stopAll();
+    const was = this.playback.state(this.nowMs, this.paused);
     this.playback.dispose();
     this.frameMode = mode;
     this.playback = this.makePlayback(mode);
     if (this.lastProject) this.playback.setProject(this.lastProject);
     this.playback.setPausedAll(this.paused);
-    eventLog.log('engine', `подготовка кадров: ${frameModeLabel(mode)} — воспроизведение остановлено`);
+    this.restorePlayback(was);
+    eventLog.log('engine', `подготовка кадров: ${frameModeLabel(mode)} (воспроизведение продолжается)`);
+  }
+
+  /**
+   * Переложить играющее в новый источник.
+   *
+   * Порядок важен: сцена и секвенсоры — слои, которые складываются по HTP, а
+   * шоу и плейлист — транспорт. Плейлист ставим ПОСЛЕ шоу: он сам решит, что
+   * играть, и перебьёт шоу своим элементом, если оба были.
+   */
+  private restorePlayback(was: PlaybackState): void {
+    if (was.activeSceneId) this.playback.setScene(was.activeSceneId, this.nowMs);
+    for (const r of was.running) this.playback.startAt(r.sequenceId, r.stepIndex, r.paused, this.nowMs);
+    if (was.show) {
+      this.playback.playShow(was.show.showId, was.show.positionMs, this.nowMs);
+      if (!was.show.playing) this.playback.pauseShow(this.nowMs);
+    }
+    if (was.playlist) this.playback.playPlaylist(was.playlist.playlistId, was.playlist.itemIndex, this.nowMs);
   }
 
   start(): void {

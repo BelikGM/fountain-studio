@@ -220,6 +220,9 @@ function apply(msg: WorkerCommand): void {
     case 'start':
       playback.start(msg.id, t);
       return;
+    case 'startAt':
+      playback.startAt(msg.id, msg.stepIndex, msg.paused, t);
+      return;
     case 'pause':
       playback.pause(msg.id, t);
       return;

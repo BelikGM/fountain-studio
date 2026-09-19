@@ -213,13 +213,28 @@ export class Playback {
   }
 
   start(sequenceId: string, nowMs: number): void {
+    this.startAt(sequenceId, 0, false, nowMs);
+  }
+
+  /**
+   * Запустить секвенсор С ЗАДАННОГО ШАГА. Обычный `start` — это `startAt` с
+   * нулевого.
+   *
+   * Нужно для переноса состояния при смене места расчёта (главный поток ↔
+   * отдельный): секвенсор, идущий на седьмом шаге, обязан продолжить с
+   * седьмого, а не прыгнуть на первый. Внутри шага позиция не переносится — шаг
+   * начинается заново; это заметно только на очень длинных шагах и несравнимо
+   * лучше, чем остановка всего воспроизведения.
+   */
+  startAt(sequenceId: string, stepIndex: number, paused: boolean, nowMs: number): void {
     const sequence = this.project?.sequences.find((q) => q.id === sequenceId);
     if (!sequence || sequence.steps.length === 0) return;
     this.stop(sequenceId);
+    const step = Math.max(0, Math.min(sequence.steps.length - 1, Math.round(stepIndex)));
     this.running.push({
       sequence,
-      stepIndex: 0,
-      paused: false,
+      stepIndex: step,
+      paused,
       stepStartMs: nowMs,
       pausedElapsedMs: 0,
       fadeFrom: new Map(),
