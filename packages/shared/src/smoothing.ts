@@ -33,6 +33,22 @@ export function smoothStep(prev: number, target: number, mode: EffectMode, stren
   return prev + (target - prev) * k;
 }
 
+/**
+ * За сколько секунд значение практически доходит до цели при этой силе.
+ *
+ * Зачем: «сила 1…100» человеку ничего не говорит, а фонтанщик думает в
+ * секундах — «пусть гаснет за секунду». Фильтр подходит к цели асимптотически и
+ * формально не достигает её никогда, поэтому «практически» здесь — это в
+ * пределах одной единицы DMX из 255, то есть ln(255) ≈ 5,5 постоянных времени.
+ *
+ * Сверено с прогоном по тикам: сила 10 → 1,1 с (прогон дал 1,15), сила 1 →
+ * 11,1 с (прогон 11,10).
+ */
+export function smoothReachSec(strength: number): number {
+  const s = Math.max(1, Math.min(100, strength));
+  return Math.round((Math.log(255) * (2000 / s)) / 100) / 10;
+}
+
 /** Зона эффекта, покрывающая tMs, или null — эффекта здесь нет (обычный Quick). */
 export function activeEffectAt(effects: TrackEffect[], tMs: number): TrackEffect | null {
   for (const e of effects) {

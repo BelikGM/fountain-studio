@@ -28,6 +28,7 @@ import {
   type ShowBlock,
   type ShowTrack,
   type TrackEffect,
+  smoothReachSec,
 } from '@fountain-studio/shared';
 import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
 import { ListFilter } from '../components/ListFilter';
@@ -2167,14 +2168,16 @@ function TrackEffectsPanel({
     <div className="panel">
       <div className="panel-title">Эффект плавности на «{track.name}»</div>
       <p className="dim">
-        Вне зон — как обычно (Quick). Внутри зоны выход дорожки сглаживается вместо мгновенного применения.
+        Вне зон значение применяется мгновенно. Внутри зоны оно подходит к новому плавно — так
+        резкий перепад (например, 255 → 0 на стыке блоков) превращается в переход. Рядом с силой
+        написано, за сколько значение практически доходит до цели: думать удобнее в секундах.
       </p>
       {track.effects.length === 0 && <p className="dim">Зон ещё нет.</p>}
       {track.effects.map((e) => (
         <div className="form-row" key={e.id}>
           <select value={e.mode} onChange={(ev) => patch(e.id, { mode: ev.target.value as 'rate' | 'decay' })}>
-            <option value="rate">Rate (обе стороны)</option>
-            <option value="decay">Decay (только спад)</option>
+            <option value="rate">Плавно вверх и вниз</option>
+            <option value="decay">Плавно только вниз</option>
           </select>
           <label>
             сила:{' '}
@@ -2187,6 +2190,12 @@ function TrackEffectsPanel({
               onChange={(ev) => patch(e.id, { strength: Math.max(1, Math.min(100, Number(ev.target.value))) })}
             />
           </label>
+          <span
+            className="dim"
+            data-hint="Переход идёт плавно и к концу почти незаметен. Здесь — за сколько значение практически доходит до цели (в пределах одной единицы из 255)."
+          >
+            ≈ {smoothReachSec(e.strength)} с до цели
+          </span>
           <label>
             с, с:{' '}
             <input
