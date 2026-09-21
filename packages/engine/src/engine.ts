@@ -52,6 +52,11 @@ const WIND_LOG_MIN_MS = 20_000;
  * Сколько держим безопасные значения после того, как такт выровнялся: если
  * машина дышит рывками, вода не должна мигать туда-сюда каждые полсекунды.
  */
+/**
+ * Сколько раз повторить безопасный кадр при закрытии. DMX идёт без
+ * подтверждений, и второго шанса не будет — порт закрывается следом.
+ */
+const SHUTDOWN_SAFE_FRAMES = 3;
 const FAILSAFE_RECOVER_MS = 2000;
 import { ArtNetOutput } from './drivers/artnet';
 import { SacnOutput } from './drivers/sacn';
@@ -356,10 +361,54 @@ export class Engine {
     );
   }
 
+  /**
+   * Гашение перед закрытием порта.
+   *
+   * DMX512 — протокол состояния: приёмник держит ПОСЛЕДНЕЕ принятое значение.
+   * Если просто закрыть порт, насос останется крутиться на той уставке, что
+   * была в последнем кадре, клапан — открытым, а прожектор замрёт на том цвете,
+   * который случайно пришёлся на момент выхода. Именно это на объектах выглядит
+   * как «светильники застыли в непонятном состоянии»: программу закрыли посреди
+   * шоу, и картинка осталась там, где её застали.
+   *
+   * Поэтому перед закрытием шлём безопасный кадр. Повторяем несколько раз: DMX
+   * идёт без подтверждений, одиночный кадр может не дойти, а второго шанса уже
+   * не будет — порт закрывается следом.
+   *
+   * Свет гасим по той же настройке, что и аварийное отключение: на части
+   * объектов прожекторы оставляют гореть дежурной подсветкой, и тушить их при
+   * выходе из программы там не нужно.
+   *
+   * Чего этим НЕ закрыть: если процесс убит целиком или пропало питание
+   * компьютера, слать уже некому — см. failsafe.ts и `npm run engine:watchdog`.
+   */
+  private sendSafeFrames(): void {
+    for (const u of this.universes) {
+      // Свет может остаться как был — запоминаем кадр ДО обнуления.
+      const before = this.failsafeConfig.lights ? null : Uint8Array.from(u.out);
+      u.out.fill(0);
+      if (before) {
+        const lamps = this.kindGroups.get(u.id)?.get('lamp');
+        if (lamps) for (const g of lamps) for (const i of g) u.out[i] = before[i]!;
+      }
+      u.wire.set(applyAddressRemap(u.out, this.addressRemap[u.id]));
+      for (let n = 0; n < SHUTDOWN_SAFE_FRAMES; n++) {
+        for (const o of u.outputs) {
+          try {
+            o.send(u.wire);
+          } catch {
+            // Порт уже мог отвалиться (интерфейс выдернули) — выход это не срывает.
+          }
+        }
+      }
+    }
+  }
+
   stop(): void {
     this.ticker.stop();
     this.sender.stop();
     this.playback.dispose();
+    this.sendSafeFrames();
     for (const u of this.universes) for (const o of u.outputs) o.close();
     this.pumps.stop();
   }
@@ -376,6 +425,13 @@ export class Engine {
     this.ticker.stop();
     this.sender.stop();
     this.hasFrame = false;
+    /*
+     * Линии пересоздаются, и какие адреса останутся за бортом новой
+     * конфигурации — заранее неизвестно. Всё, что уходило со старых выходов,
+     * гасим, иначе убранная из настроек линия навсегда застынет на последнем
+     * кадре: слать в неё больше нечем, а вода там продолжит идти.
+     */
+    this.sendSafeFrames();
     for (const u of this.universes) for (const o of u.outputs) o.close();
     this.universes.length = 0;
     for (const u of universes) {

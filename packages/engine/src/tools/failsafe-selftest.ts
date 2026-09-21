@@ -29,7 +29,7 @@ const TIMEOUT_SEC = 3;
 const config: EngineConfig = {
   server: { port: 0 },
   timing: { tickMs: 50, spinMs: 10, uiFrameMs: 100 },
-  audio: { player: 'none', ffplayPath: 'ffplay' },
+  audio: { player: 'none', ffplayPath: 'ffplay', volume: 100 },
   // Порт заведомо не существует — открыть его не удастся, и healthy() вернёт false.
   universes: [{ id: 1, label: 'Линия 1', outputs: [{ type: 'open-dmx', universe: 0, path: 'COM_NOPE' }] }],
   backup: { enabled: false, intervalMin: 10 },
@@ -96,7 +96,56 @@ async function main(): Promise<void> {
   check('с выключенной настройкой авария не срабатывает', !engine.failsafeState().active);
   check('вода продолжает работать', pumpIdx.every((i) => u.out[i] === 200), `${u.out[pumpIdx[0]!]}`);
 
+  /*
+   * Гашение при закрытии. Заказчик описал это с натуры: программу закрыли —
+   * светильники застыли в случайном состоянии. Приёмник DMX держит последний
+   * кадр, поэтому движок обязан перед закрытием порта сам прислать безопасный.
+   * Перехватываем send и смотрим, что именно ушло в линию последним.
+   */
+  (out as { healthy?: () => boolean }).healthy = () => true;
+  engine.setProject(sanitizeProject({ ...project, failsafe: { enabled: true, timeoutSec: TIMEOUT_SEC, lights: true } }));
+  for (const i of pumpIdx) engine.setChannel(1, i + 1, 200);
+  for (const i of lampIdx) engine.setChannel(1, i + 1, 180);
+  await sleep(300);
+  check('перед закрытием вода идёт', pumpIdx.every((i) => u.out[i] === 200), `${u.out[pumpIdx[0]!]}`);
+
+  const sent: Uint8Array[] = [];
+  const realSend = out.send.bind(out);
+  out.send = (frame: Uint8Array): void => {
+    sent.push(Uint8Array.from(frame));
+    realSend(frame);
+  };
   engine.stop();
+  const last = sent[sent.length - 1];
+  check('при закрытии кадр в линию ушёл', sent.length > 0, String(sent.length));
+  check('повторён несколько раз (DMX без подтверждений)', sent.length >= 3, String(sent.length));
+  check('насосы в закрывающем кадре в 0', !!last && pumpIdx.every((i) => last[i] === 0), last ? String(last[pumpIdx[0]!]) : 'нет кадра');
+  check('свет в закрывающем кадре погашен', !!last && lampIdx.every((i) => last[i] === 0), last ? String(last[lampIdx[0]!]) : 'нет кадра');
+
+  /*
+   * С выключенным гашением света вода всё равно падает, а прожекторы остаются:
+   * на части объектов их держат дежурной подсветкой.
+   */
+  const engine2 = new Engine(config);
+  engine2.setProject(sanitizeProject({ ...project, failsafe: { enabled: true, timeoutSec: TIMEOUT_SEC, lights: false } }));
+  engine2.start();
+  const u2 = engine2.universes[0]!;
+  const out2 = engine2.universes[0]!.outputs[0]!;
+  for (const i of pumpIdx) engine2.setChannel(1, i + 1, 200);
+  for (const i of lampIdx) engine2.setChannel(1, i + 1, 180);
+  await sleep(300);
+  check('второй движок: вода идёт', pumpIdx.every((i) => u2.out[i] === 200), `${u2.out[pumpIdx[0]!]}`);
+  const sent2: Uint8Array[] = [];
+  const realSend2 = out2.send.bind(out2);
+  out2.send = (frame: Uint8Array): void => {
+    sent2.push(Uint8Array.from(frame));
+    realSend2(frame);
+  };
+  engine2.stop();
+  const last2 = sent2[sent2.length - 1];
+  check('вода падает и при выключенном гашении света', !!last2 && pumpIdx.every((i) => last2[i] === 0), last2 ? String(last2[pumpIdx[0]!]) : 'нет кадра');
+  check('свет при этом остался гореть', !!last2 && lampIdx.every((i) => last2[i] === 180), last2 ? String(last2[lampIdx[0]!]) : 'нет кадра');
+
   console.log(`failsafe: пройдено ${passed}, ошибок ${failed}`);
   process.exit(failed ? 1 : 0);
 }
