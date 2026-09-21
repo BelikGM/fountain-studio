@@ -1470,7 +1470,7 @@ function ShowEditor({
                       className={
                         track.effects.length > 0 || effectsOpenId === track.id ? 'btn btn-small active' : 'btn btn-small'
                       }
-                      data-hint="Зоны эффекта плавности (Quick/Rate/Decay) на этой дорожке"
+                      data-hint="Плавность на этой дорожке: где смягчить резкие перепады значений"
                       onClick={() => setEffectsOpenId(effectsOpenId === track.id ? null : track.id)}
                     >
                       🎚{track.effects.length > 0 ? ` ${track.effects.length}` : ''}
@@ -2172,6 +2172,11 @@ function TrackEffectsPanel({
         резкий перепад (например, 255 → 0 на стыке блоков) превращается в переход. Рядом с силой
         написано, за сколько значение практически доходит до цели: думать удобнее в секундах.
       </p>
+      <p className="dim">
+        Проверить проще всего так: поставить зону на стык двух блоков с разными значениями,
+        запустить шоу и смотреть вкладку «Поток» — там видно, что уходит в линию. Силу 1 видно
+        сразу глазами, силу 100 от мгновенного перехода уже не отличить.
+      </p>
       {track.effects.length === 0 && <p className="dim">Зон ещё нет.</p>}
       {track.effects.map((e) => (
         <div className="form-row" key={e.id}>
@@ -2179,8 +2184,8 @@ function TrackEffectsPanel({
             <option value="rate">Плавно вверх и вниз</option>
             <option value="decay">Плавно только вниз</option>
           </select>
-          <label>
-            сила:{' '}
+          <label data-hint="1 — самый плавный переход (около 11 с), 100 — почти мгновенный (около 0,1 с).">
+            сила 1…100:{' '}
             <input
               className="input input-num"
               type="number"
@@ -2196,8 +2201,8 @@ function TrackEffectsPanel({
           >
             ≈ {smoothReachSec(e.strength)} с до цели
           </span>
-          <label>
-            с, с:{' '}
+          <label data-hint="С какой секунды дорожки зона действует.">
+            начало, с:{' '}
             <input
               className="input input-num"
               type="number"
@@ -2207,8 +2212,8 @@ function TrackEffectsPanel({
               onChange={(ev) => patch(e.id, { startMs: Math.max(0, Number(ev.target.value) * 1000) })}
             />
           </label>
-          <label>
-            по, с:{' '}
+          <label data-hint="По какую секунду дорожки зона действует.">
+            конец, с:{' '}
             <input
               className="input input-num"
               type="number"
