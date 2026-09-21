@@ -182,8 +182,20 @@ export interface EngineConnection {
 /** Сколько шагов истории Undo/Redo держим в памяти. */
 const MAX_HISTORY = 50;
 
-// В Electron страница открывается с file:// — hostname пустой, движок локальный.
-const ENGINE_URL = `ws://${location.hostname || '127.0.0.1'}:9520`;
+/*
+ * В Electron страница открывается с file:// — hostname пустой, движок локальный.
+ *
+ * `?engine=9531` — подключиться к другому движку. Нужно для проверки
+ * интерфейса снимками (scripts/ui-shot.cjs): всё, что в проверке нажимается
+ * («Применить», «+ Вселенная»), должно уходить в изолированный движок, а не в
+ * рабочий объект на 9520 (правило 4 в CLAUDE.md). Принимаем только номер
+ * порта — адрес остаётся локальным.
+ */
+const ENGINE_PORT = (() => {
+  const p = Number(new URLSearchParams(location.search).get('engine'));
+  return Number.isInteger(p) && p > 0 && p < 65536 ? p : 9520;
+})();
+const ENGINE_URL = `ws://${location.hostname || '127.0.0.1'}:${ENGINE_PORT}`;
 
 /** Подключение к движку с автопереподключением. */
 export function useEngine(): EngineConnection {
