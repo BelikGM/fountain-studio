@@ -18,6 +18,7 @@ import {
 } from '@fountain-studio/shared';
 import { askConfirm } from '../components/ConfirmDialog';
 import { TOUR_STORAGE_KEY } from '../tour';
+import { clearSettingsDraft, keepSettingsDraft, takeSettingsDraft } from '../settingsDraft';
 import { setViewPrefs, VIEW_PREF_DEFAULTS, VIEW_PREF_LIMITS, viewPrefs } from '../three/viewPrefs';
 import {
   HOTKEY_DEFS,
@@ -1374,9 +1375,15 @@ function UsbDmxStatus({ scan, universes }: { scan: UsbDmxScan | null; universes:
  */
 export function SettingsView({ engine }: { engine: EngineConnection }) {
   const { engineConfig, project, send } = engine;
-  const [tickMs, setTickMs] = useState(50);
-  const [universes, setUniverses] = useState<ConfigUniverse[]>([]);
-  const [dirty, setDirty] = useState(false);
+  /*
+   * Незавершённая правка берётся из черновика, который пережил уход с вкладки
+   * (см. settingsDraft.ts). Без этого добавленная линия пропадала молча: сходил
+   * на «Поток» посмотреть результат — и работа потеряна.
+   */
+  const [saved] = useState(takeSettingsDraft);
+  const [tickMs, setTickMs] = useState(saved?.tickMs ?? 50);
+  const [universes, setUniverses] = useState<ConfigUniverse[]>(saved?.universes ?? []);
+  const [dirty, setDirty] = useState(saved !== null);
   const [applied, setApplied] = useState(false);
 
   // Загрузка из движка; пока правки не начаты — следуем за его состоянием.
@@ -1385,6 +1392,11 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
     setTickMs(engineConfig.tickMs);
     setUniverses(engineConfig.universes.map((u) => ({ ...u, outputs: u.outputs.map((o) => ({ ...o })) })));
   }, [engineConfig, dirty]);
+
+  // Каждое изменение кладём в черновик: уход с вкладки его не потеряет.
+  useEffect(() => {
+    if (dirty) keepSettingsDraft({ tickMs, universes });
+  }, [dirty, tickMs, universes]);
 
   /**
    * USB-DMX: пока есть хоть одна USB-вселенная (в сохранённой конфигурации или
@@ -1474,6 +1486,16 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
     send({ type: 'updateConfig', tickMs, universes });
     setDirty(false);
     setApplied(true);
+    clearSettingsDraft();
+  };
+
+  /** Отказаться от правок и вернуться к тому, что работает в движке. */
+  const discard = (): void => {
+    clearSettingsDraft();
+    setDirty(false);
+    setApplied(false);
+    setTickMs(engineConfig.tickMs);
+    setUniverses(engineConfig.universes.map((u) => ({ ...u, outputs: u.outputs.map((o) => ({ ...o })) })));
   };
 
   const valid = universes.length > 0 && tickMs >= 10 && tickMs <= 1000;
@@ -1681,10 +1703,16 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
         <button className="btn active" disabled={!dirty || !valid} onClick={apply}>
           Применить и сохранить
         </button>
-        {dirty && !valid && <span className="error-text">нужна хотя бы одна вселенная и тик 10–1000 мс</span>}
-        {applied && <span className="dim">✔ применено и сохранено в fountain.config.json</span>}
+        <button className="btn" disabled={!dirty} onClick={discard}>
+          Отменить правки
+        </button>
+        {dirty && !valid && <span className="error-text">нужна хотя бы одна линия и такт 10–1000 мс</span>}
+        {applied && <span className="dim">✔ применено и сохранено</span>}
         {dirty && valid && (
-          <span className="warn">воспроизведение при применении будет остановлено</span>
+          <span className="warn">
+            Правки ещё не применены — на объекте они не действуют. Можно уйти на другую вкладку и
+            вернуться, они сохранятся. Применение остановит воспроизведение.
+          </span>
         )}
       </div>
 
