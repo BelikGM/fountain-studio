@@ -1,4 +1,4 @@
-import type { TrackEffect } from './smoothing';
+import { smoothnessFromSaved, type TrackEffect } from './smoothing';
 
 /**
  * Модель шоу: звуковая дорожка + дорожки управления на общем таймлайне.
@@ -299,7 +299,8 @@ export function sanitizeShows(raw: unknown, sceneIds: Set<string>, sequenceIds: 
               mode: e.mode,
               startMs: Math.max(0, Math.round(e.startMs)),
               endMs: Math.round(e.endMs),
-              strength: Number.isFinite(e.strength) ? Math.max(1, Math.min(100, Math.round(e.strength))) : 50,
+              // Старые проекты хранили «силу» с обратной шкалой — переводим.
+              smoothness: smoothnessFromSaved(e as { smoothness?: unknown; strength?: unknown }),
             }))
             .sort((a, b) => a.startMs - b.startMs),
         });

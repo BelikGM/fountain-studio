@@ -17,6 +17,9 @@ import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import {
   actorPhases,
+  legacyStrengthToSmoothness,
+  smoothReachSec,
+  smoothStep,
   bandEnergyEnvelope,
   bandEnvelopePoints,
   breathingSequenceScenes,
@@ -529,7 +532,9 @@ const demo: Project = {
         { sceneId: 'sceneA', holdMs: 150, fadeMs: 0 },
         { sceneId: 'sceneB', holdMs: 5000, fadeMs: 0 },
       ],
-      effect: { mode: 'rate', strength: 10 },
+      // Намеренно в СТАРОЙ записи — «сила 10» (обратная шкала до 22.09.2026):
+      // движок обязан перевести её в «плавность 11» с тем же временем перехода.
+      effect: { mode: 'rate', strength: 10 } as never,
     },
   ],
   shows: [
@@ -639,7 +644,7 @@ const demo: Project = {
             { id: 'te1', type: 'scene', refId: 'sceneA', startMs: 0, durationMs: 200, fadeInMs: 0, fadeOutMs: 0 },
             { id: 'te2', type: 'scene', refId: 'sceneB', startMs: 200, durationMs: 5000, fadeInMs: 0, fadeOutMs: 0 },
           ],
-          effects: [{ id: 'fx1', mode: 'rate', strength: 10, startMs: 0, endMs: 5200 }],
+          effects: [{ id: 'fx1', mode: 'rate', smoothness: 11, startMs: 0, endMs: 5200 }],
         },
       ],
     },
@@ -912,6 +917,25 @@ async function main(): Promise<void> {
   check(true, `трек-эффект: сошлось к цели (${ch(1)})`);
   send({ type: 'stopShow' });
   await waitFor('стоп после теста эффекта дорожки', () => ch(1) === 0);
+
+  console.log('— Шкала плавности: больше — плавнее; старые проекты переводятся —');
+  check(smoothReachSec(1) === 0.1 && smoothReachSec(100) === 10, 'плавность 1 — 0,1 с до цели, 100 — 10 с');
+  {
+    // Одинаковый скачок 0 → 255, полсекунды: чем больше плавность, тем меньше пройдено.
+    const after = (sm: number): number => {
+      let v = 0;
+      for (let t = 0; t < 500; t += 50) v = smoothStep(v, 255, 'rate', sm, 50);
+      return v;
+    };
+    check(after(5) > after(20) && after(20) > after(80), `больше плавность — медленнее переход (${after(5).toFixed(0)} > ${after(20).toFixed(0)} > ${after(80).toFixed(0)})`);
+  }
+  check(legacyStrengthToSmoothness(10) === 11, 'старая «сила 10» (≈ 1,1 с) → плавность 11');
+  check(legacyStrengthToSmoothness(50) === 2, 'старая «сила 50» (≈ 0,22 с) → плавность 2');
+  check(legacyStrengthToSmoothness(1) === 100, 'старая «сила 1» (≈ 11 с) упирается в верх шкалы — 10 с');
+  check(
+    projectEcho?.sequences.find((q) => q.id === 'seqEffect')?.effect?.smoothness === 11,
+    'проект со старой «силой 10» движок сохранил как «плавность 11» — время перехода то же',
+  );
 
   console.log('— Шоу: перемотка на паузе (стейтлес-рендер таймлайна) —');
   send({ type: 'playShow', showId: 'show1', positionMs: 0 });

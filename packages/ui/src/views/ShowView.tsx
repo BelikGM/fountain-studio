@@ -28,12 +28,13 @@ import {
   type ShowBlock,
   type ShowTrack,
   type TrackEffect,
-  smoothReachSec,
+  SMOOTHNESS_DEFAULT,
 } from '@fountain-studio/shared';
 import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
 import { ListFilter } from '../components/ListFilter';
 import { confirmDelete } from '../confirmDelete';
 import { comboFromEvent, getCombo } from '../hotkeys';
+import { SmoothnessField } from '../components/SmoothnessField';
 import type { EngineConnection } from '../useEngine';
 import { extractVideoFrameSamples } from '../videoFrames';
 import { ShowVideoRender } from './ShowVideoRender';
@@ -42,8 +43,14 @@ import { PauseIcon, PlayIcon, StopIcon } from '../components/Icons';
 const HEAD_W = 216;
 const RULER_H = 28;
 const AUDIO_H = 84;
-const BLOCKS_H = 48;
-const ENV_H = 76;
+/*
+ * Высоты строк дорожек — под шапку слева: имя с ручкой и ряд кнопок (у
+ * огибающей ещё ряд с прибором и каналом). Было 48 и 76 px, а шапке нужно 65 и
+ * 85 (замер): у «Блоков» срезался ряд кнопок вместе с 🎚 — кнопку эффекта
+ * плавности было просто не видно (снимок 22.09.2026).
+ */
+const BLOCKS_H = 66;
+const ENV_H = 86;
 /** Ограничение ширины холста волновой формы (лимиты canvas у браузеров). */
 const MAX_LANE_W = 30000;
 
@@ -1377,6 +1384,7 @@ function ShowEditor({
                   setDragTrack(null);
                 }}
               >
+                <div className="tl-head-top">
                 <span
                   className="drag-handle"
                   data-hint="Перетащить, чтобы переставить дорожку. Кнопками ↑↓ — на одну позицию"
@@ -1391,6 +1399,7 @@ function ShowEditor({
                   value={track.name}
                   onChange={(e) => updateTrack({ ...track, name: e.target.value })}
                 />
+                </div>
                 {track.kind === 'envelope' && (
                   <div className="tl-head-controls">
                     <select
@@ -2162,20 +2171,20 @@ function TrackEffectsPanel({
   const addZone = (): void => {
     const start = 0;
     const end = Math.min(durationMs, Math.max(500, Math.round(durationMs * 0.2)));
-    onChange([...track.effects, { id: uid(), mode: 'rate', strength: 50, startMs: start, endMs: end }]);
+    onChange([...track.effects, { id: uid(), mode: 'rate', smoothness: SMOOTHNESS_DEFAULT, startMs: start, endMs: end }]);
   };
   return (
     <div className="panel">
       <div className="panel-title">Эффект плавности на «{track.name}»</div>
       <p className="dim">
         Вне зон значение применяется мгновенно. Внутри зоны оно подходит к новому плавно — так
-        резкий перепад (например, 255 → 0 на стыке блоков) превращается в переход. Рядом с силой
-        написано, за сколько значение практически доходит до цели: думать удобнее в секундах.
+        резкий перепад (например, 255 → 0 на стыке блоков) превращается в переход. Чем больше
+        плавность, тем дольше переход; рядом написано время.
       </p>
       <p className="dim">
         Проверить проще всего так: поставить зону на стык двух блоков с разными значениями,
-        запустить шоу и смотреть вкладку «Поток» — там видно, что уходит в линию. Силу 1 видно
-        сразу глазами, силу 100 от мгновенного перехода уже не отличить.
+        запустить шоу и смотреть вкладку «Поток» — там видно, что уходит приборам. Плавность 100
+        (10 с) видно сразу глазами, плавность 1 (0,1 с) от мгновенного перехода уже не отличить.
       </p>
       {track.effects.length === 0 && <p className="dim">Зон ещё нет.</p>}
       {track.effects.map((e) => (
@@ -2184,23 +2193,7 @@ function TrackEffectsPanel({
             <option value="rate">Плавно вверх и вниз</option>
             <option value="decay">Плавно только вниз</option>
           </select>
-          <label data-hint="1 — самый плавный переход (около 11 с), 100 — почти мгновенный (около 0,1 с).">
-            сила 1…100:{' '}
-            <input
-              className="input input-num"
-              type="number"
-              min={1}
-              max={100}
-              value={e.strength}
-              onChange={(ev) => patch(e.id, { strength: Math.max(1, Math.min(100, Number(ev.target.value))) })}
-            />
-          </label>
-          <span
-            className="dim"
-            data-hint="Переход идёт плавно и к концу почти незаметен. Здесь — за сколько значение практически доходит до цели (в пределах одной единицы из 255)."
-          >
-            ≈ {smoothReachSec(e.strength)} с до цели
-          </span>
+          <SmoothnessField value={e.smoothness} onChange={(v) => patch(e.id, { smoothness: v })} />
           <label data-hint="С какой секунды дорожки зона действует.">
             начало, с:{' '}
             <input

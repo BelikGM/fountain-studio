@@ -5,6 +5,7 @@ import {
   envelopeValue,
   profileMap,
   smoothStep,
+  SMOOTHNESS_DEFAULT,
   type PlaybackState,
   type Playlist,
   type PlaylistTransportState,
@@ -523,7 +524,7 @@ export class Playback {
       // сглаживает то, что реально идёт на выход, отдельно от «сырого» levels
       // (тот остаётся честным fadeFrom-снимком для следующего шага).
       const mode = r.sequence.effect?.mode ?? 'quick';
-      const strength = r.sequence.effect?.strength ?? 50;
+      const smoothness = r.sequence.effect?.smoothness ?? SMOOTHNESS_DEFAULT;
       const dtMs = r.lastTickMs === null ? 0 : nowMs - r.lastTickMs;
       r.lastTickMs = nowMs;
       for (const universe of this.universeIds) {
@@ -539,7 +540,7 @@ export class Playback {
         const out = this.merged.get(universe)!;
         for (let i = 0; i < DMX_UNIVERSE_SIZE; i++) {
           const raw = levels[i]!;
-          const v = mode === 'quick' || dtMs === 0 ? raw : smoothStep(smoothed[i]!, raw, mode, strength, dtMs);
+          const v = mode === 'quick' || dtMs === 0 ? raw : smoothStep(smoothed[i]!, raw, mode, smoothness, dtMs);
           smoothed[i] = v;
           if (v > out[i]!) out[i] = Math.round(v);
         }
@@ -640,7 +641,7 @@ export class Playback {
             const levels = getOrCreate(st.levels, universe);
             const out = this.merged.get(universe)!;
             for (let i = 0; i < DMX_UNIVERSE_SIZE; i++) {
-              const v = jump || dtMs === 0 ? raw[i]! : smoothStep(levels[i]!, raw[i]!, zone.mode, zone.strength, dtMs);
+              const v = jump || dtMs === 0 ? raw[i]! : smoothStep(levels[i]!, raw[i]!, zone.mode, zone.smoothness, dtMs);
               levels[i] = v;
               if (v > out[i]!) out[i] = Math.round(v);
             }

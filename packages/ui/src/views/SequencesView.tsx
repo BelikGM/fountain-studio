@@ -6,11 +6,13 @@ import {
   type Sequence,
   type SequenceGroup,
   type SequenceStep,
+  SMOOTHNESS_DEFAULT,
 } from '@fountain-studio/shared';
 import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
 import { ListFilter } from '../components/ListFilter';
 import { PauseIcon, PencilIcon, PlayIcon, StopIcon, TrashIcon } from '../components/Icons';
 import { confirmDelete } from '../confirmDelete';
+import { SmoothnessField } from '../components/SmoothnessField';
 import type { EngineConnection } from '../useEngine';
 import { SequenceMatrix } from './SequenceMatrix';
 
@@ -377,7 +379,7 @@ function SequenceEditor({
       </div>
 
       <div className="form-row">
-        <span className="dim" data-hint="Отдельно от «Фейд, мс» шага — тот один фиксированный переход, это постоянный фильтр на весь выход секвенсора">
+        <span className="dim" data-hint="Смягчает резкие перепады на всём выходе секвенсора. Отдельно от «Фейд, мс» шага: тот — один переход между двумя шагами, а это — постоянный фильтр">
           Эффект плавности:
         </span>
         <select
@@ -387,31 +389,19 @@ function SequenceEditor({
             onChange(
               mode === 'quick'
                 ? { ...sequence, effect: undefined }
-                : { ...sequence, effect: { mode, strength: sequence.effect?.strength ?? 50 } },
+                : { ...sequence, effect: { mode, smoothness: sequence.effect?.smoothness ?? SMOOTHNESS_DEFAULT } },
             );
           }}
         >
-          <option value="quick">Quick (без сглаживания)</option>
-          <option value="rate">Rate (плавно в обе стороны)</option>
-          <option value="decay">Decay (плавно только на спад)</option>
+          <option value="quick">Без сглаживания</option>
+          <option value="rate">Плавно вверх и вниз</option>
+          <option value="decay">Плавно только вниз</option>
         </select>
         {sequence.effect && (
-          <label className="field">
-            Сила:{' '}
-            <input
-              className="input input-num"
-              type="number"
-              min={1}
-              max={100}
-              value={sequence.effect.strength}
-              onChange={(e) =>
-                onChange({
-                  ...sequence,
-                  effect: { mode: sequence.effect!.mode, strength: Math.max(1, Math.min(100, Number(e.target.value))) },
-                })
-              }
-            />
-          </label>
+          <SmoothnessField
+            value={sequence.effect.smoothness}
+            onChange={(v) => onChange({ ...sequence, effect: { mode: sequence.effect!.mode, smoothness: v } })}
+          />
         )}
       </div>
 

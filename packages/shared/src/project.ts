@@ -12,6 +12,7 @@ import {
 } from './remote';
 import { sanitizeSequenceGroups, type SequenceGroup } from './sequencegroup';
 import { sanitizeShows, type Show } from './show';
+import { smoothnessFromSaved } from './smoothing';
 import { defaultUtilityLightConfig, sanitizeUtilityLightConfig, type UtilityLightConfig } from './utilitylight';
 import { defaultFailsafeConfig, sanitizeFailsafeConfig, type FailsafeConfig } from './failsafe';
 import { defaultWindLimitConfig, sanitizeWindLimitConfig, type WindLimitConfig } from './windlimit';
@@ -285,7 +286,7 @@ export interface Sequence {
    * например «на свет плавность нужна, а на воду нет» — у них разные
    * секвенсоры). Нет поля — Quick (как сейчас, без изменений).
    */
-  effect?: { mode: 'rate' | 'decay'; strength: number };
+  effect?: { mode: 'rate' | 'decay'; smoothness: number };
 }
 
 export interface Project {
@@ -691,8 +692,8 @@ export function sanitizeProject(raw: unknown): Project {
     for (const q of r.sequences as Sequence[]) {
       if (!q || typeof q.id !== 'string') continue;
       const effect =
-        q.effect && (q.effect.mode === 'rate' || q.effect.mode === 'decay') && Number.isFinite(q.effect.strength)
-          ? { mode: q.effect.mode, strength: Math.max(1, Math.min(100, Math.round(q.effect.strength))) }
+        q.effect && (q.effect.mode === 'rate' || q.effect.mode === 'decay')
+          ? { mode: q.effect.mode, smoothness: smoothnessFromSaved(q.effect as { smoothness?: unknown; strength?: unknown }) }
           : undefined;
       project.sequences.push({
         id: q.id,
