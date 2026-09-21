@@ -81,7 +81,7 @@ export function PatchView({ engine }: { engine: EngineConnection }) {
       <section className="panel">
         <h2>Переадресация каналов</h2>
         <p className="dim">
-          Если монтаж не совпал со схемой — не правьте схему. Здесь задаётся, откуда каждый адрес линии
+          Если монтаж не совпал со схемой — не правьте схему. Здесь задаётся, откуда каждый адрес DMX
           берёт значение; проект, сцены и 3D-вид остаются как есть.
         </p>
         <div className="form-row">
@@ -193,7 +193,7 @@ function AddDevices({ engine }: { engine: EngineConnection }) {
       <h2>Добавить устройства</h2>
       <div className="form-row">
         <label className="field">
-          Профиль:{' '}
+          Тип:{' '}
           <select value={profileId} onChange={(e) => setProfileId(e.target.value)}>
             {profiles.map((p) => (
               <option key={p.id} value={p.id}>

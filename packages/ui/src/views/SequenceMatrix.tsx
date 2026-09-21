@@ -211,13 +211,13 @@ export function SequenceMatrix({
         </button>
         <button
           className={tool === 'ramp' ? 'btn btn-small active' : 'btn btn-small'}
-          data-hint="Клик по двум ячейкам ОДНОЙ строки — плавный переход между их текущими значениями"
+          data-hint="Клик по двум ячейкам ОДНОЙ строки — значения между ними плавно переходят от одного к другому"
           onClick={() => {
             setTool('ramp');
             setRangeStart(null);
           }}
         >
-          Линия
+          Переход
         </button>
         {tool !== 'edit' && (
           <span className="dim">{rangeStart ? 'Кликните вторую ячейку…' : 'Кликните первую ячейку диапазона'}</span>

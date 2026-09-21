@@ -31,7 +31,7 @@ export function LinesDraftBanner({
       <span>
         {status === 'error'
           ? `⚠ ${message}`
-          : `⚠ Не применено: ${pending.join('; ')}. Пока не применить, этого нет ни на вкладках, ни в линии.`}
+          : `⚠ Не применено: ${pending.join('; ')}. Пока не применить, этого нет ни на вкладках, ни на приборах.`}
       </span>
       <button
         className="btn btn-small active"

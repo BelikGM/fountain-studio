@@ -112,8 +112,12 @@ body {
   margin-left: 8px;
 }
 
+/* Статус связи не сжимается и не переносится: на окне 1600 px вкладки
+   выдавливали его за край, и было видно «движок подклю». */
 .conn {
   font-size: 10px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .conn-on { color: var(--ok); }
 .conn-off { color: var(--danger); }
@@ -453,8 +457,11 @@ body {
   align-items: center;
   gap: 12px;
 }
+/* Подпись перед рядом кнопок: не уже 64 px, чтобы ряды выравнивались, и без
+   переноса — «Вид приборов:» раньше ломалось на две строки. */
 .quick-row-label {
-  width: 64px;
+  min-width: 64px;
+  white-space: nowrap;
   flex-shrink: 0;
   color: var(--fg-dim);
   font-size: 13px;
@@ -685,6 +692,7 @@ select {
 }
 
 .tab {
+  white-space: nowrap;
   background: transparent;
   color: var(--fg-dim);
   border: 1px solid transparent;
@@ -1693,6 +1701,16 @@ h2.panel-head-search {
   align-items: center;
   flex-wrap: nowrap;
 }
+/* Ручка перетаскивания — в одной строке с именем: отдельной строкой она
+   съедала высоту, и ряд кнопок срезался. */
+.tl-head-top {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.tl-head-top .tl-track-name { flex: 1; min-width: 0; }
+/* «🎚 1» не переносится на вторую строку внутри узкой кнопки. */
+.tl-head-controls .btn { white-space: nowrap; }
 .tl-track-name {
   font-size: 12px;
   width: 100%;
@@ -2140,4 +2158,23 @@ input[type='range']:disabled { opacity: 0.4; cursor: default; }
   background: transparent;
   min-height: 40px;
   min-width: 40px;
+}
+
+/* Шапка на узких окнах: вкладки плотнее, иначе правый край (ключ, справка,
+   статус связи) уезжает за экран. Ширины проверены снимками 1366/1600/1920. */
+@media (max-width: 1750px) {
+  .tab { padding: 5px 9px; }
+}
+@media (max-width: 1500px) {
+  .tab { padding: 4px 6px; font-size: 12px; }
+}
+@media (max-width: 1450px) {
+  .conn-text { display: none; }
+  .conn-dot { font-size: 14px; }
+}
+/* 1280 px (ноутбук или 1920 с масштабом 150 %): номер версии уходит в подсказку
+   к названию программы, а место в шапке нужно вкладкам. */
+@media (max-width: 1320px) {
+  .brand-version { display: none; }
+  .tab { padding: 4px 5px; }
 }

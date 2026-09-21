@@ -200,7 +200,7 @@ export function radialWaveScene(
     const raw = Math.round(min + wave * (max - min));
     values[a.deviceId] = [profile.twoState ? (raw >= 128 ? 255 : 0) : raw];
   }
-  const modeName = mode === 'line' ? 'вдоль линии' : mode === 'path' ? 'по контуру' : 'по кольцу';
+  const modeName = mode === 'line' ? 'вдоль прямой' : mode === 'path' ? 'по контуру' : 'по кольцу';
   return { id: uid(), name: `Волна ${modeName}`, values };
 }
 

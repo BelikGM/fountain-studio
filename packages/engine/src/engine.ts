@@ -746,7 +746,7 @@ export class Engine {
       stalled
         ? `такт движка вставал на ${(gap / 1000).toFixed(1)} с`
         : linkLost
-          ? `выход на линию не доставляет дольше ${this.failsafeConfig.timeoutSec} с`
+          ? `выход не доставляет кадры приборам дольше ${this.failsafeConfig.timeoutSec} с`
           : calcLost
             ? 'поток расчёта кадра встал или умер'
             : '',
@@ -767,7 +767,7 @@ export class Engine {
         'error',
       );
     } else {
-      eventLog.log('авария', 'Аварийное отключение снято — вывод на линию восстановлен.', 'info', 'recovery');
+      eventLog.log('авария', 'Аварийное отключение снято — кадры снова доходят до приборов.', 'info', 'recovery');
     }
     this.onFailsafeChange?.(this.failsafe);
   }

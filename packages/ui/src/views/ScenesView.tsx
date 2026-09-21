@@ -435,11 +435,11 @@ function GeneratorPanel({
       setCaptureStatus('В патче нет устройств этой вселенной — значения снимать некуда.');
       return;
     }
-    const scene: Scene = { id: uid(), name: `С линии (вселенная ${captureUniverse})`, values };
+    const scene: Scene = { id: uid(), name: `Со входа Art-Net (вселенная ${captureUniverse})`, values };
     updateProject({ ...project, scenes: [...project.scenes, scene] });
     setSelectedId(scene.id);
     setCaptureStatus(
-      `Снята сцена с линии: ${devicesCovered} устройств, источник ${snap.fromIp}, кадру ${Math.round(snap.ageMs / 1000)} с (записано кадров: ${snap.frames}).`,
+      `Снята сцена со входа Art-Net: ${devicesCovered} устройств, источник ${snap.fromIp}, кадру ${Math.round(snap.ageMs / 1000)} с (записано кадров: ${snap.frames}).`,
     );
   };
 
@@ -499,7 +499,7 @@ function GeneratorPanel({
           <select value={waveMode} onChange={(e) => setWaveMode(e.target.value as typeof waveMode)}>
             <option value="angle">По углу (круг/кольцо)</option>
             <option value="path">По контуру (звезда/ромб/прямоугольник — равномерно по периметру)</option>
-            <option value="line">Вдоль линии (линейный фонтан)</option>
+            <option value="line">Вдоль прямой (линейный фонтан)</option>
           </select>
         </label>
         <label className="field">
@@ -609,7 +609,7 @@ function GeneratorPanel({
 
       <div className="form-row">
         <span className="dim">
-          Импорт с линии — внешний Art-Net источник (старый контроллер) шлёт на этот ПК:
+          Импорт со входа — сторонний пульт или старый контроллер шлёт Art-Net на этот ПК:
         </span>
         <label className="field">
           Вселенная:{' '}
@@ -622,7 +622,7 @@ function GeneratorPanel({
           </select>
         </label>
         <button className="btn" onClick={() => void doCaptureScene()}>
-          Снять сцену с линии
+          Снять сцену со входа
         </button>
         <button className="btn" onClick={() => void doMeasureCycle()} data-hint="Период повторения T захваченного потока">
           Измерить период цикла

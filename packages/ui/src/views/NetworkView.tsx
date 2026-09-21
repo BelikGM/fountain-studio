@@ -118,7 +118,7 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
             <tbody>
               {network.rdmDevices.map((d) => (
                 <tr key={d.uid} className={d.lost ? 'row-error' : undefined}>
-                  <td>{d.lost ? '✖ пропал' : '✔ на линии'}</td>
+                  <td>{d.lost ? '✖ пропал' : '✔ на связи'}</td>
                   <td>{d.uid}</td>
                   <td>
                     <select
@@ -231,7 +231,7 @@ function DmxStreamPanel({ engine, hasInputCapture }: { engine: EngineConnection;
             className={mode === 'in' ? 'btn active' : 'btn'}
             onClick={() => setMode('in')}
             disabled={!hasInputCapture}
-            data-hint={hasInputCapture ? 'Снято на линии Art-Net извне' : 'Нужен хотя бы один настроенный Art-Net-выход'}
+            data-hint={hasInputCapture ? 'Что приходит на этот компьютер по Art-Net от стороннего пульта или программы' : 'Нужен хотя бы один настроенный Art-Net-выход'}
           >
             Вход
           </button>
@@ -257,7 +257,7 @@ function DmxStreamPanel({ engine, hasInputCapture }: { engine: EngineConnection;
         )}
       </div>
       {!data ? (
-        <p className="dim">{mode === 'in' ? 'Ждём кадр с линии…' : 'Нет данных по этой вселенной.'}</p>
+        <p className="dim">{mode === 'in' ? 'Ждём кадр со входа Art-Net…' : 'Нет данных по этой вселенной.'}</p>
       ) : (
         <div className="dmx-stream-grid" style={{ gridTemplateColumns: `repeat(${DMX_GRID_COLS}, 1fr)` }}>
           {Array.from({ length: DMX_UNIVERSE_SIZE }, (_, i) => {

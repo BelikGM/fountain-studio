@@ -161,7 +161,7 @@ function equipmentLines(s: SiteSnapshot): Line[] {
   if (s.rdm && s.rdm.total > 0) {
     out.push(
       s.rdm.lost.length === 0
-        ? { mark: '✅', text: `RDM: ${s.rdm.total} ${plural(s.rdm.total, 'прибор', 'прибора', 'приборов')} на линии` }
+        ? { mark: '✅', text: `RDM: ${s.rdm.total} ${plural(s.rdm.total, 'прибор', 'прибора', 'приборов')} на связи` }
         : { mark: '⚠️', text: `RDM: пропали ${s.rdm.lost.length} из ${s.rdm.total} — ${listShort(s.rdm.lost)}` },
     );
   }
@@ -282,7 +282,7 @@ export function formatReport(s: SiteSnapshot, note?: string): string {
 function checklist(source: string, message: string): string | null {
   const m = message.toLowerCase();
   if (source === 'modbus' || m.includes('пч') || m.includes('частот')) {
-    return 'питание и автомат ПЧ, линию RS-485 (разъём, терминатор), код аварии по паспорту привода';
+    return 'питание и автомат ПЧ, кабель RS-485 (разъём, терминатор), код аварии по паспорту привода';
   }
   if (source === 'net' && m.includes('rdm')) return 'питание прибора, DMX-кабель и разъёмы на участке, адрес прибора';
   if (source === 'net') return 'питание узла Art-Net, сетевой кабель и коммутатор, IP-адрес узла';

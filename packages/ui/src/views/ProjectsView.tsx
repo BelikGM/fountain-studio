@@ -81,7 +81,7 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
     playback.playlist !== null;
 
   const askIfPlaying = (what: string): Promise<boolean> =>
-    !playing ? Promise.resolve(true) : askConfirm(`${what}?`, { detail: 'Сейчас идёт воспроизведение — вывод на линию прервётся.' });
+    !playing ? Promise.resolve(true) : askConfirm(`${what}?`, { detail: 'Сейчас идёт воспроизведение — приборы перестанут получать значения.' });
 
   const open = async (dir: string): Promise<void> => {
     if (await askIfPlaying('Открыть другой объект')) openProject(dir);
@@ -148,7 +148,7 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
               </button>
               <button
                 className="btn btn-small"
-                data-hint="Закрыть объект: вывод на линию прекратится, программа вернётся к выбору проекта."
+                data-hint="Закрыть объект: приборы перестанут получать значения, программа вернётся к выбору проекта."
                 onClick={() => {
                   void (async () => {
                     if (await askIfPlaying('Закрыть объект')) closeProject();
