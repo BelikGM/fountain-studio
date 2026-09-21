@@ -12,6 +12,7 @@ import {
   FRAME_MODES,
   frameModeToConfig,
   storedUniverseLabel,
+  clampVolumeDb,
 } from '@fountain-studio/shared';
 import type { AudioStore } from './audio';
 import { saveAppConfigPatch } from './config';
@@ -118,7 +119,8 @@ export function startServer(
     universes: engine.config.universes as ConfigUniverse[],
     frameMode: engine.frameModeChosen(),
     frameModeActive: engine.frameModeActive(),
-    audioVolume: engine.config.audio.volume,
+    audioVolumeDb: engine.config.audio.volumeDb,
+    audioMuted: engine.config.audio.muted,
     audioReady: player?.ready() ?? false,
   });
   const broadcastNetwork = (): void => {
@@ -453,12 +455,15 @@ export function startServer(
           void handleRdmRequest(net, msg, ws);
           break;
         case 'setAudioVolume': {
-          const v = Math.round(Number(msg.volume));
-          if (!Number.isFinite(v) || v < 0 || v > 100) {
-            console.error('[server] setAudioVolume отклонён: громкость вне 0…100', msg.volume);
+          if (!Number.isFinite(Number(msg.volumeDb))) {
+            console.error('[server] setAudioVolume отклонён: громкость не число', msg.volumeDb);
             break;
           }
-          engine.config.audio = { ...engine.config.audio, volume: v };
+          engine.config.audio = {
+            ...engine.config.audio,
+            volumeDb: clampVolumeDb(msg.volumeDb),
+            muted: msg.muted === true,
+          };
           player?.setConfig(engine.config.audio);
           // Настройка ПРОГРАММЫ: про усилитель на объекте, а не про шоу.
           saveAppConfigPatch(engine.config.configFile ?? '', { audio: engine.config.audio });
@@ -803,7 +808,7 @@ export function startServer(
  */
 function persistConfig(projects: ProjectsApi | undefined, tickMs: number, universes: ConfigUniverse[]): void {
   if (!projects?.current()) {
-    console.error('[server] проект не открыт — линии применены, но сохранять их некуда');
+    console.error('[server] проект не открыт — вселенные применены, но сохранять их некуда');
     return;
   }
   projects.saveLines(tickMs, universes);

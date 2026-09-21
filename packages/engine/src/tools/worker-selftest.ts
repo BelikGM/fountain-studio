@@ -405,7 +405,7 @@ async function main(): Promise<void> {
     const engine = new Engine({
       server: { port: 9596 },
       timing: { tickMs: 50, spinMs: 10, uiFrameMs: 1000 },
-      audio: { player: 'none', ffplayPath: '', volume: 100 },
+      audio: { player: 'none', ffplayPath: '', volumeDb: 0, muted: false },
       universes: [{ id: 1, label: 'В1', outputs: [] }],
       backup: { enabled: false, intervalMin: 60 },
     } as never);
@@ -475,7 +475,7 @@ async function main(): Promise<void> {
     const engine = new Engine({
       server: { port: 9595 },
       timing: { tickMs: 50, spinMs: 10, uiFrameMs: 1000 },
-      audio: { player: 'none', ffplayPath: '', volume: 100 },
+      audio: { player: 'none', ffplayPath: '', volumeDb: 0, muted: false },
       universes: [{ id: 1, label: 'В1', outputs: [] }],
       backup: { enabled: false, intervalMin: 60 },
     } as never);

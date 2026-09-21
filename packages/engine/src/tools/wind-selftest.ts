@@ -527,7 +527,7 @@ async function liveEngineCheck(): Promise<void> {
   const engine = new Engine({
     server: { port: 9597 },
     timing: { tickMs: 50, spinMs: 2, uiFrameMs: 100 },
-    audio: { player: 'none', ffplayPath: '', volume: 100 },
+    audio: { player: 'none', ffplayPath: '', volumeDb: 0, muted: false },
     universes: [{ id: 1, label: 'Вселенная 1', outputs: [] }],
     backup: { enabled: false, intervalMin: 60 },
   } as never);

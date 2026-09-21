@@ -19,6 +19,9 @@ import {
   nextUniverse,
   storedUniverseLabel,
   universeTitle,
+  clampVolumeDb,
+  VOLUME_DB_MAX,
+  VOLUME_DB_MIN,
 } from '@fountain-studio/shared';
 import { askConfirm } from '../components/ConfirmDialog';
 import { TOUR_STORAGE_KEY } from '../tour';
@@ -603,7 +606,7 @@ function TelegramPanel({ engine }: { engine: EngineConnection }) {
           />{' '}
           Включено
         </label>
-        <label className="field" data-hint="Аварии ПЧ, пропажа нод и приборов с линии — то же, что попадает в журнал уровнями «предупреждение» и «ошибка»">
+        <label className="field" data-hint="Аварии ПЧ, пропажа узлов Art-Net и приборов — то же, что попадает в журнал уровнями «предупреждение» и «ошибка»">
           <input
             type="checkbox"
             checked={telegram.alarms}
@@ -801,7 +804,7 @@ function FailsafePanel({ engine }: { engine: EngineConnection }) {
     <section className="panel">
       <h2>Аварийное отключение</h2>
       <p className="dim">
-        Если движок перестал выдавать кадры на линию — такт вставал или выход не доставляет
+        Если движок перестал выдавать кадры приборам — такт вставал или выход не доставляет
         (выдернули USB, закрылся порт), — насосы и клапаны принудительно уходят в 0. Без этого
         приборы держат ПОСЛЕДНЕЕ принятое значение: насос продолжит крутиться, струя останется
         поднятой. Когда вывод восстановится, движок сам вернётся к обычной картине.
@@ -863,23 +866,15 @@ function FailsafePanel({ engine }: { engine: EngineConnection }) {
 }
 
 /**
- * Как готовятся кадры для линии.
+ * Звук вечерней программы: громкость в децибелах, «звук выключен» и видно ли,
+ * чем играть.
  *
- * Вынесено в интерфейс потому, что в установленном приложении человек до
- * `app-config.json` руками не доберётся, а на объекте сравнить «как сейчас» с
- * «как было раньше» — это первое, что понадобится, если что-то покажется не так.
+ * Децибелы — как в FontanPlay (заказчик прислал снимок её окна как образец) и
+ * как на усилителе; почему не проценты и почему нет ползунка «Friq» — в
+ * shared/audiovolume.ts.
  *
- * Списком, а не полем с числом: глубина запаса замерена, и глубже сотни
- * миллисекунд она не даёт ничего (разбор — в `framemode.ts`). Свободное поле
- * приглашало бы искать там, где искать нечего.
- */
-/**
- * Звук вечерней программы: громкость и видно ли, чем играть.
- *
- * Зачем отдельной панелью в настройках, а не в файле: на объекте программой
- * пользуется не тот, кто её ставил. Правка fountain.config.json руками —
- * не вариант, а громкость подкручивают на месте, по живому звуку из колонок.
- *
+ * Зачем панелью, а не в файле: на объекте программой пользуется не тот, кто
+ * её ставил, а громкость подкручивают на месте, по живому звуку из колонок.
  * Это настройка ПРОГРАММЫ, не объекта: усилитель и колонки принадлежат месту,
  * а не шоу, и при переносе проекта чужая громкость приехать не должна.
  */
@@ -891,12 +886,13 @@ function AudioPanel({ engine }: { engine: EngineConnection }) {
    */
   const [local, setLocal] = useState<number | null>(null);
   if (!engineConfig) return null;
-  const volume = local ?? engineConfig.audioVolume;
+  const muted = engineConfig.audioMuted;
+  const volumeDb = local ?? engineConfig.audioVolumeDb;
 
-  const commit = (v: number): void => {
-    const clamped = Math.min(100, Math.max(0, Math.round(v)));
-    setLocal(clamped);
-    send({ type: 'setAudioVolume', volume: clamped });
+  const commit = (db: number, mute = muted): void => {
+    const v = clampVolumeDb(db);
+    setLocal(v);
+    send({ type: 'setAudioVolume', volumeDb: v, muted: mute });
   };
 
   return (
@@ -908,14 +904,21 @@ function AudioPanel({ engine }: { engine: EngineConnection }) {
         вода уйдёт из-под музыки.
       </p>
       <div className="form-row">
-        <label className="field">
+        <label
+          className="field"
+          data-hint={
+            '0 дБ — как записано в файле. −6 дБ — заметно тише, −10 дБ — на слух примерно вдвое тише, −20 дБ — фоном.\n' +
+            'Громче 0 дБ программа не делает: треки сведены почти в потолок, и усиление даёт хрип в колонках. Громче — ручкой усилителя.'
+          }
+        >
           Громкость:{' '}
           <input
             type="range"
-            min={0}
-            max={100}
-            step={5}
-            value={volume}
+            min={VOLUME_DB_MIN}
+            max={VOLUME_DB_MAX}
+            step={0.5}
+            value={volumeDb}
+            disabled={muted}
             onChange={(e) => setLocal(Number(e.target.value))}
             onMouseUp={(e) => commit(Number((e.target as HTMLInputElement).value))}
             onKeyUp={(e) => commit(Number((e.target as HTMLInputElement).value))}
@@ -926,19 +929,22 @@ function AudioPanel({ engine }: { engine: EngineConnection }) {
           <input
             className="input input-num"
             type="number"
-            min={0}
-            max={100}
-            value={volume}
+            min={VOLUME_DB_MIN}
+            max={VOLUME_DB_MAX}
+            step={0.5}
+            value={volumeDb}
+            disabled={muted}
             onChange={(e) => commit(Number(e.target.value))}
           />{' '}
-          %
+          дБ
         </label>
-        <span className="dim" data-hint="100 % — исходный уровень файла. Громче не делаем: усиление выше исходного даёт хрип в колонках.">
-          100 % = как в файле
-        </span>
+        <span className="dim">0 дБ — как в файле</span>
+        <label className="field" data-hint="Трек не звучит вовсе; вода и свет при этом работают по шоу.">
+          <input type="checkbox" checked={muted} onChange={(e) => commit(volumeDb, e.target.checked)} /> звук выключен
+        </label>
       </div>
-      {volume === 0 && (
-        <p className="warn">Громкость 0 — вечерняя программа отыграет в тишине, вода и свет при этом работают.</p>
+      {muted && (
+        <p className="warn">Звук выключен — вечерняя программа отыграет в тишине, вода и свет при этом работают.</p>
       )}
       {engineConfig.audioReady ? (
         <p className="dim">✔ Проигрыватель найден — звук будет.</p>
@@ -952,6 +958,18 @@ function AudioPanel({ engine }: { engine: EngineConnection }) {
     </section>
   );
 }
+
+/**
+ * Как готовятся кадры для приборов.
+ *
+ * Вынесено в интерфейс потому, что в установленном приложении человек до
+ * `app-config.json` руками не доберётся, а на объекте сравнить «как сейчас» с
+ * «как было раньше» — это первое, что понадобится, если что-то покажется не так.
+ *
+ * Списком, а не полем с числом: глубина запаса замерена, и глубже сотни
+ * миллисекунд она не даёт ничего (разбор — в `framemode.ts`). Свободное поле
+ * приглашало бы искать там, где искать нечего.
+ */
 function FrameModePanel({ engine }: { engine: EngineConnection }) {
   const { engineConfig, send } = engine;
   /**
@@ -1493,7 +1511,7 @@ function LinesApplyBar({
       {dirty && valid && !nothing && (
         <p className="warn">
           Не применено: {pending.join('; ')}. Пока не нажать «Применить», этого нет ни на других
-          вкладках, ни в линии. Воспроизведение при применении не останавливается.
+          вкладках, ни на приборах. Воспроизведение при применении не останавливается.
         </p>
       )}
       {nothing && <p className="dim">Правка совпадает с тем, что уже работает, — применять нечего.</p>}
@@ -1634,9 +1652,9 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
                     <select
                       value={out?.type ?? 'artnet'}
                       data-hint={
-                        'Все варианты USB-DMX используют один и тот же USB-переходник FTDI и один драйвер FTDI — разница только в том, ЧТО программа шлёт в линию.\n' +
-                        'Art-Net и sACN — по сети, через ноду: самый надёжный вариант для постоянного объекта (длинные линии, развязка, много вселенных).\n' +
-                        'USB-DMX (ENTTEC PRO) — адаптер с контроллером ENTTEC DMX USB PRO: тайминг линии держит сам адаптер, программа шлёт кадр в его обёртке.\n' +
+                        'Все варианты USB-DMX используют один и тот же USB-переходник FTDI и один драйвер FTDI — разница только в том, ЧТО программа шлёт в кабель.\n' +
+                        'Art-Net и sACN — по сети, через ноду: самый надёжный вариант для постоянного объекта (длинные кабели, развязка, много вселенных).\n' +
+                        'USB-DMX (ENTTEC PRO) — адаптер с контроллером ENTTEC DMX USB PRO: тайминг сигнала DMX держит сам адаптер, программа шлёт кадр в его обёртке.\n' +
                         'USB-DMX (Open DMX) — простой адаптер без контроллера (ENTTEC Open DMX USB и клоны): весь сигнал DMX по микросекундам строит компьютер, под нагрузкой возможны рывки.\n' +
                         'USB-DMX (FountanPlay) — тот самый интерфейс из комплекта программы FontanPlay (USB1DMX/USB2DMX/USB3DMX): у него свой контроллер, программа шлёт кадр в его обёртке. На время работы закройте FontanPlay — интерфейс открывает только одна программа.'
                       }
@@ -1709,7 +1727,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
                         <option value="3">Выход 3</option>
                       </select>
                     ) : out?.type === 'usb-dmx' || out?.type === 'open-dmx' ? (
-                      <span className="dim" data-hint="У провода нет номера вселенной: адаптер отдаёт один-единственный кадр DMX512 в свою линию">
+                      <span className="dim" data-hint="У провода нет номера вселенной: адаптер отдаёт один-единственный кадр DMX512 в свой разъём">
                         —
                       </span>
                     ) : (

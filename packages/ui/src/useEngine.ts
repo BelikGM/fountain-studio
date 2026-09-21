@@ -72,8 +72,10 @@ export interface EngineConfigState {
   frameMode: FrameMode;
   /** Что реально работает: отличается, если поток не поднялся. */
   frameModeActive: FrameMode;
-  /** Громкость вечерней программы, 0…100 %. */
-  audioVolume: number;
+  /** Громкость вечерней программы, дБ (−40…0). */
+  audioVolumeDb: number;
+  /** Звук вечерней программы выключен. */
+  audioMuted: boolean;
   /** Нашёлся ли проигрыватель: без него вечерняя программа идёт в тишине. */
   audioReady: boolean;
 }
@@ -292,7 +294,8 @@ export function useEngine(): EngineConnection {
               universes: msg.universes,
               frameMode: msg.frameMode,
               frameModeActive: msg.frameModeActive,
-              audioVolume: msg.audioVolume,
+              audioVolumeDb: msg.audioVolumeDb,
+              audioMuted: msg.audioMuted,
               audioReady: msg.audioReady,
             });
             break;

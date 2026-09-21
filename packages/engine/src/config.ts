@@ -1,3 +1,4 @@
+import { clampVolumeDb, levelFromPercent } from '@fountain-studio/shared';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -52,14 +53,17 @@ export interface EngineConfig {
     player: 'auto' | 'ffplay' | 'none';
     ffplayPath: string;
     /**
-     * Громкость вечерней программы, 0…100 %.
+     * Громкость вечерней программы, дБ (−40…0; 0 — как в файле) — см.
+     * shared/audiovolume.ts, почему децибелы и почему не выше нуля.
      *
      * Зачем в настройках ПРОГРАММЫ, а не в проекте: это свойство объекта, а не
      * шоу. На одном фонтане усилитель выкручен, на другом колонки под окнами
      * жилого дома и громче 40 % нельзя. Переносить проект между объектами с
      * чужой громкостью — заведомо неверно.
      */
-    volume: number;
+    volumeDb: number;
+    /** Звук выключен совсем. */
+    muted: boolean;
   };
   universes: UniverseConfig[];
   /** Авто-бэкапы проекта (§27 доработки, УХ п.5) — именованные снимки по расписанию. */
@@ -127,7 +131,7 @@ export interface EngineConfig {
 const DEFAULTS: EngineConfig = {
   server: { port: 9520 },
   timing: { tickMs: 50, spinMs: 10, uiFrameMs: 100 },
-  audio: { player: 'auto', ffplayPath: 'ffplay', volume: 100 },
+  audio: { player: 'auto', ffplayPath: 'ffplay', volumeDb: 0, muted: false },
   universes: [],
   backup: { enabled: true, intervalMin: 10 },
 };
@@ -167,11 +171,20 @@ export function loadAppConfig(appDataDir: string): EngineConfig & { configFile: 
   };
 }
 
-/** Громкость приходит из интерфейса и из файла — обрезаем в 0…100 и округляем. */
-export function sanitizeAudio(raw: Partial<EngineConfig['audio']> | undefined): EngineConfig['audio'] {
-  const a = { ...DEFAULTS.audio, ...raw };
-  const v = Math.round(Number(a.volume));
-  return { ...a, volume: Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : DEFAULTS.audio.volume };
+/**
+ * Громкость из файла и из интерфейса. Первые сутки (22.09.2026) она хранилась
+ * в процентах (`volume`) — такие настройки переводятся в дБ, а старое поле
+ * больше не пишется.
+ */
+export function sanitizeAudio(raw: (Partial<EngineConfig['audio']> & { volume?: unknown }) | undefined): EngineConfig['audio'] {
+  const { volume, ...rest } = raw ?? {};
+  const a = { ...DEFAULTS.audio, ...rest };
+  const fromPercent = rest.volumeDb === undefined && volume !== undefined ? levelFromPercent(Number(volume)) : null;
+  return {
+    ...a,
+    volumeDb: fromPercent ? fromPercent.volumeDb : clampVolumeDb(a.volumeDb),
+    muted: fromPercent ? fromPercent.muted : a.muted === true,
+  };
 }
 
 /**

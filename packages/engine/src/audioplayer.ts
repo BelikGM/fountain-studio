@@ -1,27 +1,17 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { CutRange } from '@fountain-studio/shared';
+import { clampVolumeDb, volumeDbLabel, type AudioLevel, type CutRange } from '@fountain-studio/shared';
 
 export interface AudioPlayerConfig {
   /** auto — использовать ffplay, если найден; none — без звука (только вода/свет). */
   player: 'auto' | 'ffplay' | 'none';
   /** Путь к ffplay (по умолчанию ищется в PATH). */
   ffplayPath: string;
-  /** Громкость, 0…100 %. */
-  volume: number;
-}
-
-/**
- * Громкость в допустимые 0…100 %.
- *
- * Выше 100 не пускаем сознательно: 100 % — это исходный уровень файла, а
- * усиление сверх него даёт клиппинг, и на объекте это слышно как хрип в
- * колонках. Кому мало — крутить усилитель, а не программу.
- */
-export function clampVolume(raw: number): number {
-  const v = Math.round(Number(raw));
-  return Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : 100;
+  /** Громкость, дБ (−40…0). */
+  volumeDb: number;
+  /** Звук выключен совсем. */
+  muted: boolean;
 }
 
 /**
@@ -29,19 +19,26 @@ export function clampVolume(raw: number): number {
  * было проверить тестом, не запуская настоящий ffplay и не трогая звуковую
  * карту (см. tools/audio-selftest.ts).
  *
- * Громкость идёт именно аргументом запуска: менять её у уже идущего процесса
- * ffplay не умеет.
+ * Громкость — фильтром volume в децибелах, в той же цепочке, что и вырезки
+ * монтажа: так уровень точный и совпадает с тем, что написано в настройках.
+ * «Звук выключен» — стартовой громкостью 0, без фильтра. Выше 0 дБ не
+ * поднимаем (см. shared/audiovolume.ts).
  */
-export function playArgs(file: string, cuts: CutRange[], volume: number): string[] {
-  const args = ['-nodisp', '-autoexit', '-loglevel', 'error', '-volume', String(clampVolume(volume))];
+export function playArgs(file: string, cuts: CutRange[], level: AudioLevel): string[] {
+  const args = ['-nodisp', '-autoexit', '-loglevel', 'error', '-volume', level.muted ? '0' : '100'];
+  const filters: string[] = [];
   if (cuts.length > 0) {
     // Убираем вырезанные интервалы и пересобираем временные метки без пауз.
     const not = cuts.map((c) => `between(t,${(c.startMs / 1000).toFixed(3)},${(c.endMs / 1000).toFixed(3)})`).join('+');
-    args.push('-af', `aselect='not(${not})',asetpts=N/SR/TB`);
+    filters.push(`aselect='not(${not})'`, 'asetpts=N/SR/TB');
   }
+  const db = clampVolumeDb(level.volumeDb);
+  if (!level.muted && db !== 0) filters.push(`volume=${db}dB`);
+  if (filters.length > 0) args.push('-af', filters.join(','));
   args.push('-i', file);
   return args;
 }
+
 /**
  * Системный аудиоплеер для автономного воспроизведения (плейлисты, расписание):
  * движок сам играет музыку через ffplay (часть бесплатного ffmpeg), когда
@@ -73,9 +70,9 @@ export class AudioPlayer {
     this.config = next;
   }
 
-  /** Громкость сейчас, % — для ответа интерфейсу. */
-  volume(): number {
-    return this.config.volume;
+  /** Громкость сейчас — для ответа интерфейсу. */
+  level(): AudioLevel {
+    return { volumeDb: this.config.volumeDb, muted: this.config.muted };
   }
 
   /**
@@ -116,14 +113,14 @@ export class AudioPlayer {
       console.warn(`[audio] файла нет в хранилище: ${file}`);
       return;
     }
-    const vol = clampVolume(this.config.volume);
-    const args = playArgs(file, cuts, vol);
+    const level = this.level();
+    const args = playArgs(file, cuts, level);
     this.proc = spawn(this.config.ffplayPath, args, { stdio: 'ignore' });
     this.proc.on('error', (err) => console.warn('[audio] ffplay ошибка запуска:', err.message));
     this.proc.on('exit', () => {
       this.proc = null;
     });
-    console.log(`[audio] ▶ ${path.basename(file)} (громкость ${vol} %)${cuts.length > 0 ? `, вырезок: ${cuts.length}` : ''}`);
+    console.log(`[audio] ▶ ${path.basename(file)} (${volumeDbLabel(level)})${cuts.length > 0 ? `, вырезок: ${cuts.length}` : ''}`);
   }
 
   stop(): void {

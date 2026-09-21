@@ -102,7 +102,7 @@ async function live(mode: 'worker' | 'inline'): Promise<void> {
   const config: EngineConfig = {
     server: { port: 0 },
     timing: { tickMs: 50, spinMs: 10, uiFrameMs: 1000 },
-    audio: { player: 'none', ffplayPath: '', volume: 100 },
+    audio: { player: 'none', ffplayPath: '', volumeDb: 0, muted: false },
     universes: [{ id: 1, label: 'Линия 1', outputs: [art(0)] }],
     backup: { enabled: false, intervalMin: 60 },
     playbackWorker: mode === 'worker',
@@ -261,7 +261,7 @@ async function frameModeGap(): Promise<void> {
   const engine = new Engine({
     server: { port: 0 },
     timing: { tickMs: 50, spinMs: 10, uiFrameMs: 1000 },
-    audio: { player: 'none', ffplayPath: '', volume: 100 },
+    audio: { player: 'none', ffplayPath: '', volumeDb: 0, muted: false },
     universes: [{ id: 1, label: '', outputs: [] }],
     backup: { enabled: false, intervalMin: 60 },
     playbackWorker: true,

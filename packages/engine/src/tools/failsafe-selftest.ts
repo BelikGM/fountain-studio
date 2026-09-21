@@ -29,7 +29,7 @@ const TIMEOUT_SEC = 3;
 const config: EngineConfig = {
   server: { port: 0 },
   timing: { tickMs: 50, spinMs: 10, uiFrameMs: 100 },
-  audio: { player: 'none', ffplayPath: 'ffplay', volume: 100 },
+  audio: { player: 'none', ffplayPath: 'ffplay', volumeDb: 0, muted: false },
   // Порт заведомо не существует — открыть его не удастся, и healthy() вернёт false.
   universes: [{ id: 1, label: 'Линия 1', outputs: [{ type: 'open-dmx', universe: 0, path: 'COM_NOPE' }] }],
   backup: { enabled: false, intervalMin: 10 },
