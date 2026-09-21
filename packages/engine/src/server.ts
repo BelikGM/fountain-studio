@@ -11,6 +11,7 @@ import {
   type ServerMessage,
   FRAME_MODES,
   frameModeToConfig,
+  storedUniverseLabel,
 } from '@fountain-studio/shared';
 import type { AudioStore } from './audio';
 import { saveAppConfigPatch } from './config';
@@ -483,14 +484,32 @@ export function startServer(
           // кривом списке движок падал на `u.outputs.map(...)`, а упавший
           // движок — это остановленное шоу на объекте.
           const tickMs = Math.round(msg.tickMs);
-          if (!linesUsable(msg.universes) || !Number.isFinite(tickMs) || tickMs < 10 || tickMs > 1000) {
-            console.error('[server] updateConfig отклонён: некорректные линии или тик');
+          const reply = (ok: boolean, message: string, changes: string[] = []): void =>
+            ws.send(JSON.stringify({ type: 'configResult', ok, message, changes } satisfies ServerMessage));
+          if (!linesUsable(msg.universes)) {
+            reply(false, 'Не применено: нужна хотя бы одна вселенная, и номера вселенных не должны повторяться.');
             break;
           }
-          engine.applyConfig(msg.universes, tickMs);
+          if (!Number.isFinite(tickMs) || tickMs < 10 || tickMs > 1000) {
+            reply(false, 'Не применено: такт должен быть от 10 до 1000 мс.');
+            break;
+          }
+          // Имя, которое программа дала сама («Линия 2» у второй), не храним:
+          // название на экране строится из номера (см. universes.ts).
+          const lines = msg.universes.map((u) => ({ ...u, label: storedUniverseLabel(u) }));
+          let changes: string[];
+          try {
+            changes = engine.applyConfig(lines, tickMs);
+          } catch (err) {
+            // Движок ничего не поменял: выходы новой конфигурации открываются
+            // до любых изменений (см. Engine.applyConfig).
+            reply(false, `Не применено: ${err instanceof Error ? err.message : String(err)}`);
+            break;
+          }
           // Калибровка и Modbus-насосы индексируются по вселенным — переиндексировать.
           engine.setProject(store.project);
-          persistConfig(projects, tickMs, msg.universes);
+          persistConfig(projects, tickMs, lines);
+          reply(true, changes.length > 0 ? 'Применено и сохранено, воспроизведение продолжается.' : 'Изменений нет.', changes);
           // hello повторно: UI обновит список вселенных и tickMs без переподключения.
           broadcast({
             type: 'hello',
@@ -578,7 +597,14 @@ export function startServer(
               // Архив мог прийти откуда угодно — линии применяем только целые.
               const ok = linesUsable(universes) && Number.isFinite(tickMs) && tickMs >= 10 && tickMs <= 1000;
               if (ok) {
-                engine.applyConfig(universes, tickMs);
+                // Импорт заменяет объект целиком: играть старое шоу на новых
+                // вселенных нельзя. Раньше это делал сам applyConfig, теперь он
+                // воспроизведение сохраняет — поэтому останавливаем явно.
+                engine.stopAllPlayback();
+                engine.applyConfig(
+                  universes.map((u) => ({ ...u, label: storedUniverseLabel(u) })),
+                  tickMs,
+                );
                 persistConfig(projects, tickMs, universes);
                 linesApplied = universes.length;
               }
@@ -601,7 +627,7 @@ export function startServer(
                 type: 'importResult',
                 ok: true,
                 message: `Импортирован проект «${project.name}»`
-                  + (linesApplied > 0 ? `, линий DMX: ${linesApplied}` : ''),
+                  + (linesApplied > 0 ? `, вселенных DMX: ${linesApplied}` : ''),
               } satisfies ServerMessage),
             );
           } catch (err) {

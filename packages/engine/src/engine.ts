@@ -1,5 +1,9 @@
 import {
   applyAddressRemap,
+  describeLinesChange,
+  sameOutputs,
+  storedUniverseLabel,
+  universeTitle,
   ANALOG_PATTERNS,
   DEFAULT_PATTERN_SPEED_SEC,
   DMX_UNIVERSE_SIZE,
@@ -152,6 +156,12 @@ export class Engine {
    */
   private paused = false;
   private pauseOffsetMs = 0;
+  /**
+   * С какого момента продолжают идти часы после смены такта. Новый тикер
+   * считает тики с нуля, и без этой основы часы движка прыгнули бы назад, к
+   * нулю, — а по ним идут шаги секвенсоров и позиция шоу.
+   */
+  private timeBaseMs = 0;
   /** Калибровка каналов из патча: universeId → (адрес-1 → min/max). */
   private trims = new Map<number, Map<number, ChannelTrim>>();
   /** Устройства с modbus-конфигом: индекс вселенной в this.universes + адрес-1. */
@@ -255,7 +265,7 @@ export class Engine {
     for (const u of config.universes) {
       this.universes.push({
         id: u.id,
-        label: u.label ?? `Вселенная ${u.id}`,
+        label: universeTitle(u),
         manual: new Uint8Array(DMX_UNIVERSE_SIZE),
         out: new Uint8Array(DMX_UNIVERSE_SIZE),
         wire: new Uint8Array(DMX_UNIVERSE_SIZE),
@@ -323,14 +333,35 @@ export class Engine {
    */
   setFrameMode(mode: FrameMode): void {
     if (mode === this.frameMode) return;
-    const was = this.playback.state(this.nowMs, this.paused);
-    this.playback.dispose();
     this.frameMode = mode;
-    this.playback = this.makePlayback(mode);
+    this.rebuildPlayback();
+    eventLog.log('engine', `подготовка кадров: ${frameModeLabel(mode)} (воспроизведение продолжается)`);
+  }
+
+  /**
+   * Заменить источник воспроизведения, не теряя того, что играет.
+   *
+   * Общий путь для смены режима подготовки кадров и для смены набора
+   * вселенных или такта: и там и там прежний источник устроен под старые
+   * условия, и честнее собрать новый, чем перестраивать живой.
+   *
+   * Последний кадр прежнего источника отдаётся новому (см. seed): иначе
+   * пока новый поток поднимается, воспроизведение проваливалось в 0 на
+   * 50–75 мс, и отсекатели заметно моргали водой.
+   */
+  private rebuildPlayback(): void {
+    const was = this.playback.state(this.nowMs, this.paused);
+    const bridge = new Map<number, Uint8Array>();
+    for (const u of this.universes) {
+      const v = this.playback.levels(u.id);
+      if (v) bridge.set(u.id, Uint8Array.from(v));
+    }
+    this.playback.dispose();
+    this.playback = this.makePlayback(this.frameMode);
+    this.playback.seed(bridge, was);
     if (this.lastProject) this.playback.setProject(this.lastProject);
     this.playback.setPausedAll(this.paused);
     this.restorePlayback(was);
-    eventLog.log('engine', `подготовка кадров: ${frameModeLabel(mode)} (воспроизведение продолжается)`);
   }
 
   /**
@@ -383,22 +414,28 @@ export class Engine {
    * компьютера, слать уже некому — см. failsafe.ts и `npm run engine:watchdog`.
    */
   private sendSafeFrames(): void {
-    for (const u of this.universes) {
-      // Свет может остаться как был — запоминаем кадр ДО обнуления.
-      const before = this.failsafeConfig.lights ? null : Uint8Array.from(u.out);
-      u.out.fill(0);
-      if (before) {
-        const lamps = this.kindGroups.get(u.id)?.get('lamp');
-        if (lamps) for (const g of lamps) for (const i of g) u.out[i] = before[i]!;
-      }
-      u.wire.set(applyAddressRemap(u.out, this.addressRemap[u.id]));
-      for (let n = 0; n < SHUTDOWN_SAFE_FRAMES; n++) {
-        for (const o of u.outputs) {
-          try {
-            o.send(u.wire);
-          } catch {
-            // Порт уже мог отвалиться (интерфейс выдернули) — выход это не срывает.
-          }
+    for (const u of this.universes) this.sendSafeTo(u, u.outputs);
+  }
+
+  /**
+   * Безопасный кадр вселенной — в ОТДЕЛЬНЫЙ буфер. Живые out/wire не трогаем:
+   * при применении настроек на ходу вселенная продолжает играть, и гасить её
+   * кадр ради выхода, который убирают, нельзя.
+   */
+  private sendSafeTo(u: UniverseState, outputs: UniverseOutput[]): void {
+    if (outputs.length === 0) return;
+    const safe = new Uint8Array(DMX_UNIVERSE_SIZE);
+    if (!this.failsafeConfig.lights) {
+      const lamps = this.kindGroups.get(u.id)?.get('lamp');
+      if (lamps) for (const g of lamps) for (const i of g) safe[i] = u.out[i]!;
+    }
+    const wire = applyAddressRemap(safe, this.addressRemap[u.id]);
+    for (let n = 0; n < SHUTDOWN_SAFE_FRAMES; n++) {
+      for (const o of outputs) {
+        try {
+          o.send(wire);
+        } catch {
+          // Порт уже мог отвалиться (интерфейс выдернули) — выход это не срывает.
         }
       }
     }
@@ -414,50 +451,116 @@ export class Engine {
   }
 
   /**
-   * Применение новой конфигурации вселенных/тика на лету (вкладка «Настройки»):
-   * воспроизведение останавливается, выходы пересоздаются, тикер перезапускается
-   * с новым шагом. После вызова нужно повторить setProject (калибровка и Modbus-
-   * насосы индексируются по вселенным) — это делает server.ts.
-   * Мониторинг сети (ArtPoll/захват) подхватит новые адреса после перезапуска движка.
+   * Применить новый набор вселенных и такт НА ХОДУ (вкладка «Настройки»).
+   *
+   * Раньше применение останавливало всё воспроизведение и пересоздавало все
+   * выходы. Из-за этого на кнопке висело «применение остановит
+   * воспроизведение», человек её побаивался — и добавленная вселенная так и
+   * оставалась неприменённой: её не было ни на «Потоке», ни в привязке
+   * приборов (заказчик, 22.09.2026). Останавливать при этом незачем.
+   *
+   * Что происходит теперь:
+   *  · вселенная, у которой выходы не изменились, остаётся КАК ЕСТЬ — тот же
+   *    открытый порт, те же ручные уровни, ни одного пропущенного кадра;
+   *  · новой вселенной открываются выходы;
+   *  · выход, который убрали или заменили, сначала получает безопасный кадр
+   *    (см. sendSafeFrames), потом закрывается — иначе убранная вселенная
+   *    навсегда застыла бы на последнем кадре;
+   *  · воспроизведение продолжается: источник пересобирается под новый набор
+   *    с переносом состояния и последнего кадра (см. rebuildPlayback);
+   *  · часы движка не прыгают и при смене такта (см. timeBaseMs).
+   *
+   * Выходы новой конфигурации открываются ДО любых изменений: если какой-то
+   * не создаётся (у Art-Net не задан адрес), бросается ошибка с понятным
+   * текстом, а движок остаётся ровно в прежнем состоянии. Полуприменённая
+   * конфигурация на объекте хуже, чем отказ.
+   *
+   * После вызова нужно повторить setProject (калибровка и Modbus-насосы
+   * индексируются по вселенным) — это делает server.ts.
    */
-  applyConfig(universes: EngineConfig['universes'], tickMs: number): void {
-    this.playback.stopAll();
-    this.ticker.stop();
-    this.sender.stop();
-    this.hasFrame = false;
-    /*
-     * Линии пересоздаются, и какие адреса останутся за бортом новой
-     * конфигурации — заранее неизвестно. Всё, что уходило со старых выходов,
-     * гасим, иначе убранная из настроек линия навсегда застынет на последнем
-     * кадре: слать в неё больше нечем, а вода там продолжит идти.
-     */
-    this.sendSafeFrames();
-    for (const u of this.universes) for (const o of u.outputs) o.close();
-    this.universes.length = 0;
-    for (const u of universes) {
-      this.universes.push({
-        id: u.id,
-        label: u.label ?? `Вселенная ${u.id}`,
-        manual: new Uint8Array(DMX_UNIVERSE_SIZE),
-        out: new Uint8Array(DMX_UNIVERSE_SIZE),
-        wire: new Uint8Array(DMX_UNIVERSE_SIZE),
-        outputs: u.outputs.map(createOutput),
-      });
+  applyConfig(universes: EngineConfig['universes'], tickMs: number): string[] {
+    const before = { tickMs: this.config.timing.tickMs, universes: this.config.universes };
+    const oldCfg = new Map(this.config.universes.map((u) => [u.id, u]));
+    const oldState = new Map(this.universes.map((u) => [u.id, u]));
+
+    // 1. Всё новое создаётся заранее; не вышло — ничего не трогали.
+    const opened: UniverseOutput[] = [];
+    const next: UniverseState[] = [];
+    try {
+      for (const nu of universes) {
+        const label = universeTitle(nu);
+        const was = oldState.get(nu.id);
+        const wasCfg = oldCfg.get(nu.id);
+        if (was && wasCfg && sameOutputs(wasCfg.outputs, nu.outputs)) {
+          next.push({ ...was, label });
+          continue;
+        }
+        const outputs: UniverseOutput[] = [];
+        for (const o of nu.outputs) {
+          try {
+            outputs.push(createOutput(o));
+          } catch (err) {
+            throw new Error(`${label}: ${err instanceof Error ? err.message : String(err)}`);
+          }
+          opened.push(outputs[outputs.length - 1]!);
+        }
+        next.push({
+          id: nu.id,
+          label,
+          // Ручные уровни живут, пока жива вселенная: сменили ей выход — фейдеры
+          // на пульте остаются там, где их оставили.
+          manual: was?.manual ?? new Uint8Array(DMX_UNIVERSE_SIZE),
+          out: was?.out ?? new Uint8Array(DMX_UNIVERSE_SIZE),
+          wire: was?.wire ?? new Uint8Array(DMX_UNIVERSE_SIZE),
+          outputs,
+        });
+      }
+    } catch (err) {
+      for (const o of opened) o.close();
+      throw err;
     }
+
+    // 2. Убранные и заменённые выходы: безопасный кадр, потом закрыть.
+    const kept = new Set(next.flatMap((u) => u.outputs));
+    for (const u of this.universes) {
+      const retiring = u.outputs.filter((o) => !kept.has(o));
+      this.sendSafeTo(u, retiring);
+      for (const o of retiring) o.close();
+    }
+
+    // 3. Подменить набор. Такт идёт в том же потоке и между вызовами, поэтому
+    //    посередине кадра он смену не увидит.
+    const setChanged =
+      next.length !== this.universes.length || next.some((u, i) => u.id !== this.universes[i]!.id);
+    this.universes.length = 0;
+    this.universes.push(...next);
     this.config.universes = universes;
-    this.config.timing.tickMs = tickMs;
-    this.playback.setUniverses(this.universes.map((u) => u.id));
-    this.pattern = 'off';
-    this.nowMs = 0;
-    this.paused = false;
-    this.pauseOffsetMs = 0;
-    this.ticker = new Ticker(tickMs, this.config.timing.spinMs, (n) => this.tick(n));
-    this.sender = new Ticker(tickMs, this.config.timing.spinMs, () => this.sendFrames());
-    this.ticker.start();
-    this.sender.start();
-    console.log(
-      `[engine] конфигурация применена: тик ${tickMs} мс, вселенных: ${this.universes.length}`,
+
+    // 4. Такт. Счётчик тиков у нового тикера начнётся с нуля, а часы движка
+    //    (nowMs) должны идти дальше: по ним считаются шаги секвенсоров и
+    //    позиция шоу. Для этого фиксируем, откуда продолжать.
+    const tickChanged = tickMs !== this.config.timing.tickMs;
+    if (tickChanged) {
+      this.ticker.stop();
+      this.sender.stop();
+      this.timeBaseMs = this.nowMs + this.pauseOffsetMs;
+      this.config.timing.tickMs = tickMs;
+      this.ticker = new Ticker(tickMs, this.config.timing.spinMs, (n) => this.tick(n));
+      this.sender = new Ticker(tickMs, this.config.timing.spinMs, () => this.sendFrames());
+      this.ticker.start();
+      this.sender.start();
+    }
+
+    // 5. Источник воспроизведения устроен под набор вселенных и под такт —
+    //    при их смене пересобираем, перенося то, что играет.
+    if (setChanged || tickChanged) this.rebuildPlayback();
+
+    const changes = describeLinesChange(before, { tickMs, universes });
+    eventLog.log(
+      'engine',
+      changes.length > 0 ? `вселенные: ${changes.join('; ')} (воспроизведение продолжается)` : 'вселенные: без изменений',
     );
+    return changes;
   }
 
   /**
@@ -481,7 +584,7 @@ export class Engine {
 
   private tick(n: number): void {
     if (this.paused) this.pauseOffsetMs += this.config.timing.tickMs;
-    this.nowMs = n * this.config.timing.tickMs - this.pauseOffsetMs;
+    this.nowMs = this.timeBaseMs + n * this.config.timing.tickMs - this.pauseOffsetMs;
     const tSec = this.nowMs / 1000;
     this.playback.tick(this.nowMs);
     // Ветер двигаем до расчёта кадра: ограничение внизу должно считаться по
@@ -1108,10 +1211,16 @@ export class Engine {
     return this.kindGroups.get(universeId)?.get(this.patternScope) ?? [];
   }
 
+  /**
+   * Для редактора — СВОЁ имя вселенной, как оно задано в настройках, а не
+   * готовое «Вселенная 2 · …»: название на экране строит universeTitle, и
+   * отдай мы уже собранное, получилось бы «Вселенная 2 · Вселенная 2 · …».
+   */
   universeInfos(): UniverseInfo[] {
+    const cfg = new Map(this.config.universes.map((c) => [c.id, c]));
     return this.universes.map((u) => ({
       id: u.id,
-      label: u.label,
+      label: storedUniverseLabel({ id: u.id, label: cfg.get(u.id)?.label }),
       outputs: u.outputs.map((o) => o.describe()),
     }));
   }
@@ -1139,7 +1248,7 @@ export class Engine {
 function createOutput(cfg: OutputConfig): UniverseOutput {
   switch (cfg.type) {
     case 'artnet': {
-      if (!cfg.host) throw new Error('artnet: не указан host (IP ноды или broadcast-адрес)');
+      if (!cfg.host) throw new Error('Art-Net: не указан IP-адрес узла — впишите его в столбец «Адрес»');
       return new ArtNetOutput({
         host: cfg.host,
         port: cfg.port,
@@ -1155,11 +1264,11 @@ function createOutput(cfg: OutputConfig): UniverseOutput {
         port: cfg.port,
       });
     case 'usb-dmx': {
-      if (!cfg.path) throw new Error('usb-dmx: не указан path (COM-порт адаптера)');
+      if (!cfg.path) throw new Error('ENTTEC PRO: не указан COM-порт адаптера — впишите его в столбец «Адрес»');
       return new UsbDmxOutput({ path: cfg.path, baudRate: cfg.baudRate });
     }
     case 'open-dmx': {
-      if (!cfg.path) throw new Error('open-dmx: не указан path (COM-порт адаптера)');
+      if (!cfg.path) throw new Error('Open DMX: не указан COM-порт адаптера — впишите его в столбец «Адрес»');
       return new OpenDmxOutput({ path: cfg.path, baudRate: cfg.baudRate });
     }
     case 'musidora':

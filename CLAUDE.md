@@ -58,6 +58,7 @@ npm -w @fountain-studio/engine run wind-test         # ветер: порог, �
 npm -w @fountain-studio/engine run worker-test       # расчёт в отдельном потоке
 npm -w @fountain-studio/engine run telegram-test     # уведомления
 npm -w @fountain-studio/engine run audio-test         # звук: громкость, вырезки монтажа
+npm -w @fountain-studio/engine run lines-test         # вселенные и такт на ходу, без провала значений
 ```
 
 Визуальные правки (3D, вёрстка) проверяются **своими скриншотами**, а не «по

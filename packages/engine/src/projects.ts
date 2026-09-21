@@ -116,7 +116,8 @@ export function defaultLines(): ProjectLines {
   return {
     tickMs: 50,
     universes: [
-      { id: 1, label: 'Линия 1', outputs: [{ type: 'musidora', universe: 0, path: '', musidoraOut: 1 }] },
+      // Имени нет: на экране это «Вселенная 1» (см. shared/universes.ts).
+      { id: 1, label: '', outputs: [{ type: 'musidora', universe: 0, path: '', musidoraOut: 1 }] },
     ],
     backup: { enabled: true, intervalMin: 10 },
   };

@@ -19,6 +19,7 @@ export * from './search';
 export * from './sequencegroup';
 export * from './show';
 export * from './smoothing';
+export * from './universes';
 export * from './utilitylight';
 export * from './vfdpresets';
 export * from './videoanalysis';

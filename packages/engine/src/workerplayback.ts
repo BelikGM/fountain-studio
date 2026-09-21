@@ -385,6 +385,16 @@ export class WorkerPlayback implements PlaybackSource {
     return true;
   }
 
+  seed(levels: ReadonlyMap<number, Uint8Array>, state: PlaybackState): void {
+    for (const id of this.universeIds) {
+      const v = levels.get(id);
+      // Копия: прежний источник свой буфер ещё может переписать или отдать.
+      if (v && !this.lastGood.has(id)) this.lastGood.set(id, Uint8Array.from(v));
+    }
+    // Своё состояние поток пришлёт через миллисекунды и перезапишет это.
+    if (!this.cachedState) this.cachedState = state;
+  }
+
   levels(universeId: number): Uint8Array | undefined {
     // Заглушка после «стоп»: вниз главный поток может немедленно, не дожидаясь,
     // пока кончится посчитанный запас.
