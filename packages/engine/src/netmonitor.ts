@@ -95,31 +95,67 @@ export class NetworkMonitor {
     this.onChange?.();
   }
 
+  /**
+   * Запустить опрос. Повторный вызов перезапускает, а не заводит второй сокет.
+   *
+   * Грабля, из-за которой так сделано (найдена 22.09.2026 сквозной
+   * проверкой): при «Применить» в настройках configure() уже перезапускал
+   * опрос, а следом configureNet() звал start() ещё раз. Второй сокет
+   * затирал ссылку на первый, и когда первый заканчивал привязку, его
+   * обработчик звал setBroadcast у ВТОРОГО, ещё не привязанного, —
+   * исключение вне try, и движок падал. На объекте с Art-Net это значило:
+   * нажал «Применить» посреди шоу — фонтан встал.
+   *
+   * Поэтому: start() сначала гасит прежний опрос, а обработчики работают
+   * только со СВОИМ сокетом и молчат, если он уже не текущий.
+   */
   start(): void {
-    this.socket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
-    this.socket.on('error', (e) => console.error('[net] ошибка сокета:', e.message));
-    this.socket.on('message', (msg, rinfo) => this.parse(msg, rinfo.address));
-    this.socket.bind(0, () => {
-      this.socket?.setBroadcast(true);
+    if (this.socket || this.listenSocket || this.timer) this.stopSockets();
+    const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+    this.socket = sock;
+    sock.on('error', (e) => console.error('[net] ошибка сокета:', e.message));
+    sock.on('message', (msg, rinfo) => this.parse(msg, rinfo.address));
+    sock.bind(0, () => {
+      if (this.socket !== sock) return; // пока привязывались, опрос перезапустили
+      try {
+        sock.setBroadcast(true);
+      } catch (e) {
+        console.error('[net] не удалось включить широковещание:', e instanceof Error ? e.message : e);
+      }
       this.poll();
     });
     // Порт 6454 — для нод, отвечающих broadcast'ом; занят (например, монитором) — не страшно.
-    this.listenSocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
-    this.listenSocket.on('error', () => {
-      this.listenSocket?.close();
-      this.listenSocket = null;
+    const listen = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+    this.listenSocket = listen;
+    listen.on('error', () => {
+      listen.close();
+      if (this.listenSocket === listen) this.listenSocket = null;
     });
-    this.listenSocket.on('message', (msg, rinfo) => this.parse(msg, rinfo.address));
-    this.listenSocket.bind(this.opts.port);
+    listen.on('message', (msg, rinfo) => this.parse(msg, rinfo.address));
+    listen.bind(this.opts.port);
     this.timer = setInterval(() => this.poll(), this.opts.pollMs);
   }
 
-  stop(): void {
+  /** Закрыть сокеты и таймер, не трогая ожидающие ответы RDM. */
+  private stopSockets(): void {
     if (this.timer) clearInterval(this.timer);
-    this.socket?.close();
-    this.listenSocket?.close();
+    this.timer = null;
+    try {
+      this.socket?.close();
+    } catch {
+      // уже закрыт
+    }
+    try {
+      this.listenSocket?.close();
+    } catch {
+      // уже закрыт
+    }
     this.socket = null;
     this.listenSocket = null;
+  }
+
+  stop(): void {
+    this.stopSockets();
     for (const p of this.pendingRdm.values()) {
       clearTimeout(p.timer);
       p.reject(new Error('монитор сети остановлен'));
