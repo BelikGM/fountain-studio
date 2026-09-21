@@ -71,6 +71,10 @@ export interface EngineConfigState {
   frameMode: FrameMode;
   /** Что реально работает: отличается, если поток не поднялся. */
   frameModeActive: FrameMode;
+  /** Громкость вечерней программы, 0…100 %. */
+  audioVolume: number;
+  /** Нашёлся ли проигрыватель: без него вечерняя программа идёт в тишине. */
+  audioReady: boolean;
 }
 
 export interface RemoteStatus {
@@ -275,6 +279,8 @@ export function useEngine(): EngineConnection {
               universes: msg.universes,
               frameMode: msg.frameMode,
               frameModeActive: msg.frameModeActive,
+              audioVolume: msg.audioVolume,
+              audioReady: msg.audioReady,
             });
             break;
           case 'stats':

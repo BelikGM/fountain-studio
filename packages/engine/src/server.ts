@@ -25,6 +25,7 @@ import { refreshRevocationList } from './licenseRevocation';
 import type { MqttController } from './mqttcontroller';
 import type { NetworkMonitor } from './netmonitor';
 import type { OscServer } from './oscserver';
+import type { AudioPlayer } from './audioplayer';
 import type { ProjectStore } from './project';
 import { linesUsable, peekProjectName, resolveProjectDir, type ProjectsApi } from './projects';
 import { scanUsbDmx } from './usbscan';
@@ -68,6 +69,7 @@ export function startServer(
   mqtt?: MqttController,
   telegram?: TelegramNotifier,
   projects?: ProjectsApi,
+  player?: AudioPlayer,
 ): WebSocketServer {
   const port = engine.config.server.port;
   const wss = new WebSocketServer({ port });
@@ -115,6 +117,8 @@ export function startServer(
     universes: engine.config.universes as ConfigUniverse[],
     frameMode: engine.frameModeChosen(),
     frameModeActive: engine.frameModeActive(),
+    audioVolume: engine.config.audio.volume,
+    audioReady: player?.ready() ?? false,
   });
   const broadcastNetwork = (): void => {
     if (net) broadcast({ type: 'network', state: net.state() });
@@ -447,6 +451,19 @@ export function startServer(
         case 'rdmRequest':
           void handleRdmRequest(net, msg, ws);
           break;
+        case 'setAudioVolume': {
+          const v = Math.round(Number(msg.volume));
+          if (!Number.isFinite(v) || v < 0 || v > 100) {
+            console.error('[server] setAudioVolume отклонён: громкость вне 0…100', msg.volume);
+            break;
+          }
+          engine.config.audio = { ...engine.config.audio, volume: v };
+          player?.setConfig(engine.config.audio);
+          // Настройка ПРОГРАММЫ: про усилитель на объекте, а не про шоу.
+          saveAppConfigPatch(engine.config.configFile ?? '', { audio: engine.config.audio });
+          broadcast(configMessage());
+          break;
+        }
         case 'setFrameMode': {
           if (!FRAME_MODES.some((m) => m.id === msg.mode)) {
             console.error('[server] setFrameMode отклонён: неизвестный режим', msg.mode);

@@ -51,6 +51,15 @@ export interface EngineConfig {
     /** auto — ffplay, если найден; none — без звука. */
     player: 'auto' | 'ffplay' | 'none';
     ffplayPath: string;
+    /**
+     * Громкость вечерней программы, 0…100 %.
+     *
+     * Зачем в настройках ПРОГРАММЫ, а не в проекте: это свойство объекта, а не
+     * шоу. На одном фонтане усилитель выкручен, на другом колонки под окнами
+     * жилого дома и громче 40 % нельзя. Переносить проект между объектами с
+     * чужой громкостью — заведомо неверно.
+     */
+    volume: number;
   };
   universes: UniverseConfig[];
   /** Авто-бэкапы проекта (§27 доработки, УХ п.5) — именованные снимки по расписанию. */
@@ -118,7 +127,7 @@ export interface EngineConfig {
 const DEFAULTS: EngineConfig = {
   server: { port: 9520 },
   timing: { tickMs: 50, spinMs: 10, uiFrameMs: 100 },
-  audio: { player: 'auto', ffplayPath: 'ffplay' },
+  audio: { player: 'auto', ffplayPath: 'ffplay', volume: 100 },
   universes: [],
   backup: { enabled: true, intervalMin: 10 },
 };
@@ -143,7 +152,7 @@ export function loadAppConfig(appDataDir: string): EngineConfig & { configFile: 
   return {
     server: { ...DEFAULTS.server, ...raw.server },
     timing: { ...DEFAULTS.timing, ...raw.timing },
-    audio: { ...DEFAULTS.audio, ...raw.audio },
+    audio: sanitizeAudio(raw.audio),
     universes: [],
     backup: { ...DEFAULTS.backup, ...raw.backup },
     configFile: file,
@@ -156,6 +165,13 @@ export function loadAppConfig(appDataDir: string): EngineConfig & { configFile: 
       ? { playbackLookaheadMs: Math.max(0, Math.min(2000, Math.round(raw.playbackLookaheadMs))) }
       : {}),
   };
+}
+
+/** Громкость приходит из интерфейса и из файла — обрезаем в 0…100 и округляем. */
+export function sanitizeAudio(raw: Partial<EngineConfig['audio']> | undefined): EngineConfig['audio'] {
+  const a = { ...DEFAULTS.audio, ...raw };
+  const v = Math.round(Number(a.volume));
+  return { ...a, volume: Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : DEFAULTS.audio.volume };
 }
 
 /**
@@ -193,7 +209,7 @@ export function loadConfig(argv: string[]): EngineConfig & { configFile: string 
   const config: EngineConfig & { configFile: string } = {
     server: { ...DEFAULTS.server, ...raw.server },
     timing: { ...DEFAULTS.timing, ...raw.timing },
-    audio: { ...DEFAULTS.audio, ...raw.audio },
+    audio: sanitizeAudio(raw.audio),
     universes: raw.universes ?? [],
     backup: { ...DEFAULTS.backup, ...raw.backup },
     configFile: file,

@@ -57,6 +57,7 @@ npm -w @fountain-studio/engine run eventlog-test     # журнал на дис�
 npm -w @fountain-studio/engine run wind-test         # ветер: порог, выдержки, борт чаши
 npm -w @fountain-studio/engine run worker-test       # расчёт в отдельном потоке
 npm -w @fountain-studio/engine run telegram-test     # уведомления
+npm -w @fountain-studio/engine run audio-test         # звук: громкость, вырезки монтажа
 ```
 
 Визуальные правки (3D, вёрстка) проверяются **своими скриншотами**, а не «по

@@ -256,7 +256,7 @@ const projects: ProjectsApi = {
   forget: (dir: string) => forgetRecent(appDataDir, dir),
 };
 
-startServer(engine, store, audio, backups, net, capture, osc, mqtt, telegram, projects);
+startServer(engine, store, audio, backups, net, capture, osc, mqtt, telegram, projects, player);
 
 const scheduler = new Scheduler(engine, () => store.project.schedule);
 scheduler.start();

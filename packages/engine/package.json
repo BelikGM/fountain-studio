@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "smoke": "tsx src/tools/playback-smoke.ts",
     "musidora-test": "tsx src/tools/musidora-selftest.ts",
+    "audio-test": "tsx src/tools/audio-selftest.ts",
     "failsafe-test": "tsx src/tools/failsafe-selftest.ts",
     "eventlog-test": "tsx src/tools/eventlog-selftest.ts",
     "worker-test": "tsx src/tools/worker-selftest.ts",

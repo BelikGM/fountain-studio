@@ -869,6 +869,85 @@ function FailsafePanel({ engine }: { engine: EngineConnection }) {
  * миллисекунд она не даёт ничего (разбор — в `framemode.ts`). Свободное поле
  * приглашало бы искать там, где искать нечего.
  */
+/**
+ * Звук вечерней программы: громкость и видно ли, чем играть.
+ *
+ * Зачем отдельной панелью в настройках, а не в файле: на объекте программой
+ * пользуется не тот, кто её ставил. Правка fountain.config.json руками —
+ * не вариант, а громкость подкручивают на месте, по живому звуку из колонок.
+ *
+ * Это настройка ПРОГРАММЫ, не объекта: усилитель и колонки принадлежат месту,
+ * а не шоу, и при переносе проекта чужая громкость приехать не должна.
+ */
+function AudioPanel({ engine }: { engine: EngineConnection }) {
+  const { engineConfig, send } = engine;
+  /*
+   * Пока тянут ползунок, показываем своё значение: ответ движка приходит
+   * через сеть и рывками возвращал бы ручку назад.
+   */
+  const [local, setLocal] = useState<number | null>(null);
+  if (!engineConfig) return null;
+  const volume = local ?? engineConfig.audioVolume;
+
+  const commit = (v: number): void => {
+    const clamped = Math.min(100, Math.max(0, Math.round(v)));
+    setLocal(clamped);
+    send({ type: 'setAudioVolume', volume: clamped });
+  };
+
+  return (
+    <section className="panel">
+      <h2>Звук вечерней программы</h2>
+      <p className="dim">
+        Громкость трека, который движок играет сам — по расписанию и в плейлистах, когда редактор
+        закрыт. Меняется с ближайшего следующего трека: обрывать уже идущий ради громкости нельзя,
+        вода уйдёт из-под музыки.
+      </p>
+      <div className="form-row">
+        <label className="field">
+          Громкость:{' '}
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={5}
+            value={volume}
+            onChange={(e) => setLocal(Number(e.target.value))}
+            onMouseUp={(e) => commit(Number((e.target as HTMLInputElement).value))}
+            onKeyUp={(e) => commit(Number((e.target as HTMLInputElement).value))}
+            onTouchEnd={(e) => commit(Number((e.target as HTMLInputElement).value))}
+          />
+        </label>
+        <label className="field">
+          <input
+            className="input input-num"
+            type="number"
+            min={0}
+            max={100}
+            value={volume}
+            onChange={(e) => commit(Number(e.target.value))}
+          />{' '}
+          %
+        </label>
+        <span className="dim" data-hint="100 % — исходный уровень файла. Громче не делаем: усиление выше исходного даёт хрип в колонках.">
+          100 % = как в файле
+        </span>
+      </div>
+      {volume === 0 && (
+        <p className="warn">Громкость 0 — вечерняя программа отыграет в тишине, вода и свет при этом работают.</p>
+      )}
+      {engineConfig.audioReady ? (
+        <p className="dim">✔ Проигрыватель найден — звук будет.</p>
+      ) : (
+        <p className="error-text">
+          Проигрывателя нет: движку нечем открыть аудиофайл, и вечерняя программа отыграет в тишине —
+          вода и свет при этом работают. Лечится установкой ffmpeg: в командной строке{" "}
+          <code>winget install Gyan.FFmpeg</code>, потом перезапустить программу.
+        </p>
+      )}
+    </section>
+  );
+}
 function FrameModePanel({ engine }: { engine: EngineConnection }) {
   const { engineConfig, send } = engine;
   /**
@@ -1693,6 +1772,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
       </section>
 
       <FrameModePanel engine={engine} />
+      <AudioPanel engine={engine} />
 
       <p className="dim">
         Это настройка программы, а не объекта: при переключении объектов она не меняется и

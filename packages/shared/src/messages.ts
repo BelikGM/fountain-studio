@@ -465,6 +465,12 @@ export type ClientMessage =
    * потока не переносится, и угадывать середину шоу нельзя.
    */
   | { type: 'setFrameMode'; mode: FrameMode }
+  /**
+   * Громкость вечерней программы, 0…100 %. Настройка ПРОГРАММЫ, не объекта:
+   * она про усилитель и колонки на месте, а не про шоу. Уже играющий трек не
+   * трогает — подхватит следующий.
+   */
+  | { type: 'setAudioVolume'; volume: number }
   // Авто-бэкапы проекта (§27 доработки, УХ п.5) — отдельно от updateConfig: смена
   // интервала не трогает воспроизведение.
   | { type: 'updateBackupConfig'; enabled: boolean; intervalMin: number }
@@ -535,6 +541,13 @@ export type ServerMessage =
        * поднялся и движок сам перешёл на расчёт в главном потоке.
        */
       frameModeActive: FrameMode;
+      /** Громкость вечерней программы, 0…100 %. */
+      audioVolume: number;
+      /**
+       * Нашёлся ли ffplay. Без него вода и свет играют, а звука нет —
+       * человеку это надо видеть до вечера, а не выяснять по тишине.
+       */
+      audioReady: boolean;
     }
   | { type: 'stats'; stats: EngineStats }
   /**
