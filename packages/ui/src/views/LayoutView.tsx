@@ -1464,12 +1464,18 @@ function DeviceSelect({
   const options = project.devices
     .filter((d) => profiles.get(d.profileId)?.kind === kind)
     .sort((a, b) => a.universe - b.universe || a.address - b.address);
+  /*
+   * «U1:5» было записью для своих. Пишем словами, а номер вселенной — только
+   * когда их больше одной: на объекте с одной вселенной он ничего не говорит и
+   * лишь съедает ширину списка.
+   */
+  const manyUniverses = new Set(project.devices.map((d) => d.universe)).size > 1;
   return (
     <select className="input" value={value ?? ''} onChange={(e) => onChange(e.target.value === '' ? null : e.target.value)}>
       <option value="">— не привязан</option>
       {options.map((d) => (
         <option key={d.id} value={d.id}>
-          {d.name} (U{d.universe}:{d.address})
+          {d.name} ({manyUniverses ? `вселенная ${d.universe}, ` : ''}адрес {d.address})
         </option>
       ))}
     </select>

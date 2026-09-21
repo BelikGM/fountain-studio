@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { DMX_UNIVERSE_SIZE, profileMap, type Project } from '@fountain-studio/shared';
+import { DMX_UNIVERSE_SIZE, profileMap, type Project,
+  universeShort,
+  universeTitle,
+} from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
 
 /**
@@ -143,9 +146,10 @@ export function StreamView({ engine }: { engine: EngineConnection }) {
             <button
               key={u.id}
               className={u.id === universe ? 'btn btn-small state-on' : 'btn btn-small'}
+              data-hint={[universeTitle(u), ...u.outputs].join('\n')}
               onClick={() => setUniverse(u.id)}
             >
-              {u.id}
+              {universeShort(u)}
             </button>
           ))}
           <button

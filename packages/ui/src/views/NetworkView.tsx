@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import { DMX_UNIVERSE_SIZE, type ClientMessage, type NetworkState, type RdmAction, type RdmSensorReading } from '@fountain-studio/shared';
+import { DMX_UNIVERSE_SIZE, type ClientMessage, type NetworkState, type RdmAction, type RdmSensorReading,
+  universeTitle,
+} from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
 
 /**
@@ -239,9 +241,10 @@ function DmxStreamPanel({ engine, hasInputCapture }: { engine: EngineConnection;
             <button
               key={u.id}
               className={u.id === universeId ? 'btn btn-small active' : 'btn btn-small'}
+              data-hint={u.outputs.join('\n')}
               onClick={() => setUniverseId(u.id)}
             >
-              {u.label}
+              {universeTitle(u)}
             </button>
           ))}
         </div>

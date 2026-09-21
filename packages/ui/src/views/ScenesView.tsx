@@ -20,6 +20,7 @@ import {
   type Scene,
   type Sequence,
   type WaveSceneOptions,
+  universeShort,
 } from '@fountain-studio/shared';
 import { ListFilter } from '../components/ListFilter';
 import { PencilIcon, PlayIcon, StopIcon, TrashIcon } from '../components/Icons';
@@ -434,7 +435,7 @@ function GeneratorPanel({
       setCaptureStatus('В патче нет устройств этой вселенной — значения снимать некуда.');
       return;
     }
-    const scene: Scene = { id: uid(), name: `С линии (всел. ${captureUniverse})`, values };
+    const scene: Scene = { id: uid(), name: `С линии (вселенная ${captureUniverse})`, values };
     updateProject({ ...project, scenes: [...project.scenes, scene] });
     setSelectedId(scene.id);
     setCaptureStatus(
@@ -615,7 +616,7 @@ function GeneratorPanel({
           <select value={captureUniverse} onChange={(e) => setCaptureUniverse(Number(e.target.value))}>
             {engine.universes.map((u) => (
               <option key={u.id} value={u.id}>
-                {u.label}
+                {universeShort(u)}
               </option>
             ))}
           </select>
@@ -698,7 +699,7 @@ function AddressPages({
           <select value={universeId} onChange={(e) => setUniverseId(Number(e.target.value))}>
             {universes.map((u) => (
               <option key={u.id} value={u.id}>
-                {u.label}
+                {universeShort(u)}
               </option>
             ))}
           </select>

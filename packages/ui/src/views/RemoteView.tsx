@@ -1,4 +1,4 @@
-import { uid, type DmxTrigger, type MqttBinding, type OscBinding, type RemoteAction } from '@fountain-studio/shared';
+import { uid, type DmxTrigger, type MqttBinding, type OscBinding, type RemoteAction, universeShort } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
 
 const ACTION_LABEL: Record<RemoteAction['type'], string> = {
@@ -314,7 +314,7 @@ function DmxTriggerPanel({
                 >
                   {universes.map((u) => (
                     <option key={u.id} value={u.id}>
-                      {u.label}
+                      {universeShort(u)}
                     </option>
                   ))}
                 </select>

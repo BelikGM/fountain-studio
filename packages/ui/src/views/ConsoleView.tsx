@@ -10,6 +10,7 @@ import {
   type DeviceProfile,
   type TestPatternMode,
   type TestPatternScope,
+  universeTitle,
 } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
 import { Fader } from '../components/Fader';
@@ -223,7 +224,7 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
               data-hint={u.outputs.join('\n')}
               onClick={() => setUniverseId(u.id)}
             >
-              {u.label}
+              {universeTitle(u)}
             </button>
           ))}
         </div>

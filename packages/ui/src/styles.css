@@ -1270,6 +1270,8 @@ h2.panel-head-search {
 
 .dim { color: var(--fg-dim); }
 .error-text { color: var(--danger-text); font-size: 12px; margin-left: 8px; }
+/* Поле с заведомо неверным значением (прибор на незаведённой вселенной). */
+.input-error { border-color: var(--danger) !important; color: var(--danger-text); }
 
 .badge {
   font-size: 10px;
@@ -1614,6 +1616,14 @@ h2.panel-head-search {
 .content-show { overflow-y: auto; }
 .spacer { flex: 1; }
 .warn { color: var(--warn); font-size: 12px; }
+
+/* Применение вселенных — прямо под таблицей. Пока есть неприменённая правка,
+   блок выделен рамкой: кнопку «Применить» нельзя не заметить (раньше её не
+   нашли — она стояла ниже трёх других панелей). */
+.lines-apply { margin-top: 12px; padding: 10px 12px; border: 1px solid transparent; border-radius: 6px; }
+.lines-apply-dirty { border-color: var(--warn); background: var(--warn-bg); }
+.lines-apply .warn, .lines-apply .error-text { margin: 6px 0 0; font-size: 13px; }
+.lines-apply-dirty .warn { color: var(--warn-text); }
 .ok-text { color: var(--ok); font-weight: 600; }
 
 /* ── Настройки: состояние USB-DMX (драйвер FTDI, интерфейсы Musidora) ── */

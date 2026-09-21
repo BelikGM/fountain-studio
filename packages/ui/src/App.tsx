@@ -9,6 +9,7 @@ import { KeysView, keyLabel } from './views/KeysView';
 import { ConsoleView } from './views/ConsoleView';
 import { ConfirmHost } from './components/ConfirmDialog';
 import { HintHost } from './hints';
+import { LinesDraftBanner } from './components/LinesDraftBanner';
 import { TourOverlay, type TourStepDef } from './components/TourOverlay';
 import { HelpView } from './views/HelpView';
 import { LicenseView } from './views/LicenseView';
@@ -81,7 +82,7 @@ const TABS: { id: Tab; label: string; full: string }[] = [
   { id: 'network', label: 'Диагностика', full: 'Диагностика — исправность оборудования: живы ли ноды и приборы на линии' },
   { id: 'remote', label: 'Внешние пульты', full: 'Внешние пульты — планшет (OSC/TouchOSC) и умный дом (MQTT)' },
   { id: 'keys', label: 'Клавиатура', full: 'Клавиатура — запуск сцен/шоу нажатием клавиш компьютера' },
-  { id: 'settings', label: 'Настройки', full: 'Настройки — DMX-линии (вселенные) и частота обновления' },
+  { id: 'settings', label: 'Настройки', full: 'Настройки — вселенные DMX и такт отправки, звук, уведомления, резервные копии' },
 ];
 
 /**
@@ -485,6 +486,14 @@ export function App() {
             Скрыть
           </button>
         </div>
+      )}
+      {/*
+        Неприменённые правки вселенных видны на любой вкладке: иначе человек
+        добавляет вселенную, уходит на «Поток» — и не находит её (см.
+        LinesDraftBanner). На самих «Настройках» то же стоит под таблицей.
+      */}
+      {effectiveTab !== 'settings' && (
+        <LinesDraftBanner engine={engine} onOpenSettings={() => setTab('settings')} />
       )}
       {helpOpen && <HelpView onClose={() => setHelpOpen(false)} />}
       {licenseOpen && <LicenseView engine={engine} onClose={() => setLicenseOpen(false)} />}

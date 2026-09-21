@@ -1,5 +1,8 @@
 import { useState } from 'react';
-import { allProfiles, profileMap, type PatchedDevice, type Project } from '@fountain-studio/shared';
+import { allProfiles, profileMap, type PatchedDevice, type Project,
+  universeShort,
+  universeTitle,
+} from '@fountain-studio/shared';
 import { askConfirm } from './ConfirmDialog';
 
 /**
@@ -106,7 +109,7 @@ export function ReaddressPanel({
   updateProject,
 }: {
   project: Project;
-  universes: { id: number }[];
+  universes: { id: number; label?: string; outputs: string[] }[];
   updateProject: (p: Project) => void;
 }) {
   const [universeId, setUniverseId] = useState(universes[0]?.id ?? 1);
@@ -185,9 +188,10 @@ export function ReaddressPanel({
           <button
             key={u.id}
             className={u.id === universeId ? 'btn btn-small state-on' : 'btn btn-small'}
+            data-hint={[universeTitle(u), ...u.outputs].join('\n')}
             onClick={() => setUniverseId(u.id)}
           >
-            {u.id}
+            {universeShort(u)}
           </button>
         ))}
         <label className="field">

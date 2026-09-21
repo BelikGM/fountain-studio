@@ -29,6 +29,8 @@ import {
   type PatchedDevice,
   type PumpModbusStatus,
   type WizardRow,
+  universeShort,
+  nextUniverse,
 } from '@fountain-studio/shared';
 import { SmartSearch } from '../components/SmartSearch';
 /** Подписи видов оборудования — ими же ищем по типу. */
@@ -42,6 +44,7 @@ import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipbo
 import { askConfirm } from '../components/ConfirmDialog';
 import { confirmDelete } from '../confirmDelete';
 import { requestTab } from '../navigate';
+import { applySettingsDraft, keepSettingsDraft, takeSettingsDraft } from '../settingsDraft';
 import type { EngineConnection } from '../useEngine';
 
 const KIND_LABEL: Record<DeviceKind, string> = {
@@ -204,7 +207,7 @@ function AddDevices({ engine }: { engine: EngineConnection }) {
           <select value={universeId} onChange={(e) => setUniverse(Number(e.target.value))}>
             {universes.map((u) => (
               <option key={u.id} value={u.id}>
-                {u.label}
+                {universeShort(u)}
               </option>
             ))}
           </select>
@@ -276,7 +279,7 @@ function DeviceWizard({ engine }: { engine: EngineConnection }) {
   const profiles = allProfiles(project!);
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<WizardRowState[]>([]);
-  const [result, setResult] = useState<{ added: number; newUniverses: number } | null>(null);
+  const [result, setResult] = useState<{ added: number; newUniverses: number; appliedNow: boolean } | null>(null);
 
   const newRow = (): WizardRowState => ({
     key: uid(),
@@ -314,14 +317,35 @@ function DeviceWizard({ engine }: { engine: EngineConnection }) {
       });
     if (wizardRows.length === 0) return;
 
-    const plan = planDeviceWizard(project, universes.map((u) => u.id), wizardRows);
+    /*
+     * Вселенные считаем от ЧЕРНОВИКА, если он есть: человек мог уже добавить
+     * вселенную в «Настройках» и не применить её — мастер должен её видеть, а
+     * не заводить второй раз под тем же номером.
+     */
+    const draft = takeSettingsDraft();
+    const base = draft ?? { tickMs: engineConfig.tickMs, universes: engineConfig.universes };
+    const plan = planDeviceWizard(project, base.universes.map((u) => u.id), wizardRows);
+    let appliedNow = false;
     if (plan.newUniverseIds.length > 0) {
-      const extra: ConfigUniverse[] = plan.newUniverseIds.map((id) => ({
-        id,
-        label: `Вселенная ${id}`,
-        outputs: [{ type: 'artnet', host: '127.0.0.1', universe: id - 1 }],
-      }));
-      send({ type: 'updateConfig', tickMs: engineConfig.tickMs, universes: [...engineConfig.universes, ...extra] });
+      /*
+       * Новые вселенные — по тому же рецепту, что и «+ Вселенная» в настройках
+       * (nextUniverse): такие же, как последняя. Раньше мастер всегда заводил
+       * Art-Net на 127.0.0.1, то есть в никуда — на объекте с интерфейсом
+       * FountanPlay приборы на новой вселенной молчали.
+       *
+       * И применяются они через тот же черновик, что и правки в «Настройках»:
+       * отказ движка (например, у USB-адаптера не задан порт) виден в плашке на
+       * любой вкладке, а не теряется молча. Если в черновике уже были чужие
+       * неприменённые правки — сами их не применяем, только дописываем: пусть
+       * человек увидит в плашке всё вместе и применит сам.
+       */
+      const all: ConfigUniverse[] = [...base.universes];
+      for (const id of plan.newUniverseIds) all.push(nextUniverse(all, id));
+      keepSettingsDraft({ tickMs: base.tickMs, universes: all });
+      if (!draft) {
+        applySettingsDraft(send, engine.connected);
+        appliedNow = true;
+      }
     }
     const devices: PatchedDevice[] = plan.placements.map((p) => ({
       id: uid(),
@@ -331,7 +355,7 @@ function DeviceWizard({ engine }: { engine: EngineConnection }) {
       address: p.address,
     }));
     updateProject({ ...project, devices: [...project.devices, ...devices] });
-    setResult({ added: devices.length, newUniverses: plan.newUniverseIds.length });
+    setResult({ added: devices.length, newUniverses: plan.newUniverseIds.length, appliedNow });
     setRows([]);
   };
 
@@ -358,7 +382,10 @@ function DeviceWizard({ engine }: { engine: EngineConnection }) {
         <div className="form-row">
           <span className="ok-text">
             ✔ добавлено приборов: {result.added}
-            {result.newUniverses > 0 && ` (создано новых вселенных: ${result.newUniverses})`}
+            {result.newUniverses > 0 &&
+              (result.appliedNow
+                ? ` (новых вселенных: ${result.newUniverses})`
+                : ` (новых вселенных: ${result.newUniverses} — ждут применения вместе с другими правками, см. плашку вверху)`)}
           </span>
           <button className="btn" onClick={() => requestTab('layout')}>
             → Перейти в 3D и расставить кольцом
@@ -419,18 +446,18 @@ function DeviceWizard({ engine }: { engine: EngineConnection }) {
                         />
                         {r.customStart && (
                           <>
-                            {' U'}
+                            {' вселенная '}
                             <select
                               value={r.startUniverse}
                               onChange={(e) => patchRow(r.key, { startUniverse: Number(e.target.value) })}
                             >
                               {universes.map((u) => (
                                 <option key={u.id} value={u.id}>
-                                  {u.id}
+                                  {universeShort(u)}
                                 </option>
                               ))}
                             </select>
-                            {' :'}
+                            {' адрес '}
                             <input
                               className="input input-num"
                               type="number"
@@ -474,6 +501,13 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
   const { project, universes, updateProject } = engine;
   const profiles = useMemo(() => profileMap(project!), [project]);
   const issues = useMemo(() => findPatchIssues(project!), [project]);
+  /*
+   * Вселенные, которые реально работают в движке. Прибор на номере, которого
+   * тут нет, никуда не выводится — такое бывает, если вселенную добавили, но
+   * не применили, или убрали, забыв перенести приборы.
+   */
+  const knownUniverses = useMemo(() => new Set(universes.map((u) => u.id)), [universes]);
+  const orphans = project!.devices.filter((d) => !knownUniverses.has(d.universe)).length;
   /**
    * Сколько элементов 3D-схемы использует каждый прибор. Один и тот же прибор
    * можно осознанно привязать в нескольких местах — например, посадить кольцо
@@ -615,6 +649,11 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
         {issues.outOfRange.size > 0 && (
           <span className="error-text"> ⚠ за пределами 1–512: {issues.outOfRange.size}</span>
         )}
+        {orphans > 0 && (
+          <span className="error-text" data-hint="Эти приборы стоят на вселенной, которой нет в движке, и никуда не выводятся">
+            {' '}⚠ на незаведённой вселенной: {orphans}
+          </span>
+        )}
       </h2>
       {project!.devices.length > 0 && (
         <span className="panel-head-search">
@@ -711,11 +750,25 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                     <td>
                       <select
                         value={d.universe}
+                        className={knownUniverses.has(d.universe) ? undefined : 'input-error'}
+                        data-hint={
+                          knownUniverses.has(d.universe)
+                            ? undefined
+                            : `Вселенной ${d.universe} в движке нет — прибор никуда не выводится. Заведите её в «Настройках» или перенесите прибор на другую.`
+                        }
                         onChange={(e) => patchDevice(d.id, { universe: Number(e.target.value) })}
                       >
+                        {/*
+                          Прибор на вселенной, которой нет, показываем как есть. Иначе
+                          список молча показал бы первую вселенную, и человек думал бы, что
+                          прибор на ней.
+                        */}
+                        {!knownUniverses.has(d.universe) && (
+                          <option value={d.universe}>{d.universe} — не заведена</option>
+                        )}
                         {universes.map((u) => (
                           <option key={u.id} value={u.id}>
-                            {u.label}
+                            {universeShort(u)}
                           </option>
                         ))}
                       </select>

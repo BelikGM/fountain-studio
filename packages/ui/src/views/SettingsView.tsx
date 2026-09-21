@@ -15,10 +15,14 @@ import {
   type UsbDriverProblem,
   FAILSAFE_TIMEOUT_MIN_SEC,
   FAILSAFE_TIMEOUT_MAX_SEC,
+  describeLinesChange,
+  nextUniverse,
+  storedUniverseLabel,
+  universeTitle,
 } from '@fountain-studio/shared';
 import { askConfirm } from '../components/ConfirmDialog';
 import { TOUR_STORAGE_KEY } from '../tour';
-import { clearSettingsDraft, keepSettingsDraft, takeSettingsDraft } from '../settingsDraft';
+import { applySettingsDraft, clearSettingsDraft, keepSettingsDraft, useSettingsDraft } from '../settingsDraft';
 import { setViewPrefs, VIEW_PREF_DEFAULTS, VIEW_PREF_LIMITS, viewPrefs } from '../three/viewPrefs';
 import {
   HOTKEY_DEFS,
@@ -1424,7 +1428,7 @@ function UsbDmxStatus({ scan, universes }: { scan: UsbDmxScan | null; universes:
         return (
           <div className="usb-status-row" key={universe.id}>
             <span className="usb-status-name">
-              {universe.label || `Вселенная ${universe.id}`} → выход {out.musidoraOut ?? 1}
+              {universeTitle(universe)} → выход {out.musidoraOut ?? 1}
             </span>
             {!link ? (
               <span className="warn">не запущено — нажмите «Применить и сохранить»</span>
@@ -1447,35 +1451,81 @@ function UsbDmxStatus({ scan, universes }: { scan: UsbDmxScan | null; universes:
 }
 
 /**
- * Настройки движка: вселенные (DMX-линии) и шаг тика — редактирование
- * fountain.config.json из интерфейса, без текстового редактора. Движок
- * применяет на лету (воспроизведение при этом останавливается) и сохраняет
- * файл сам.
+ * «Применить» — сразу под таблицей вселенных, а не ниже трёх других панелей.
+ *
+ * Раньше кнопка стояла после такта, режима подготовки кадров и звука, да ещё
+ * под абзацем «кнопка „Применить“ ниже к ней не относится». Заказчик добавил
+ * вселенную, не нашёл, чем её применить, — и она не появилась ни на одной
+ * вкладке. Здесь же сказано, ЧТО именно не применено, и итог — словами движка.
+ */
+function LinesApplyBar({
+  dirty,
+  valid,
+  pending,
+  status,
+  message,
+  changes,
+  onApply,
+  onDiscard,
+}: {
+  dirty: boolean;
+  valid: boolean;
+  pending: string[];
+  status: 'idle' | 'pending' | 'applied' | 'error';
+  message: string;
+  changes: string[];
+  onApply: () => void;
+  onDiscard: () => void;
+}) {
+  const nothing = dirty && pending.length === 0;
+  return (
+    <div className={dirty ? 'lines-apply lines-apply-dirty' : 'lines-apply'}>
+      <div className="form-row">
+        <button className="btn active" disabled={!dirty || !valid || status === 'pending'} onClick={onApply}>
+          {status === 'pending' ? 'Применяю…' : 'Применить'}
+        </button>
+        <button className="btn" disabled={!dirty || status === 'pending'} onClick={onDiscard}>
+          Отменить правки
+        </button>
+        {!dirty && status !== 'applied' && <span className="dim">Правок нет — работает то, что в таблице.</span>}
+        {dirty && !valid && <span className="error-text">Нужна хотя бы одна вселенная и такт 10–1000 мс.</span>}
+      </div>
+      {dirty && valid && !nothing && (
+        <p className="warn">
+          Не применено: {pending.join('; ')}. Пока не нажать «Применить», этого нет ни на других
+          вкладках, ни в линии. Воспроизведение при применении не останавливается.
+        </p>
+      )}
+      {nothing && <p className="dim">Правка совпадает с тем, что уже работает, — применять нечего.</p>}
+      {status === 'error' && <p className="error-text">{message}</p>}
+      {status === 'applied' && (
+        <p className="dim">
+          ✔ {message}{changes.length > 0 ? ` ${changes.join('; ')}.` : ''}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Настройки движка: вселенные и такт — правка настроек объекта из
+ * интерфейса, без текстового редактора. Движок применяет на ходу, НЕ
+ * останавливая воспроизведение, и сохраняет сам.
  */
 export function SettingsView({ engine }: { engine: EngineConnection }) {
   const { engineConfig, project, send } = engine;
   /*
-   * Незавершённая правка берётся из черновика, который пережил уход с вкладки
-   * (см. settingsDraft.ts). Без этого добавленная линия пропадала молча: сходил
-   * на «Поток» посмотреть результат — и работа потеряна.
+   * Правка живёт в общем хранилище, а не в состоянии вкладки (см.
+   * settingsDraft.ts): вкладка при уходе размонтируется, а правка должна
+   * пережить уход и быть видна на других вкладках. Пока правки нет —
+   * показываем то, что работает в движке.
    */
-  const [saved] = useState(takeSettingsDraft);
-  const [tickMs, setTickMs] = useState(saved?.tickMs ?? 50);
-  const [universes, setUniverses] = useState<ConfigUniverse[]>(saved?.universes ?? []);
-  const [dirty, setDirty] = useState(saved !== null);
-  const [applied, setApplied] = useState(false);
-
-  // Загрузка из движка; пока правки не начаты — следуем за его состоянием.
-  useEffect(() => {
-    if (!engineConfig || dirty) return;
-    setTickMs(engineConfig.tickMs);
-    setUniverses(engineConfig.universes.map((u) => ({ ...u, outputs: u.outputs.map((o) => ({ ...o })) })));
-  }, [engineConfig, dirty]);
-
-  // Каждое изменение кладём в черновик: уход с вкладки его не потеряет.
-  useEffect(() => {
-    if (dirty) keepSettingsDraft({ tickMs, universes });
-  }, [dirty, tickMs, universes]);
+  const { draft, status, message, changes } = useSettingsDraft();
+  const tickMs = draft?.tickMs ?? engineConfig?.tickMs ?? 50;
+  const universes = draft?.universes ?? engineConfig?.universes ?? [];
+  const dirty = draft !== null;
+  const setTickMs = (t: number): void => keepSettingsDraft({ tickMs: t, universes });
+  const setUniverses = (next: ConfigUniverse[]): void => keepSettingsDraft({ tickMs, universes: next });
 
   /**
    * USB-DMX: пока есть хоть одна USB-вселенная (в сохранённой конфигурации или
@@ -1503,18 +1553,11 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
     );
   }
 
-  const touch = (): void => {
-    setDirty(true);
-    setApplied(false);
-  };
-
   const patchUniverse = (id: number, patch: Partial<ConfigUniverse>): void => {
-    touch();
     setUniverses(universes.map((u) => (u.id === id ? { ...u, ...patch } : u)));
   };
 
   const patchOutput = (id: number, patch: Partial<ConfigUniverse['outputs'][number]>): void => {
-    touch();
     setUniverses(
       universes.map((u) =>
         u.id === id
@@ -1524,23 +1567,9 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
     );
   };
 
-  /**
-   * Новая линия повторяет протокол предыдущей: на объекте все линии идут через
-   * одно и то же железо, и заставлять переключать протокол у каждой — лишняя
-   * работа и лишний шанс ошибиться. У интерфейса FountanPlay заодно
-   * подставляется следующий номер разъёма DMX.
-   */
+  /** Новая вселенная — такая же, как последняя (см. nextUniverse). */
   const addUniverse = (): void => {
-    touch();
-    const id = Math.max(0, ...universes.map((u) => u.id)) + 1;
-    const prev = universes[universes.length - 1]?.outputs[0];
-    const out: ConfigOutput =
-      prev?.type === 'musidora'
-        ? { type: 'musidora', universe: 0, path: prev.path ?? '', musidoraOut: Math.min(3, (prev.musidoraOut ?? 1) + 1) }
-        : prev?.type === 'artnet' || prev?.type === 'sacn'
-          ? { type: prev.type, host: prev.host ?? '127.0.0.1', universe: id - 1 }
-          : { type: 'musidora', universe: 0, path: '', musidoraOut: 1 };
-    setUniverses([...universes, { id, label: `Линия ${id}`, outputs: [out] }]);
+    setUniverses([...universes, nextUniverse(universes)]);
   };
 
   const removeUniverse = async (id: number): Promise<void> => {
@@ -1557,46 +1586,29 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
       });
       if (!ok) return;
     }
-    touch();
     setUniverses(universes.filter((u) => u.id !== id));
   };
 
-  const apply = (): void => {
-    send({ type: 'updateConfig', tickMs, universes });
-    setDirty(false);
-    setApplied(true);
-    clearSettingsDraft();
-  };
-
-  /** Отказаться от правок и вернуться к тому, что работает в движке. */
-  const discard = (): void => {
-    clearSettingsDraft();
-    setDirty(false);
-    setApplied(false);
-    setTickMs(engineConfig.tickMs);
-    setUniverses(engineConfig.universes.map((u) => ({ ...u, outputs: u.outputs.map((o) => ({ ...o })) })));
-  };
-
   const valid = universes.length > 0 && tickMs >= 10 && tickMs <= 1000;
+  const pending = describeLinesChange(engineConfig, { tickMs, universes });
 
   return (
     <main className="view">
       <section className="panel">
-        <h2>Вселенные (DMX-линии)</h2>
+        <h2>Вселенные DMX</h2>
         <p className="dim">
-          Одна вселенная = одна физическая линия DMX на 512 адресов. Заводите столько, сколько
-          линий реально есть на объекте — лишние только занимают место на экране. Применение
-          останавливает воспроизведение; мониторинг сети подхватит новые адреса после
-          перезапуска движка.
+          Вселенная — это 512 адресов DMX, которые уходят в один выход: разъём интерфейса или
+          номер Art-Net. Заводите столько, сколько выходов реально подключено на объекте. Приборы
+          привязываются к вселенной по её номеру на вкладке «Оборудование».
         </p>
         <table className="table">
           <thead>
             <tr>
               <th>№</th>
-              <th>Название</th>
+              <th>Имя</th>
               <th>Протокол</th>
-              <th data-hint="IP ноды (Art-Net), COM-порт адаптера или интерфейс Musidora">Адрес</th>
-              <th data-hint="Номер вселенной внутри протокола: Art-Net считает с 0, sACN — с 1. У Musidora — номер выхода интерфейса">
+              <th data-hint="IP узла Art-Net, COM-порт адаптера или какой из интерфейсов FountanPlay">Адрес</th>
+              <th data-hint="Номер внутри протокола: у Art-Net считают с 0, у sACN — с 1. У интерфейса FountanPlay — номер разъёма DMX на коробке">
                 № в протоколе
               </th>
               <th></th>
@@ -1612,8 +1624,9 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
                     <input
                       className="input"
                       style={{ width: 140 }}
-                      value={u.label ?? ''}
-                      placeholder={`Вселенная ${u.id}`}
+                      value={storedUniverseLabel(u)}
+                      placeholder="без имени"
+                      data-hint="Необязательно. Своё имя показывается рядом с номером везде, где выбирают вселенную: «Вселенная 2 · Северная чаша»."
                       onChange={(e) => patchUniverse(u.id, { label: e.target.value })}
                     />
                   </td>
@@ -1686,7 +1699,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
                         value={String(out.musidoraOut ?? 1)}
                         data-hint={
                           'Номер РАЗЪЁМА DMX на самом интерфейсе: у USB1DMX он один (1), у USB2DMX — два (1 и 2), у USB3DMX — три.\n' +
-                          'Вторая линия — это отдельная вселенная с тем же интерфейсом и выходом 2.\n' +
+                          'Второй разъём — это отдельная вселенная с тем же интерфейсом и выходом 2.\n' +
                           'Ставьте номер строго по числу разъёмов на коробке. Если выбрать выход, которого на интерфейсе нет, его данные могут лечь на первый выход и перебить его — в FontanPlay это заметно потому, что она всегда шлёт все три выхода, даже когда разъём один. Наша программа шлёт только те выходы, что вы завели здесь.'
                         }
                         onChange={(e) => patchOutput(u.id, { musidoraOut: Number(e.target.value) })}
@@ -1736,6 +1749,31 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
             + Вселенная
           </button>
         </div>
+        <div className="form-row">
+          <label className="field" data-hint="Как часто значения уходят приборам. 50 мс (20 раз в секунду) — стандарт для фонтанов; 25 мс (40 раз) — плавнее для быстрого света.">
+            Такт отправки, мс:{' '}
+            <input
+              className="input input-num"
+              type="number"
+              min={10}
+              max={1000}
+              step={5}
+              value={tickMs}
+              onChange={(e) => setTickMs(Math.round(Number(e.target.value)) || 50)}
+            />
+          </label>
+          <span className="dim">= {tickMs >= 10 ? Math.round(1000 / tickMs) : '—'} раз в секунду</span>
+        </div>
+        <LinesApplyBar
+          dirty={dirty}
+          valid={valid}
+          pending={pending}
+          status={status}
+          message={message}
+          changes={changes}
+          onApply={() => applySettingsDraft(send, engine.connected)}
+          onDiscard={clearSettingsDraft}
+        />
         <datalist id="usb-com-ports">
           {(engine.usbScan?.ports ?? []).map((p) => (
             <option key={p.path} value={p.path}>
@@ -1746,55 +1784,10 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
         {usbInUse && <UsbDmxStatus scan={engine.usbScan} universes={engineConfig.universes} />}
       </section>
 
-      <section className="panel">
-        <h2>Тайминг</h2>
-        <div className="form-row">
-          <label className="field">
-            Шаг обновления (тик), мс:{' '}
-            <input
-              className="input input-num"
-              type="number"
-              min={10}
-              max={1000}
-              step={5}
-              value={tickMs}
-              onChange={(e) => {
-                touch();
-                setTickMs(Math.round(Number(e.target.value)) || 50);
-              }}
-            />
-          </label>
-          <span className="dim">
-            = {tickMs >= 10 ? Math.round(1000 / tickMs) : '—'} обновлений в секунду. 50 мс (20 Гц) —
-            стандарт для фонтанов; 25 мс (40 Гц) — плавнее для быстрого света.
-          </span>
-        </div>
-      </section>
 
       <FrameModePanel engine={engine} />
       <AudioPanel engine={engine} />
 
-      <p className="dim">
-        Это настройка программы, а не объекта: при переключении объектов она не меняется и
-        сохраняется сразу — кнопка «Применить» ниже к ней не относится.
-      </p>
-
-      <div className="form-row">
-        <button className="btn active" disabled={!dirty || !valid} onClick={apply}>
-          Применить и сохранить
-        </button>
-        <button className="btn" disabled={!dirty} onClick={discard}>
-          Отменить правки
-        </button>
-        {dirty && !valid && <span className="error-text">нужна хотя бы одна линия и такт 10–1000 мс</span>}
-        {applied && <span className="dim">✔ применено и сохранено</span>}
-        {dirty && valid && (
-          <span className="warn">
-            Правки ещё не применены — на объекте они не действуют. Можно уйти на другую вкладку и
-            вернуться, они сохранятся. Применение остановит воспроизведение.
-          </span>
-        )}
-      </div>
 
       <ExportImportPanel engine={engine} />
       <BackupPanel engine={engine} />

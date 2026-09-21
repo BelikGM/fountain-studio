@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { onConfigResult } from './settingsDraft';
 import type {
   BackupInfo,
   ClientMessage,
@@ -282,6 +283,11 @@ export function useEngine(): EngineConnection {
               audioVolume: msg.audioVolume,
               audioReady: msg.audioReady,
             });
+            break;
+          case 'configResult':
+            // Черновик вселенных живёт вне React (см. settingsDraft.ts): ответ
+            // должен дойти, даже если вкладка «Настройки» уже закрыта.
+            onConfigResult(msg.ok, msg.message, msg.changes);
             break;
           case 'stats':
             setStats(msg.stats);
