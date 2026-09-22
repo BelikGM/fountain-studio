@@ -475,6 +475,7 @@ export class Playback {
       show: this.showState(nowMs),
       playlist: this.playlistState(),
       pausedAll,
+      playlistPositions: Object.fromEntries(this.lastPlaylistIndex),
     };
   }
 

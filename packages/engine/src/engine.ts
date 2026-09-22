@@ -125,6 +125,19 @@ export class Engine {
    * перед записью. Снимается любым новым запуском — расписанием или руками.
    */
   private dark: 'off' | 'transition' | null = null;
+  /**
+   * Где каждый плейлист остановился — переживает перезапуск движка: его
+   * хранит index.ts в папке объекта (playlist-positions.json). Раньше место
+   * жило только в памяти, и после сбоя питания «с места остановки» начинало с
+   * первого трека.
+   */
+  private playlistPos = new Map<string, number>();
+  private playlistPosJson = '{}';
+  private playlistPosCheckedAt = 0;
+  /** Что поток сообщал в прошлый раз — чтобы брать от него только перемены. */
+  private playlistPosFromPlayback = new Map<string, number>();
+  /** Место остановки плейлистов поменялось — сохранить. */
+  onPlaylistPositions: ((pos: Record<string, number>) => void) | null = null;
   /** Подключения Modbus — общие для насосов и датчика ветра (часто одна линия RS-485). */
   readonly modbusPool = new ModbusPool();
   /** Насосы с прямым управлением по Modbus (§12 п.9) — читают то же u.out, что уходит в DMX. */
@@ -621,6 +634,7 @@ export class Engine {
     // Ветер двигаем до расчёта кадра: ограничение внизу должно считаться по
     // уже обновлённому сглаженному значению, а не по прошлому тику.
     this.updateWindSmoothing();
+    this.trackPlaylistPositions();
     for (let i = 0; i < this.universes.length; i++) {
       const u = this.universes[i]!;
       // Воспроизведение считаем ВСЕГДА, даже когда идёт тест-генератор: при
@@ -854,6 +868,7 @@ export class Engine {
     this.pattern = 'off';
     if (this.paused) this.resumeAll();
     for (const u of this.universes) u.manual.fill(0);
+    this.rememberLivePlaylist();
     this.playback.stopAll();
     this.dark = null;
   }
@@ -875,6 +890,7 @@ export class Engine {
   blackout(): void {
     this.pattern = 'off';
     this.paused = false;
+    this.rememberLivePlaylist();
     this.playback.stopAll();
     for (const u of this.universes) u.manual.fill(0);
   }
@@ -1259,6 +1275,7 @@ export class Engine {
   }
 
   stopAllPlayback(): void {
+    this.rememberLivePlaylist();
     this.playback.stopAll();
   }
 
@@ -1285,7 +1302,51 @@ export class Engine {
 
   playPlaylist(playlistId: string, itemIndex: number | undefined): void {
     this.wake();
-    this.playback.playPlaylist(playlistId, itemIndex, this.nowMs);
+    // «С места остановки» — место берём из сохранённого, а не только из
+    // памяти воспроизведения: после перезапуска движка там пусто.
+    let idx = itemIndex;
+    if (idx === undefined) {
+      const pl = this.lastProject?.playlists.find((p) => p.id === playlistId);
+      // Свежее место — у самого воспроизведения (сохранённое обновляется раз в
+      // секунду); сохранённое — после перезапуска, когда в памяти пусто.
+      if (pl?.onStart === 'resume') {
+        idx = this.playback.state(this.nowMs, this.paused).playlistPositions?.[playlistId] ?? this.playlistPos.get(playlistId);
+      }
+    }
+    this.playback.playPlaylist(playlistId, idx, this.nowMs);
+  }
+
+  /** Сохранённые места плейлистов (при открытии объекта). */
+  setPlaylistPositions(pos: Record<string, number>): void {
+    this.playlistPos = new Map(
+      Object.entries(pos).filter(([, v]) => Number.isInteger(v) && v >= 0) as [string, number][],
+    );
+    this.playlistPosJson = JSON.stringify(Object.fromEntries(this.playlistPos));
+  }
+
+  /** Раз в секунду: не поменялось ли, где плейлисты остановились. */
+  private trackPlaylistPositions(): void {
+    const now = Date.now();
+    if (now - this.playlistPosCheckedAt < 1000) return;
+    this.playlistPosCheckedAt = now;
+    const fromPlayback = this.playback.state(this.nowMs, this.paused).playlistPositions;
+    if (!fromPlayback) return;
+    // Идущий плейлист — его текущий пункт тоже место остановки: питание могут
+    // выключить посреди вечера, а не после «Стопа».
+    const live = this.playback.state(this.nowMs, this.paused).playlist;
+    const merged = new Map(this.playlistPos);
+    for (const [id, v] of Object.entries(fromPlayback)) {
+      // Доигранный до конца плейлист поток отмечает нулём — это новость; а
+      // вот расхождение «у потока старое, у нас свежее после стопа» — нет.
+      if (this.playlistPosFromPlayback.get(id) !== v) merged.set(id, v);
+    }
+    this.playlistPosFromPlayback = new Map(Object.entries(fromPlayback));
+    if (live) merged.set(live.playlistId, live.itemIndex);
+    const json = JSON.stringify(Object.fromEntries(merged));
+    if (json === this.playlistPosJson) return;
+    this.playlistPos = merged;
+    this.playlistPosJson = json;
+    this.onPlaylistPositions?.(Object.fromEntries(merged));
   }
 
   skipPlaylist(dir: 1 | -1): void {
@@ -1293,7 +1354,22 @@ export class Engine {
   }
 
   stopPlaylist(): void {
+    this.rememberLivePlaylist();
     this.playback.stopPlaylist();
+  }
+
+  /**
+   * Плейлист останавливают — его текущий пункт запоминаем СРАЗУ, не ждя, пока
+   * поток расчёта пришлёт новое состояние: в этом зазоре движок видел старое
+   * место и успевал сохранить его (поймано смоуком).
+   */
+  private rememberLivePlaylist(): void {
+    const live = this.playback.state(this.nowMs, this.paused).playlist;
+    if (!live) return;
+    if (this.playlistPos.get(live.playlistId) === live.itemIndex) return;
+    this.playlistPos.set(live.playlistId, live.itemIndex);
+    this.playlistPosJson = JSON.stringify(Object.fromEntries(this.playlistPos));
+    this.onPlaylistPositions?.(Object.fromEntries(this.playlistPos));
   }
 
   playbackState(): PlaybackState {

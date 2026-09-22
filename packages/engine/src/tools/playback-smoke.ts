@@ -1052,6 +1052,40 @@ async function main(): Promise<void> {
     send({ type: 'stopPlaylist' });
     await waitFor('плейлист снова остановлен', () => playback.playlist === null && ch(1) === 0);
 
+    // Место остановки сохраняется и переживает перезапуск движка.
+    const savedPositions: Record<string, number>[] = [];
+    engine.onPlaylistPositions = (p) => savedPositions.push(p);
+    // Остановили посреди пункта 2 — сохраниться должен он (шоу здесь короткие,
+    // естественное окончание дало бы «с начала», и это тоже верно).
+    send({ type: 'playPlaylist', playlistId: 'pl1', itemIndex: 1 });
+    await waitFor('играет элемент 2', () => playback.playlist?.itemIndex === 1, 2000);
+    send({ type: 'stopPlaylist' });
+    await waitFor('плейлист остановлен', () => playback.playlist === null);
+    await waitFor('место остановки сохранено', () => savedPositions.length > 0 && savedPositions[savedPositions.length - 1]!.pl1 === 1, 3000);
+    check(true, 'движок сообщил место плейлиста для сохранения на диск (остановлен на пункте 2 → pl1: 1)');
+    engine.onPlaylistPositions = null;
+    {
+      // «Перезапуск»: новый движок, в памяти воспроизведения пусто, есть только сохранённое.
+      const fresh = new Engine({
+        server: { port: 9599 },
+        timing: { tickMs: 50, spinMs: 2, uiFrameMs: 100 },
+        audio: { player: 'none', ffplayPath: '', volumeDb: 0, muted: false, bassDb: 0, trebleDb: 0 },
+        universes: [{ id: 1, label: 'Вселенная 1', outputs: [] }],
+        backup: { enabled: false, intervalMin: 60 },
+      } as never);
+      fresh.setProject(store.project);
+      fresh.start();
+      fresh.setPlaylistPositions({ pl1: 1 });
+      fresh.playPlaylist('pl1', undefined);
+      let itemAfterRestart: number | null = null;
+      for (let i = 0; i < 40 && itemAfterRestart === null; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        itemAfterRestart = fresh.playbackState().playlist?.itemIndex ?? null;
+      }
+      fresh.stop();
+      check(itemAfterRestart === 1, `после перезапуска движка «с места остановки» продолжил с пункта 2, а не с начала (${itemAfterRestart})`);
+    }
+
     send({ type: 'updateProject', project: { ...store.project, playlists: store.project.playlists.map((p) => (p.id === 'pl1' ? { ...p, onStart: 'restart' } : p)) } });
     await waitFor('onStart возвращён в restart', () => projectEcho?.playlists.find((p) => p.id === 'pl1')?.onStart === 'restart');
   }

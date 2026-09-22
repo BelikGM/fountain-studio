@@ -167,6 +167,7 @@ function openProject(target: string): OpenResult {
     engine.applyConfig(lines.universes, lines.tickMs);
     store.rebind(p.projectFile);
     engine.setProject(store.project);
+    engine.setPlaylistPositions(readPlaylistPositions(dir));
     audio.setDir(p.audioDir);
     player.setDir(p.audioDir);
     fs.mkdirSync(p.audioDir, { recursive: true });
@@ -185,6 +186,29 @@ function openProject(target: string): OpenResult {
     return { ok: false, error };
   }
 }
+
+/**
+ * Где плейлисты остановились — отдельным файлом в папке объекта, а не в
+ * project.json: смена трека каждые несколько минут делала бы объект
+ * «несохранённым» и плодила резервные копии без правок человека.
+ */
+const PLAYLIST_POS_FILE = 'playlist-positions.json';
+function readPlaylistPositions(dir: string): Record<string, number> {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(dir, PLAYLIST_POS_FILE), 'utf8')) as unknown;
+    return raw && typeof raw === 'object' ? (raw as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+engine.onPlaylistPositions = (pos) => {
+  if (!current) return;
+  try {
+    fs.writeFileSync(path.join(current.dir, PLAYLIST_POS_FILE), JSON.stringify(pos, null, 2), 'utf8');
+  } catch (err) {
+    console.error('[плейлисты] не удалось сохранить место остановки:', err);
+  }
+};
 
 /** Закрыть объект: вывод на линию прекращается, редактор уходит на выбор проекта. */
 function closeProject(): void {
