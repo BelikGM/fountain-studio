@@ -163,10 +163,17 @@ const KIND_PHYSICS: Record<
   foam: { spreadDeg: 4.5, rate: 1800, foam: true, jitter: 0.08, solidFrac: 0 },
   // Скорость вращения — per-nozzle из n.rotationSpeedDegPerSec (см. simulate()), не константа типа.
   rotating: { spreadDeg: 0.8, rate: 1100, jitter: 0.03, solidFrac: 0 },
-  // Моторная — это обычная плотная струя; необычен только её путь по кольцу.
-  // Сплошного тела нет: сопло едет, а труба строится по неподвижной дуге и за
-  // водой не поспевает — расхождение видно сразу. Рисуем одними каплями.
-  orbit: { spreadDeg: 0.7, rate: 1000, jitter: 0.03, solidFrac: 0 },
+  /*
+   * Моторная — это обычная плотная струя; необычен только её путь по кольцу.
+   * Сплошного тела у неё раньше не было вовсе: труба строилась по НЕПОДВИЖНОЙ
+   * дуге и за едущим соплом не поспевала, поэтому рисовали одними каплями — и
+   * на схеме моторная выглядела туманом рядом с плотными соседями. Теперь тело
+   * строится по СЛЕДУ каретки (см. orbitOffsetAgo): вода возрастом a выходит
+   * там, где сопло было a секунд назад, и труба ложится той же дугой, что и
+   * капли. Доля сплошной части чуть меньше прямой струи (0,8 против 0,85):
+   * на ходу столб рвётся немного раньше.
+   */
+  orbit: { spreadDeg: 0.7, rate: 1000, jitter: 0.03, solidFrac: 0.8 },
   /**
    * Вариативная в собранном положении — ЭТО ПРЯМАЯ СТРУЯ, и параметры у неё те
    * же самые, буквально тот же набор. Раскрытие конуса вторым насосом
@@ -363,6 +370,17 @@ type Slug = {
   radius: number;
   tiltDeg: number;
   headingDeg: number;
+  /**
+   * Где было СОПЛО в момент закрытия клапана, смещение от точки установки, м.
+   *
+   * У моторной насадки каретка едет по кольцу, и вылетевший столб остаётся
+   * там, откуда вышел: он уже не привязан к железке. Раньше столб рисовался
+   * от ЦЕНТРА кольца, и при закрытии клапана вода прыгала к середине круга —
+   * на объекте это выглядело как второй фонтан посреди насадки. У остальных
+   * насадок смещение нулевое.
+   */
+  ox: number;
+  oy: number;
   color: [number, number, number];
   /**
    * Момент, когда после этого столба снова пошла вода, с. Этот фронт его и
@@ -391,6 +409,8 @@ type Slug = {
    * проведённое на дне зоны. null — новая струя ещё не догнала этот столб.
    */
   hit: { z: number; vz: number; floorSec: number; acc: number } | null;
+  /** Фаза каретки моторной насадки на момент закрытия, ° (у остальных 0). */
+  phaseDeg: number;
   /** Удар по этому столбу отработан — второй раз не бьём. */
   hitDone: boolean;
   /** Вода столба долетела — столб можно убирать. */
@@ -448,6 +468,14 @@ export class FountainScene {
   /** Конус луча каждого прожектора — длина и прозрачность считаются в кадре по яркости. */
   private lightBeams = new Map<string, THREE.Mesh>();
   /** Сплошное «ядро» струи каждой форсунки и ключ, по которому решаем, надо ли его пересобрать. */
+  /**
+   * Цельное тело струи, по одному на КАЖДОЕ сопло сборки: ключ «id#сопло».
+   *
+   * Раньше тело было одно на насадку — у сборки из нескольких сопел (моторная,
+   * вращающаяся) сплошной столб рисовался только у первого, а остальные шли
+   * одними каплями. На моторной это било в глаза: одно сопло с настоящей
+   * струёй едет по кольцу, соседние — туманом.
+   */
   private jetCores = new Map<string, THREE.Mesh>();
 /**
    * Оторвавшиеся столбы — вода, вылетевшая за одно открытие клапана.
@@ -860,12 +888,14 @@ export class FountainScene {
     const alive = new Set(layout.nozzles.map((n) => n.id));
     for (const s of this.slugs) if (!alive.has(s.nozzleId)) s.dead = true;
     this.pruneSlugs();
-    for (const [id, mesh] of this.jetCores) {
+    for (const [key, mesh] of this.jetCores) {
+      // Ключ — «id#сопло»: живость проверяем по самой насадке.
+      const id = key.split('#')[0]!;
       if (alive.has(id)) continue;
       this.scene.remove(mesh);
       mesh.geometry.dispose();
-      this.jetCores.delete(id);
-      this.jetKeys.delete(id);
+      this.jetCores.delete(key);
+      this.jetKeys.delete(key);
       this.speedHist.delete(id);
       this.speedHead.delete(id);
     }
@@ -2033,6 +2063,30 @@ export class FountainScene {
   }
 
   /**
+   * Где была каретка моторной насадки `agoSec` секунд назад, м от точки
+   * установки. По этому следу строится тело струи: вода не переезжает вслед за
+   * соплом, она остаётся там, откуда вышла.
+   */
+  private orbitOffsetAgo(n: Nozzle, jet: number, agoSec: number): { x: number; y: number } {
+    if (n.kind !== 'orbit') return ZERO_OFFSET;
+    const r = n.orbitRadiusM ?? 0;
+    if (r <= 0.001) return ZERO_OFFSET;
+    const speed = n.spinCcw ? -n.rotationSpeedDegPerSec : n.rotationSpeedDegPerSec;
+    const step = 360 / Math.max(1, n.jetCount ?? 1);
+    const ph = (((this.rotPhase.get(n.id) ?? 0) - speed * agoSec + jet * step) * Math.PI) / 180;
+    return { x: Math.cos(ph) * r, y: Math.sin(ph) * r };
+  }
+
+  /** То же, но от заданной фазы (для оторвавшегося столба: фаза на момент закрытия). */
+  private orbitOffsetFrom(n: Nozzle, phaseDeg: number, agoSec: number): { x: number; y: number } {
+    const r = n.orbitRadiusM ?? 0;
+    if (n.kind !== 'orbit' || r <= 0.001) return ZERO_OFFSET;
+    const speed = n.spinCcw ? -n.rotationSpeedDegPerSec : n.rotationSpeedDegPerSec;
+    const ph = ((phaseDeg - speed * agoSec) * Math.PI) / 180;
+    return { x: Math.cos(ph) * r, y: Math.sin(ph) * r };
+  }
+
+  /**
    * Направление k-го сопла куста, °.
    *
    * У вращающейся насадки куст — это несколько сопел на одной оси, смотрящих в
@@ -2485,8 +2539,11 @@ export class FountainScene {
     flowStartSec: number,
     /** Клапан закрыт. */
     cut: boolean,
+    /** Номер сопла в сборке: у каждого своё тело и своё место на кольце. */
+    jet = 0,
   ): void {
-    const old = this.jetCores.get(n.id);
+    const coreKey = `${n.id}#${jet}`;
+    const old = this.jetCores.get(coreKey);
     /**
      * Цельный столб вариативной насадки растворяется ПЛАВНО и СВЕРХУ: при
      * малом втором насосе струя распадается с верхушки, столб становится
@@ -2526,7 +2583,7 @@ export class FountainScene {
     if (!mesh) {
       mesh = new THREE.Mesh(new THREE.BufferGeometry(), makeJetMaterial());
       this.scene.add(mesh);
-      this.jetCores.set(n.id, mesh);
+      this.jetCores.set(coreKey, mesh);
     }
     mesh.visible = true;
     {
@@ -2543,7 +2600,7 @@ export class FountainScene {
     const heading = (headingDeg * Math.PI) / 180;
     const dir = new THREE.Vector3(0, 0, 1);
     if (tilt !== 0) dir.applyAxisAngle(new THREE.Vector3(-Math.sin(heading), Math.cos(heading), 0), tilt);
-    const org = this.orbitOffset(n);
+    const org = this.orbitOffset(n, jet);
     mesh.position.set(n.x + org.x, n.y + org.y, n.z).addScaledVector(dir, NOZZLE_MOUTH_M);
     mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
     // Ветер — каждый кадр, геометрию он не трогает (см. makeJetMaterial).
@@ -2551,18 +2608,43 @@ export class FountainScene {
 
     // В ключ входит и скорость воды на верхнем конце: пока по телу поднимается
     // вода разгона, форма меняется даже при уже устоявшемся напоре.
+    /*
+     * У моторной в ключ входит и положение каретки: форма тела зависит от
+     * следа, и без этого труба осталась бы той, что построилась в первый кадр.
+     * Округляем до 3° — при обычных 30–60 °/с это десяток пересборок в
+     * секунду, глазу хватает, а лишней работы нет.
+     */
+    const phaseKey = n.kind === 'orbit' ? Math.round((this.rotPhase.get(n.id) ?? 0) / 3) : 0;
     const key = `${jetV0.toFixed(2)}|${radius.toFixed(4)}|${tStart.toFixed(2)}|${tEnd.toFixed(
       2,
-    )}|${n.tiltDeg}|${headingDeg}|${this.speedAtAge(n.id, tEnd).toFixed(2)}`;
-    if (this.jetKeys.get(n.id) === key) return;
-    this.jetKeys.set(n.id, key);
+    )}|${n.tiltDeg}|${headingDeg}|${this.speedAtAge(n.id, tEnd).toFixed(2)}|${phaseKey}`;
+    if (this.jetKeys.get(coreKey) === key) return;
+    this.jetKeys.set(coreKey, key);
     mesh.geometry.dispose();
     // Гравитация в системе координат струи: тело должно гнуться той же дугой,
     // что и частицы. Иначе у наклонной струи сплошная часть шла прямой палкой,
     // а брызги уходили по дуге — расхождение было отчётливо видно. Азимут
     // входит в ключ: у наклонной струи «вниз» в местных осях от него зависит.
     const gLocal = new THREE.Vector3(0, 0, -G).applyQuaternion(mesh.quaternion.clone().invert());
-    mesh.geometry = buildJetGeometry((a) => this.speedAtAge(n.id, a), tStart, tEnd, radius, gLocal, span);
+    // След каретки — в местных осях струи, как и гравитация выше.
+    const inv = mesh.quaternion.clone().invert();
+    const trail =
+      n.kind === 'orbit' && (n.orbitRadiusM ?? 0) > 0.001
+        ? (a: number): { x: number; y: number } => {
+            const was = this.orbitOffsetAgo(n, jet, a);
+            const v = new THREE.Vector3(was.x - org.x, was.y - org.y, 0).applyQuaternion(inv);
+            return { x: v.x, y: v.y };
+          }
+        : undefined;
+    mesh.geometry = buildJetGeometry(
+      (a) => this.speedAtAge(n.id, a),
+      tStart,
+      tEnd,
+      radius,
+      gLocal,
+      span,
+      trail,
+    );
   }
   /**
    * Оторвавшийся столб: вода, вылетевшая до закрытия клапана.
@@ -2615,7 +2697,7 @@ export class FountainScene {
       const heading = (s.headingDeg * Math.PI) / 180;
       const dir = new THREE.Vector3(0, 0, 1);
       if (tilt !== 0) dir.applyAxisAngle(new THREE.Vector3(-Math.sin(heading), Math.cos(heading), 0), tilt);
-      mesh.position.set(nozzle.x, nozzle.y, nozzle.z).addScaledVector(dir, NOZZLE_MOUTH_M);
+      mesh.position.set(nozzle.x + s.ox, nozzle.y + s.oy, nozzle.z).addScaledVector(dir, NOZZLE_MOUTH_M);
       mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
       mesh.geometry.dispose();
       // Столб летит той же водой, что и капли вокруг, — и сносит его так же.
@@ -2623,6 +2705,21 @@ export class FountainScene {
       const slugSpray = clampSpray(nozzle.kind, nozzle.sprayFactor ?? 0.3);
       setJetWind(mesh, this.windVec.x, this.windVec.y, this.jetWindTau(nozzle, slugSpray, s.v0));
       const gLocal = new THREE.Vector3(0, 0, -G).applyQuaternion(mesh.quaternion.clone().invert());
+      /*
+       * У столба моторной насадки свой след: считаем его от фазы, которая была
+       * в момент закрытия клапана. Вода возрастом t вылетела на (t − elapsed)
+       * секунд раньше закрытия — дальше по кольцу назад.
+       */
+      const inv = mesh.quaternion.clone().invert();
+      const base = this.orbitOffsetFrom(nozzle, s.phaseDeg, 0);
+      const trail =
+        nozzle.kind === 'orbit' && (nozzle.orbitRadiusM ?? 0) > 0.001
+          ? (a: number): { x: number; y: number } => {
+              const was = this.orbitOffsetFrom(nozzle, s.phaseDeg, Math.max(0, a - elapsed));
+              const v = new THREE.Vector3(was.x - base.x, was.y - base.y, 0).applyQuaternion(inv);
+              return { x: v.x, y: v.y };
+            }
+          : undefined;
       mesh.geometry = buildJetGeometry(
         (a) => this.speedAtAge(s.nozzleId, a),
         tStart,
@@ -2630,6 +2727,7 @@ export class FountainScene {
         s.radius,
         gLocal,
         s.ageTop,
+        trail,
       );
     }
     this.pruneSlugs();
@@ -2805,8 +2903,8 @@ export class FountainScene {
           const along = NOZZLE_MOUTH_M + (s.v0 * (vzOld - u)) / G;
           const dir = this.jetAxis(n, s.headingDeg);
           this.splashAt(
-            n.x + dir.x * along,
-            n.y + dir.y * along,
+            n.x + s.ox + dir.x * along,
+            n.y + s.oy + dir.y * along,
             Math.max(0.05, zMouth + zNext),
             dir,
             closing,
@@ -2987,8 +3085,10 @@ export class FountainScene {
          */
         // Напора нет — трубы новой струи нет. Уже вылетевшая вода живёт
         // отдельно (см. updateSlugs) и от этого не зависит.
-        const core = this.jetCores.get(n.id);
-        if (core) core.visible = false;
+        for (let j = 0; j < Math.max(1, n.jetCount ?? 1); j++) {
+          const core = this.jetCores.get(`${n.id}#${j}`);
+          if (core) core.visible = false;
+        }
         // Воды нет — в историю пишем нуль, иначе тело струи потом «достроится»
         // по старой скорости на тех возрастах, где воды уже не было.
         this.pushSpeed(n.id, 0);
@@ -3169,6 +3269,7 @@ export class FountainScene {
         // Оторвавшийся столб живёт своей жизнью, отдельно от трубы новой струи,
         // и НЕ затирает предыдущие: в воздухе их одновременно несколько.
         if (st.coreAgeTop > 0.015) {
+          const slugOff = this.orbitOffset(n);
           this.slugs.push({
             nozzleId: n.id,
             key: this.slugSeq++,
@@ -3178,6 +3279,9 @@ export class FountainScene {
             radius: Math.max(0.002, n.widthM / 2),
             tiltDeg: n.tiltDeg,
             headingDeg: heading,
+            ox: slugOff.x,
+            oy: slugOff.y,
+            phaseDeg: this.rotPhase.get(n.id) ?? 0,
             color,
             chaserSec: -1,
             chaserV0: 0,
@@ -3200,7 +3304,20 @@ export class FountainScene {
 
       // Клапан закрыт — новой воды нет, трубу не рисуем: то, что уже
       // вылетело, показывает updateSlugs.
-      this.updateJetCore(n, phys, heading, v0, color, coreOpenK, spray, st.flowStartSec, cut);
+      for (let j = 0; j < Math.max(1, n.jetCount ?? 1); j++) {
+        this.updateJetCore(
+          n,
+          phys,
+          this.jetHeading(n, heading, j),
+          v0,
+          color,
+          coreOpenK,
+          spray,
+          st.flowStartSec,
+          cut,
+          j,
+        );
+      }
     }
 
     if (this.gizmo?.visible || this.hoverGizmo) this.syncGizmo();
@@ -3608,6 +3725,16 @@ function buildJetGeometry(
   gLocal: THREE.Vector3,
   /** Длина столба по возрасту, с — по ней считается утоньшение. */
   span: number,
+  /**
+   * Куда сместить воду такого-то возраста поперёк оси, м (местные оси).
+   *
+   * Нужно моторной насадке: сопло ЕДЕТ по кольцу, и вода возрастом `a`
+   * вылетела там, где каретка была `a` секунд назад. Без этого тело струи
+   * было бы прямой трубой из нынешнего положения сопла, а капли — по дуге за
+   * ним; расхождение видно сразу, и именно поэтому у моторной сплошного тела
+   * раньше не рисовали вовсе.
+   */
+  lateral?: (ageSec: number) => { x: number; y: number },
 ): THREE.BufferGeometry {
   const RINGS = 24;
   const SIDES = 10;
@@ -3623,6 +3750,20 @@ function buildJetGeometry(
   };
   /** Длина фронта растворения по возрасту воды, с: не короче 40 мс и не больше трети тела. */
   const frontSec = Math.max(0.04, Math.min((tEnd - tStart) * 0.35, span * 0.35));
+  /** Середина тела на возрасте t — по ней и строятся кольца. */
+  const centerAt = (t: number): THREE.Vector3 => {
+    const off = lateral?.(t);
+    return new THREE.Vector3(
+      (gLocal.x * t * t) / 2 + (off?.x ?? 0),
+      (gLocal.y * t * t) / 2 + (off?.y ?? 0),
+      speedAt(t) * t + (gLocal.z * t * t) / 2,
+    );
+  };
+  const dt = Math.max(1e-4, (tEnd - tStart) / RINGS / 2);
+  const tangent = new THREE.Vector3();
+  const uAxis = new THREE.Vector3();
+  const vAxis = new THREE.Vector3();
+  const ref = new THREE.Vector3();
   for (let i = 0; i <= RINGS; i++) {
     const s = i / RINGS;
     const t = tStart + (tEnd - tStart) * s;
@@ -3632,9 +3773,27 @@ function buildJetGeometry(
     const u = span > 1e-6 ? (t - tStart) / span : 0;
     // Баллистика в местных координатах: вдоль оси — скорость, плюс падение
     // по местному направлению «вниз».
-    const cx = (gLocal.x * t * t) / 2;
-    const cy = (gLocal.y * t * t) / 2;
-    const cz = speedAt(t) * t + (gLocal.z * t * t) / 2;
+    const c = centerAt(t);
+    const cx = c.x;
+    const cy = c.y;
+    const cz = c.z;
+    /*
+     * Кольцо ставим ПОПЕРЁК самого тела, а не поперёк оси +Z.
+     *
+     * У прямой струи разницы нет, а у моторной след круто уходит вбок: кольца
+     * поперёк оси вставали наискось к воде, находили друг на друга, и труба
+     * читалась как стопка дисков («ёлочка»), а не как струя. Направление
+     * берём разностью соседних точек самого тела — оно и есть касательная.
+     */
+    tangent.copy(centerAt(t + dt)).sub(centerAt(Math.max(tStart, t - dt)));
+    if (tangent.lengthSq() < 1e-12) tangent.set(0, 0, 1);
+    tangent.normalize();
+    // Опорная ось — любая, лишь бы не вдоль касательной, иначе векторное
+    // произведение выродится в ноль и кольцо схлопнется.
+    ref.set(0, 0, 1);
+    if (Math.abs(tangent.z) > 0.95) ref.set(1, 0, 0);
+    uAxis.copy(ref).cross(tangent).normalize();
+    vAxis.copy(tangent).cross(uAxis).normalize();
     // Верх растворяется по самой воде (u — доля длины столба) и по фронту
     // тела, если струя ещё не добежала до полной длины: верхний край всегда
     // уходит в прозрачность, какой бы короткой ни была труба.
@@ -3647,7 +3806,13 @@ function buildJetGeometry(
     const r = radius * (0.55 + 0.45 * fade);
     for (let k = 0; k < SIDES; k++) {
       const ang = (k / SIDES) * Math.PI * 2;
-      pos.push(cx + Math.cos(ang) * r, cy + Math.sin(ang) * r, cz);
+      const du = Math.cos(ang) * r;
+      const dv = Math.sin(ang) * r;
+      pos.push(
+        cx + uAxis.x * du + vAxis.x * dv,
+        cy + uAxis.y * du + vAxis.y * dv,
+        cz + uAxis.z * du + vAxis.z * dv,
+      );
       ages.push(t);
       fades.push(fade);
     }
