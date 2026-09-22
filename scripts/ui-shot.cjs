@@ -86,7 +86,7 @@ const FIT = `
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     const label = (e) => (e.innerText || e.value || e.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 80);
-    for (const e of document.querySelectorAll('button, .btn, th, td, label, .badge, .tab, input[type=text], input:not([type])')) {
+    for (const e of document.querySelectorAll('button, .btn, th, td, label, .badge, .tab, input[type=text], input[type=number], input:not([type])')) {
       if (e.offsetParent === null) continue;
       const cs = getComputedStyle(e);
       if (cs.overflow === 'visible' && cs.textOverflow !== 'ellipsis' && e.tagName !== 'INPUT') {
@@ -94,8 +94,12 @@ const FIT = `
         if (cs.whiteSpace !== 'nowrap' && cs.whiteSpace !== 'pre') continue;
       }
       if (e.tagName === 'INPUT') {
+        // Свёрнутое поле (поиск-значок шириной 0) — не подпись, пропускаем.
+        if (e.clientWidth < 8) continue;
         ctx.font = cs.font;
-        const w = ctx.measureText(e.value || '').width;
+        // Пустое поле показывает подсказку-заглушку — её тоже должно быть видно
+        // целиком («не зад» вместо «не задан» поймано глазами 22.09.2026).
+        const w = ctx.measureText(e.value || e.placeholder || '').width;
         const room = e.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
         if (w > room + 1) bad.push({ what: 'поле', text: e.value, need: Math.round(w), room: Math.round(room) });
         continue;
@@ -118,6 +122,19 @@ const FIT = `
       if (cs.overflowY !== 'hidden' || cs.textOverflow === 'ellipsis') continue;
       if (e.scrollHeight > e.clientHeight + 2 && e.querySelector('button, input, select, label')) {
         bad.push({ what: 'срезано по высоте', text: label(e), need: e.scrollHeight, room: e.clientHeight });
+      }
+    }
+    // Срезано по ширине и ряд кнопок шире своего места. Так в шапке дорожки
+    // «Шоу» крестик ✕ уезжал под шкалу времени, а проверка выше молчала: сама
+    // кнопка цела, обрезает её родитель (22.09.2026).
+    for (const e of document.querySelectorAll('div, section, td, label, header, nav')) {
+      if (e.offsetParent === null || e.clientWidth === 0) continue;
+      const cs = getComputedStyle(e);
+      if (cs.textOverflow === 'ellipsis' || cs.overflowX === 'auto' || cs.overflowX === 'scroll') continue;
+      const rowNoWrap = cs.display.includes('flex') && cs.flexDirection.startsWith('row') && cs.flexWrap === 'nowrap';
+      if (cs.overflowX !== 'hidden' && !rowNoWrap) continue;
+      if (e.scrollWidth > e.clientWidth + 2 && e.querySelector('button, input, select')) {
+        bad.push({ what: cs.overflowX === 'hidden' ? 'срезано по ширине' : 'ряд шире места', text: label(e), need: e.scrollWidth, room: e.clientWidth });
       }
     }
     for (const s of document.querySelectorAll('select')) {
