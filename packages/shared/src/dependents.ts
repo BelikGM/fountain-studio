@@ -14,7 +14,9 @@ function actionDependents(project: Project, type: RefAction, id: string): string
   const out: string[] = [];
   const keys = project.keys.filter((k) => k.action.type === type && k.action.refId === id).length;
   if (keys > 0) out.push(`клавиши (${keys})`);
-  const schedule = project.schedule.filter((e) => e.action.type === type && e.action.refId === id).length;
+  const schedule = project.schedules
+    .flatMap((sc) => sc.entries)
+    .filter((e) => e.action.type === type && 'refId' in e.action && e.action.refId === id).length;
   if (schedule > 0) out.push(`расписание (${schedule})`);
   const osc = project.oscBindings.filter((b) => b.action.type === type && b.action.refId === id).length;
   if (osc > 0) out.push(`OSC (${osc})`);

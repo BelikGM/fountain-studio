@@ -1,4 +1,4 @@
-import { namesForRdm, normalizeRdmUid, type NetworkState, type Project, type ScheduleEntry } from '@fountain-studio/shared';
+import { activeScheduleEntries, namesForRdm, normalizeRdmUid, type NetworkState, type Project, type ScheduleEntry } from '@fountain-studio/shared';
 import type { BackupStore } from './backups';
 import type { Engine } from './engine';
 import { eventLog } from './eventlog';
@@ -34,16 +34,19 @@ function actionText(p: Project, e: ScheduleEntry): string {
       return `группа секвенсоров «${nameOf(p.sequenceGroups, a.refId)}»`;
     case 'scene':
       return `сцена «${nameOf(p.scenes, a.refId)}»`;
+    case 'pause':
+      return 'пауза — картина замирает';
     case 'stopAll':
-      return 'полная остановка';
+      return 'стоп — фонтан в покое';
+    case 'off':
+      return 'выключить — всё в 0';
   }
 }
 
 /** Ближайшая запись расписания после now — на неделю вперёд. */
 function nextSchedule(p: Project, now: Date): string | null {
   let best: { at: Date; e: ScheduleEntry } | null = null;
-  for (const e of p.schedule) {
-    if (!e.enabled) continue;
+  for (const { entry: e } of activeScheduleEntries(p.schedules)) {
     const [hh, mm, ss] = e.time.split(':').map(Number);
     for (let d = 0; d < 8; d++) {
       const at = new Date(now.getFullYear(), now.getMonth(), now.getDate() + d, hh ?? 0, mm ?? 0, ss ?? 0);

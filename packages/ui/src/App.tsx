@@ -629,6 +629,24 @@ export function App() {
         const where = manual.where === 'console' ? 'вкладка Отладка' : 'отладка прибора в 3D';
         return `шоу не играет · вручную: ${where}, ${manual.what} — ${when}`;
       };
+              // Погашено расписанием — это главное, что надо знать, остальное неважно.
+              const dark =
+                playback.dark === 'off'
+                  ? 'выключено по расписанию — до следующего включения'
+                  : playback.dark === 'transition'
+                    ? 'гашение перед записью расписания'
+                    : null;
+              if (dark) {
+                return (
+                  <button
+                    className="statusbar-link"
+                    data-hint="Всё погашено по расписанию. Любой запуск — записью расписания или руками — включит фонтан снова"
+                    onClick={() => setTab('schedule')}
+                  >
+                    {dark}
+                  </button>
+                );
+              }
               const text = active
                 ? `играет: ${[
                     playback.running.length > 0 ? `секвенсоров ${playback.running.length}` : '',

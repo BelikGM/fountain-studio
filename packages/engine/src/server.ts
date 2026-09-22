@@ -815,11 +815,15 @@ export function startServer(
   }, engine.config.timing.uiFrameMs);
 
   // Автопереходы шагов секвенсоров: рассылаем состояние, когда оно поменялось само.
+  // «Выключено» и гашение по расписанию версию воспроизведения не меняют —
+  // следим за ними отдельно, иначе строка состояния молчала бы о выключении.
   let lastVersion = engine.playback.version;
+  let lastDark = engine.darkMode;
   setInterval(() => {
     if (wss.clients.size === 0) return;
-    if (engine.playback.version !== lastVersion) {
+    if (engine.playback.version !== lastVersion || engine.darkMode !== lastDark) {
       lastVersion = engine.playback.version;
+      lastDark = engine.darkMode;
       broadcastPlayback();
     }
   }, 250);

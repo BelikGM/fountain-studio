@@ -1950,6 +1950,14 @@ h2.panel-head-search {
 
 /* ── Расписание ──────────────────────────────────────────── */
 .days { display: flex; gap: 2px; }
+/* Дни в расписании — плотнее: вместе с остальными колонками таблица должна
+   помещаться в окно 1280 px. */
+.days .btn-small { padding: 2px 5px; }
+.schedule-action { display: flex; flex-direction: column; gap: 3px; }
+.schedule-action .schedule-name { width: 100%; }
+/* В списке расписаний галочка и имя — рядом, а не по краям строки. */
+.sidebar .list-item > input[type='checkbox'] { flex: 0 0 auto; }
+.sidebar .list-item:has(> input[type='checkbox']) { justify-content: flex-start; }
 .row-disabled td { opacity: 0.45; }
 
 /* ── Калибровка и страницы адресов в сценах ──────────────── */

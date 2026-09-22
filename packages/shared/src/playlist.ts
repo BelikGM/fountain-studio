@@ -32,28 +32,6 @@ export interface Playlist {
   items: PlaylistItem[];
 }
 
-export type ScheduleAction =
-  | { type: 'playlist'; refId: string }
-  | { type: 'show'; refId: string }
-  | { type: 'sequence'; refId: string }
-  | { type: 'sequenceGroup'; refId: string }
-  | { type: 'scene'; refId: string }
-  /** Полный стоп воспроизведения (вечернее выключение фонтана). */
-  | { type: 'stopAll' };
-
-export interface ScheduleEntry {
-  id: string;
-  name: string;
-  enabled: boolean;
-  /** Дни недели как в Date.getDay(): 0=Вс … 6=Сб. Пустой список — каждый день. */
-  days: number[];
-  /** Время по системным часам ПК: «ЧЧ:ММ» или «ЧЧ:ММ:СС». */
-  time: string;
-  action: ScheduleAction;
-}
-
-const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
-
 export function sanitizePlaylists(raw: unknown, showIds: Set<string>): Playlist[] {
   if (!Array.isArray(raw)) return [];
   const out: Playlist[] = [];
@@ -75,16 +53,81 @@ export function sanitizePlaylists(raw: unknown, showIds: Set<string>): Playlist[
   return out;
 }
 
-export function sanitizeSchedule(
-  raw: unknown,
-  ids: {
-    playlists: Set<string>;
-    shows: Set<string>;
-    sequences: Set<string>;
-    sequenceGroups: Set<string>;
-    scenes: Set<string>;
-  },
-): ScheduleEntry[] {
+/**
+ * Действие записи расписания.
+ *
+ * Запись — это ПЕРЕХОД, а не «запусти ещё одно» (так устроено и в FontanPlay:
+ * строки расписания переключают режимы). То, что играло до неё,
+ * останавливается, ручные правки с «Отладки» сбрасываются, и играет новое.
+ * Раньше запись добавляла действие к уже идущему, и в 20:00 вода дневного
+ * макроса смешивалась с шоу по правилу «кто больше».
+ *
+ *  · pause   — «Пауза»: картина замирает как есть, ничего не гаснет.
+ *  · stopAll — «Стоп»: программы останавливаются, фонтан в покое — горят
+ *              «Сцена, когда ничего не играет» и служебный свет, если заданы.
+ *  · off     — «Выключить»: гаснет ВСЁ, включая сцену покоя и служебный свет,
+ *              до следующего включения (записью расписания или руками).
+ */
+export type ScheduleAction =
+  | { type: 'playlist'; refId: string }
+  | { type: 'show'; refId: string }
+  | { type: 'sequence'; refId: string }
+  | { type: 'sequenceGroup'; refId: string }
+  | { type: 'scene'; refId: string }
+  | { type: 'pause' }
+  | { type: 'stopAll' }
+  | { type: 'off' };
+
+/** Действия без цели — им не нужен выбор «что запустить». */
+export type ScheduleControlType = 'pause' | 'stopAll' | 'off';
+export const SCHEDULE_CONTROL_TYPES: ScheduleControlType[] = ['pause', 'stopAll', 'off'];
+
+export function isScheduleProgram(a: ScheduleAction): a is Extract<ScheduleAction, { refId: string }> {
+  return 'refId' in a;
+}
+
+export interface ScheduleEntry {
+  id: string;
+  name: string;
+  enabled: boolean;
+  /** Дни недели как в Date.getDay(): 0=Вс … 6=Сб. Пустой список — каждый день. */
+  days: number[];
+  /** Время по системным часам ПК: «ЧЧ:ММ» или «ЧЧ:ММ:СС». */
+  time: string;
+  action: ScheduleAction;
+  /**
+   * Переход перед запуском: 0 — сразу (прежнее гаснет, новое начинается в тот
+   * же миг); больше нуля — на столько секунд гасим всё (0 на все адреса), и
+   * только потом запускаем. Нужен, когда в новом макросе участвует всё
+   * оборудование и прыжок «с картины на картину» некрасив или вреден насосам.
+   */
+  blackoutSec: number;
+}
+
+/**
+ * Расписание целиком. Их может быть несколько («Будни», «Выходные», «Зима»),
+ * у каждого галочка «активно». Срабатывают записи только активных.
+ */
+export interface Schedule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  entries: ScheduleEntry[];
+}
+
+export const SCHEDULE_BLACKOUT_MAX_SEC = 60;
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
+
+interface ScheduleRefIds {
+  playlists: Set<string>;
+  shows: Set<string>;
+  sequences: Set<string>;
+  sequenceGroups: Set<string>;
+  scenes: Set<string>;
+}
+
+export function sanitizeScheduleEntries(raw: unknown, ids: ScheduleRefIds): ScheduleEntry[] {
   if (!Array.isArray(raw)) return [];
   const out: ScheduleEntry[] = [];
   for (const e of raw as ScheduleEntry[]) {
@@ -92,7 +135,7 @@ export function sanitizeSchedule(
     const a = e.action;
     if (!a) continue;
     let action: ScheduleAction | null = null;
-    if (a.type === 'stopAll') action = { type: 'stopAll' };
+    if (a.type === 'stopAll' || a.type === 'pause' || a.type === 'off') action = { type: a.type };
     else if (a.type === 'playlist' && ids.playlists.has(a.refId)) action = { type: 'playlist', refId: a.refId };
     else if (a.type === 'show' && ids.shows.has(a.refId)) action = { type: 'show', refId: a.refId };
     else if (a.type === 'sequence' && ids.sequences.has(a.refId)) action = { type: 'sequence', refId: a.refId };
@@ -100,6 +143,7 @@ export function sanitizeSchedule(
       action = { type: 'sequenceGroup', refId: a.refId };
     else if (a.type === 'scene' && ids.scenes.has(a.refId)) action = { type: 'scene', refId: a.refId };
     if (!action) continue;
+    const bo = Number(e.blackoutSec);
     out.push({
       id: e.id,
       name: typeof e.name === 'string' ? e.name : '',
@@ -107,7 +151,116 @@ export function sanitizeSchedule(
       days: (Array.isArray(e.days) ? e.days : []).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6),
       time: e.time,
       action,
+      blackoutSec: Number.isFinite(bo) ? Math.max(0, Math.min(SCHEDULE_BLACKOUT_MAX_SEC, Math.round(bo))) : 0,
     });
   }
   return out;
+}
+
+/**
+ * Расписания объекта. До 22.09.2026 расписание было одно и лежало списком
+ * записей в project.schedule — такие объекты открываются с одним активным
+ * расписанием «Основное».
+ */
+export function sanitizeSchedules(raw: unknown, legacy: unknown, ids: ScheduleRefIds): Schedule[] {
+  if (Array.isArray(raw)) {
+    const out: Schedule[] = [];
+    for (const s of raw as Schedule[]) {
+      if (!s || typeof s.id !== 'string') continue;
+      out.push({
+        id: s.id,
+        name: typeof s.name === 'string' && s.name.trim() !== '' ? s.name : 'Расписание',
+        enabled: s.enabled !== false,
+        entries: sanitizeScheduleEntries(s.entries, ids),
+      });
+    }
+    if (out.length > 0) return out;
+  }
+  return [{ id: 'main', name: 'Основное', enabled: true, entries: sanitizeScheduleEntries(legacy, ids) }];
+}
+
+// ── Время, коллизии, «что должно идти сейчас» ──────────────────────────────
+
+/** Секунда суток записи: «22:00» и «22:00:00» — одно и то же время. */
+export function scheduleSecondOfDay(time: string): number {
+  const [h, m, s] = time.split(':').map(Number);
+  return (h ?? 0) * 3600 + (m ?? 0) * 60 + (s ?? 0);
+}
+
+function daysOverlap(a: number[], b: number[]): boolean {
+  if (a.length === 0 || b.length === 0) return true;
+  return a.some((d) => b.includes(d));
+}
+
+export interface ScheduleCollision {
+  /** Запись, с которой совпало время. */
+  otherId: string;
+  otherScheduleName: string;
+  /** true — эта запись «выигрывает» (она раньше в списке), false — не сработает. */
+  wins: boolean;
+}
+
+/**
+ * Записи, которые сработали бы в одну и ту же секунду в один и тот же день
+ * (в том числе из разных активных расписаний). Так быть не должно: «в 22:00
+ * включить макрос» и «в 22:00 выключить» — непонятно, что имелось в виду. В
+ * интерфейсе такие строки красные; движок в этом случае исполняет только
+ * первую по порядку (расписания сверху вниз, записи сверху вниз) и пишет о
+ * второй в журнал.
+ */
+export function findScheduleCollisions(schedules: Schedule[]): Map<string, ScheduleCollision[]> {
+  const flat: { e: ScheduleEntry; s: Schedule; order: number }[] = [];
+  let order = 0;
+  for (const s of schedules) {
+    if (!s.enabled) continue;
+    for (const e of s.entries) if (e.enabled) flat.push({ e, s, order: order++ });
+  }
+  const out = new Map<string, ScheduleCollision[]>();
+  for (let i = 0; i < flat.length; i++) {
+    for (let j = i + 1; j < flat.length; j++) {
+      const a = flat[i]!;
+      const b = flat[j]!;
+      if (scheduleSecondOfDay(a.e.time) !== scheduleSecondOfDay(b.e.time)) continue;
+      if (!daysOverlap(a.e.days, b.e.days)) continue;
+      (out.get(a.e.id) ?? out.set(a.e.id, []).get(a.e.id)!).push({ otherId: b.e.id, otherScheduleName: b.s.name, wins: true });
+      (out.get(b.e.id) ?? out.set(b.e.id, []).get(b.e.id)!).push({ otherId: a.e.id, otherScheduleName: a.s.name, wins: false });
+    }
+  }
+  return out;
+}
+
+/** Записи активных расписаний по порядку: сначала расписания, внутри — записи. */
+export function activeScheduleEntries(schedules: Schedule[]): { entry: ScheduleEntry; schedule: Schedule }[] {
+  const out: { entry: ScheduleEntry; schedule: Schedule }[] = [];
+  for (const s of schedules) {
+    if (!s.enabled) continue;
+    for (const e of s.entries) if (e.enabled) out.push({ entry: e, schedule: s });
+  }
+  return out;
+}
+
+/**
+ * Последняя запись, которая должна была сработать до `now` (смотрим неделю
+ * назад). Это «что должно идти сейчас» — по ней движок после перезапуска
+ * посреди дня возвращает дневную программу, а не ждёт следующей записи.
+ */
+export function lastDueScheduleEntry(
+  schedules: Schedule[],
+  now: Date,
+): { entry: ScheduleEntry; schedule: Schedule; at: Date } | null {
+  const list = activeScheduleEntries(schedules);
+  let best: { entry: ScheduleEntry; schedule: Schedule; at: Date } | null = null;
+  for (const { entry, schedule } of list) {
+    const sec = scheduleSecondOfDay(entry.time);
+    for (let d = 0; d <= 7; d++) {
+      const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - d);
+      const at = new Date(day.getFullYear(), day.getMonth(), day.getDate(), Math.floor(sec / 3600), Math.floor((sec % 3600) / 60), sec % 60);
+      if (at.getTime() > now.getTime()) continue;
+      if (entry.days.length > 0 && !entry.days.includes(at.getDay())) continue;
+      // Первая по порядку выигрывает и при равном времени — как в движке.
+      if (!best || at.getTime() > best.at.getTime()) best = { entry, schedule, at };
+      break;
+    }
+  }
+  return best;
 }

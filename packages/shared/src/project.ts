@@ -1,7 +1,7 @@
 import { DMX_UNIVERSE_SIZE } from './dmx';
 import { sanitizeKeys, type KeyBinding } from './keys';
 import { emptyLayout, sanitizeLayout, type FountainLayout } from './layout';
-import { sanitizePlaylists, sanitizeSchedule, type Playlist, type ScheduleEntry } from './playlist';
+import { sanitizePlaylists, sanitizeSchedules, type Playlist, type Schedule } from './playlist';
 import {
   sanitizeDmxTriggers,
   sanitizeMqttBindings,
@@ -301,7 +301,8 @@ export interface Project {
   sequenceGroups: SequenceGroup[];
   shows: Show[];
   playlists: Playlist[];
-  schedule: ScheduleEntry[];
+  /** Расписания: несколько, у каждого галочка «активно» (см. playlist.ts). */
+  schedules: Schedule[];
   keys: KeyBinding[];
   /** Привязки OSC-адресов и MQTT-топиков к действиям (§1 доработки: удалённое управление). */
   oscBindings: OscBinding[];
@@ -493,7 +494,7 @@ export function emptyProject(name = 'Новый объект'): Project {
     sequenceGroups: [],
     shows: [],
     playlists: [],
-    schedule: [],
+    schedules: [{ id: 'main', name: 'Основное', enabled: true, entries: [] }],
     keys: [],
     oscBindings: [],
     mqttBindings: [],
@@ -614,7 +615,7 @@ export function sanitizeProject(raw: unknown): Project {
     sequenceGroups: [],
     shows: [],
     playlists: [],
-    schedule: [],
+    schedules: [{ id: 'main', name: 'Основное', enabled: true, entries: [] }],
     keys: [],
     oscBindings: [],
     mqttBindings: [],
@@ -720,7 +721,7 @@ export function sanitizeProject(raw: unknown): Project {
   );
   project.playlists = sanitizePlaylists(r.playlists, new Set(project.shows.map((s) => s.id)));
   const sequenceGroupIds = new Set(project.sequenceGroups.map((g) => g.id));
-  project.schedule = sanitizeSchedule(r.schedule, {
+  project.schedules = sanitizeSchedules(r.schedules, (r as { schedule?: unknown }).schedule, {
     playlists: new Set(project.playlists.map((p) => p.id)),
     shows: new Set(project.shows.map((s) => s.id)),
     sequences: new Set(project.sequences.map((q) => q.id)),

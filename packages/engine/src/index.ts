@@ -267,7 +267,7 @@ const projects: ProjectsApi = {
 
 startServer(engine, store, audio, backups, net, capture, remote, telegram, projects, player);
 
-const scheduler = new Scheduler(engine, () => store.project.schedule);
+const scheduler = new Scheduler(engine, () => store.project.schedules);
 scheduler.start();
 
 // ---------------------------------------------------------------------------
@@ -337,6 +337,9 @@ function firstRunSetup(): void {
 
 firstRunSetup();
 engine.start();
+// Объект открыт, движок пошёл — включить то, что по расписанию должно идти
+// сейчас (перезапуск посреди дня не должен оставлять фонтан тёмным).
+scheduler.catchUp(new Date());
 
 setInterval(() => {
   const s = engine.stats();

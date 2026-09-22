@@ -119,6 +119,12 @@ export class Engine {
   private set playback(v: PlaybackSource) {
     this.playbackSource = v;
   }
+  /**
+   * Всё погашено поверх любых слоёв (сцены, секвенсоры, сцена покоя,
+   * служебный свет, ручные ползунки): «Выключить» по расписанию или гашение
+   * перед записью. Снимается любым новым запуском — расписанием или руками.
+   */
+  private dark: 'off' | 'transition' | null = null;
   /** Подключения Modbus — общие для насосов и датчика ветра (часто одна линия RS-485). */
   readonly modbusPool = new ModbusPool();
   /** Насосы с прямым управлением по Modbus (§12 п.9) — читают то же u.out, что уходит в DMX. */
@@ -684,6 +690,9 @@ export class Engine {
        * остаться на последней уставке (см. failsafe.ts).
        */
       if (this.failsafe.active) this.applySafeValues(u);
+      // «Выключить» и гашение перехода — после всего, в том числе после
+      // тест-генератора и служебного света: сказано «всё в 0» — значит всё.
+      if (this.dark) u.out.fill(0);
       // Переадресация — САМЫЙ ПОСЛЕДНИЙ шаг, уже над готовым кадром: проект,
       // сцены и тест-генераторы продолжают работать с правильными адресами, а
       // на линию уходит то, что нужно фактическому монтажу.
@@ -822,15 +831,45 @@ export class Engine {
   setChannel(universeId: number, channel: number, value: number): void {
     const u = this.universes.find((x) => x.id === universeId);
     if (!u || channel < 1 || channel > DMX_UNIVERSE_SIZE) return;
+    this.wake();
     u.manual[channel - 1] = clampDmx(value);
   }
 
   setChannels(universeId: number, start: number, values: number[]): void {
     const u = this.universes.find((x) => x.id === universeId);
     if (!u || start < 1) return;
+    this.wake();
     for (let i = 0; i < values.length && start - 1 + i < DMX_UNIVERSE_SIZE; i++) {
       u.manual[start - 1 + i] = clampDmx(values[i] ?? 0);
     }
+  }
+
+  /**
+   * Запись расписания забирает фонтан себе: то, что играло, останавливается,
+   * ручные ползунки «Отладки» и тест-генератор сбрасываются, пауза снимается.
+   * Заказчик: «даже если вручную что-то клацали, пришло время — играет то, что
+   * по расписанию».
+   */
+  takeOverForSchedule(): void {
+    this.pattern = 'off';
+    if (this.paused) this.resumeAll();
+    for (const u of this.universes) u.manual.fill(0);
+    this.playback.stopAll();
+    this.dark = null;
+  }
+
+  /** Погасить всё поверх любых слоёв; null — снять. */
+  setDark(mode: 'off' | 'transition' | null): void {
+    this.dark = mode;
+  }
+
+  get darkMode(): 'off' | 'transition' | null {
+    return this.dark;
+  }
+
+  /** Любой новый запуск — расписанием или руками — выводит из «Выключено». */
+  private wake(): void {
+    this.dark = null;
   }
 
   blackout(): void {
@@ -1181,10 +1220,12 @@ export class Engine {
   }
 
   setScene(sceneId: string | null): void {
+    if (sceneId !== null) this.wake();
     this.playback.setScene(sceneId, this.nowMs);
   }
 
   startSequence(sequenceId: string): void {
+    this.wake();
     this.playback.start(sequenceId, this.nowMs);
   }
 
@@ -1201,6 +1242,7 @@ export class Engine {
   }
 
   startSequenceGroup(groupId: string): void {
+    this.wake();
     this.playback.startGroup(groupId, this.nowMs);
   }
 
@@ -1221,6 +1263,7 @@ export class Engine {
   }
 
   playShow(showId: string, positionMs: number): void {
+    this.wake();
     this.playback.playShow(showId, positionMs, this.nowMs);
   }
 
@@ -1241,6 +1284,7 @@ export class Engine {
   }
 
   playPlaylist(playlistId: string, itemIndex: number | undefined): void {
+    this.wake();
     this.playback.playPlaylist(playlistId, itemIndex, this.nowMs);
   }
 
@@ -1253,10 +1297,11 @@ export class Engine {
   }
 
   playbackState(): PlaybackState {
-    return this.playback.state(this.nowMs, this.paused);
+    return { ...this.playback.state(this.nowMs, this.paused), dark: this.dark };
   }
 
   setTestPattern(mode: TestPatternMode, scope: TestPatternScope = 'all', speedSec?: number): void {
+    if (mode !== 'off') this.wake();
     this.pattern = mode;
     this.patternScope = scope;
     this.patternSpeedSec = speedSec && speedSec > 0 ? speedSec : DEFAULT_PATTERN_SPEED_SEC[mode];

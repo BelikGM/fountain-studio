@@ -1057,36 +1057,100 @@ async function main(): Promise<void> {
   }
 
   console.log('— Расписание по системному времени —');
-  const scheduler = new Scheduler(engine, () => store.project.schedule);
+  const scheduler = new Scheduler(engine, () => store.project.schedules);
   scheduler.start();
-  const at = new Date(Date.now() + 1500);
-  const hh = String(at.getHours()).padStart(2, '0');
-  const mm = String(at.getMinutes()).padStart(2, '0');
-  const ss = String(at.getSeconds()).padStart(2, '0');
-  send({
-    type: 'updateProject',
-    project: {
-      ...demo,
-      schedule: [
-        {
-          id: 'sch1',
-          name: 'Тестовый запуск',
-          enabled: true,
-          days: [],
-          time: `${hh}:${mm}:${ss}`,
-          action: { type: 'scene', refId: 'sceneA' },
-        },
+  /** Время «ЧЧ:ММ:СС» через ms от сейчас. */
+  const hms = (ms: number): string => {
+    const at = new Date(Date.now() + ms);
+    return [at.getHours(), at.getMinutes(), at.getSeconds()].map((v) => String(v).padStart(2, '0')).join(':');
+  };
+  const entry = (id: string, time: string, action: unknown, blackoutSec = 0): unknown => ({
+    id,
+    name: id,
+    enabled: true,
+    days: [],
+    time,
+    action,
+    blackoutSec,
+  });
+  const setSchedules = (schedules: unknown[]): void =>
+    send({ type: 'updateProject', project: { ...demo, schedules } as never });
+  const t1 = hms(1500);
+  setSchedules([{ id: 's1', name: 'Основное', enabled: true, entries: [entry('sch1', t1, { type: 'scene', refId: 'sceneA' })] }]);
+  await waitFor('расписание сработало', () => playback.activeSceneId === 'sceneA' && ch(1) === 200, 5000);
+  check(true, `запись «${t1} → сцена» сработала по системным часам`);
+
+  // Переход: ручные ползунки и прежнее воспроизведение сбрасываются.
+  send({ type: 'setChannel', universe: 1, channel: 12, value: 77 });
+  await waitFor('ручной ползунок', () => ch(12) === 77);
+  const t2 = hms(1500);
+  setSchedules([{ id: 's1', name: 'Основное', enabled: true, entries: [entry('sch2', t2, { type: 'off' })] }]);
+  // Остановку воспроизведения поток расчёта подтверждает чуть позже, чем гаснет
+  // кадр, — ждём и её, а не смотрим в тот же миг.
+  await waitFor('«Выключить» сработало', () => playback.dark === 'off' && ch(1) === 0 && ch(12) === 0 && playback.activeSceneId === null, 5000);
+  check(playback.activeSceneId === null, '«Выключить»: сцена остановлена, всё в 0, режим «выключено»');
+  check(ch(12) === 0, 'ручной ползунок с «Отладки» сброшен записью расписания');
+  send({ type: 'setScene', sceneId: 'sceneA' });
+  await waitFor('ручной запуск выводит из «выключено»', () => playback.dark !== 'off' && ch(1) === 200, 3000);
+  check(true, 'ручной запуск после «Выключить» — фонтан снова работает');
+
+  // Гашение перехода: сначала всё в 0, через секунду — новое.
+  const t3 = hms(1500);
+  setSchedules([
+    { id: 's1', name: 'Основное', enabled: true, entries: [entry('sch3', t3, { type: 'sequence', refId: 'seq1' }, 1)] },
+  ]);
+  await waitFor('гашение перехода', () => playback.dark === 'transition' && ch(1) === 0 && playback.activeSceneId === null, 5000);
+  check(playback.activeSceneId === null, 'запись с гашением: прежняя сцена остановлена, всё в 0');
+  await waitFor('после гашения — секвенсор', () => playback.dark !== 'transition' && playback.running.some((r) => r.sequenceId === 'seq1'), 4000);
+  check(true, 'через 1 с гашения запустился секвенсор');
+
+  // Коллизия: две записи в одну секунду — исполняется первая, о второй — в журнал.
+  const t4 = hms(1500);
+  setSchedules([
+    { id: 's1', name: 'Основное', enabled: true, entries: [entry('sch4', t4, { type: 'scene', refId: 'sceneA' })] },
+    { id: 's2', name: 'Второе', enabled: true, entries: [entry('sch5', t4, { type: 'off' })] },
+  ]);
+  await waitFor('коллизия разобрана', () => playback.activeSceneId === 'sceneA' && !playback.running.some((r) => r.sequenceId === 'seq1'), 5000);
+  await new Promise((r) => setTimeout(r, 300));
+  check(playback.dark !== 'off', 'коллизия: сработала только первая запись');
+  check(
+    logEvents.some((e) => e.source === 'schedule' && e.level === 'warn' && e.message.includes('не исполнена')),
+    'коллизия: о второй записи — предупреждение в журнале',
+  );
+
+  // Неактивное расписание не срабатывает.
+  const t5 = hms(1500);
+  setSchedules([{ id: 's1', name: 'Основное', enabled: false, entries: [entry('sch6', t5, { type: 'off' })] }]);
+  await new Promise((r) => setTimeout(r, 2500));
+  check(playback.dark !== 'off' && playback.activeSceneId === 'sceneA', 'выключенное расписание не срабатывает');
+
+  // После перезапуска движка: что должно идти сейчас.
+  scheduler.stop();
+  send({ type: 'stopAllPlayback' });
+  await waitFor('всё остановлено', () => playback.activeSceneId === null && playback.running.length === 0);
+  setSchedules([
+    {
+      id: 's1',
+      name: 'Основное',
+      enabled: true,
+      entries: [
+        entry('sch7', hms(-2 * 3600_000), { type: 'scene', refId: 'sceneA' }),
+        entry('sch8', hms(-3600_000), { type: 'sequence', refId: 'seq1' }),
       ],
     },
-  });
-  await waitFor(
-    'расписание сработало',
-    () => playback.activeSceneId === 'sceneA' && ch(1) === 200,
-    5000,
+  ]);
+  await waitFor('расписание сохранено', () => store.project.schedules[0]?.entries.length === 2);
+  scheduler.catchUp(new Date());
+  await waitFor('восстановлено', () => playback.running.some((r) => r.sequenceId === 'seq1'), 3000);
+  check(playback.activeSceneId === null, 'после запуска движка включено то, что по расписанию идёт сейчас (последняя запись), а не всё подряд');
+
+  // Старый объект с одним списком schedule открывается как одно расписание.
+  const migrated = sanitizeProject({ ...demo, schedules: undefined, schedule: [entry('old', '21:00', { type: 'stopAll' })] } as never);
+  check(
+    migrated.schedules.length === 1 && migrated.schedules[0]!.enabled && migrated.schedules[0]!.entries[0]?.action.type === 'stopAll',
+    'старый объект: прежние записи — в расписании «Основное», оно активно',
   );
-  check(true, `запись «${hh}:${mm}:${ss} → сцена» сработала по системным часам`);
-  scheduler.stop();
-  send({ type: 'setScene', sceneId: null });
+  send({ type: 'stopAllPlayback' });
   await waitFor('сцена снята', () => ch(1) === 0);
 
   console.log('— Калибровка min/max (0 остаётся 0, 1–255 → min–max) —');
@@ -2398,7 +2462,7 @@ async function main(): Promise<void> {
   console.log('— Журнал событий (§27 доработки, §3 п.1) —');
   {
     check(
-      logEvents.some((e) => e.source === 'schedule' && e.message.includes('Тестовый запуск')),
+      logEvents.some((e) => e.source === 'schedule' && e.message.includes('→ сцена («sch1»')),
       'eventLog: срабатывание расписания попало в журнал',
     );
     check(
