@@ -83,10 +83,8 @@ export interface EngineConfigState {
   audioReady: boolean;
 }
 
-export interface RemoteStatus {
-  osc: { enabled: boolean };
-  mqtt: { enabled: boolean; connected: boolean };
-}
+/** Внешние пульты: что задано и что сейчас на самом деле (порт открыт, брокер на связи). */
+export type RemoteStatus = Omit<Extract<ServerMessage, { type: 'remoteStatus' }>, 'type'>;
 
 export interface EngineConnection {
   connected: boolean;
@@ -378,7 +376,7 @@ export function useEngine(): EngineConnection {
             setUsbScan(msg.scan);
             break;
           case 'remoteStatus':
-            setRemote({ osc: msg.osc, mqtt: msg.mqtt });
+            setRemote({ settings: msg.settings, mqttHasPassword: msg.mqttHasPassword, osc: msg.osc, mqtt: msg.mqtt });
             break;
           case 'audio': {
             const waiters = audioWaitersRef.current.get(msg.name) ?? [];

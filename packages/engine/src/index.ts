@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { namesForRdm, sanitizeProject, type ConfigUniverse } from '@fountain-studio/shared';
+import { namesForRdm, sanitizeProject, sanitizeRemoteSettings, type ConfigUniverse } from '@fountain-studio/shared';
 import { AudioStore } from './audio';
 import { AudioPlayer } from './audioplayer';
 import { BackupStore } from './backups';
@@ -13,9 +13,8 @@ import { DEMO_AUDIO_FILE, createDemoProject } from './demoproject';
 import { DmxCapture } from './dmxcapture';
 import { DmxTriggerWatcher } from './dmxtriggers';
 import { Engine } from './engine';
-import { MqttController } from './mqttcontroller';
 import { NetworkMonitor } from './netmonitor';
-import { OscServer } from './oscserver';
+import { RemoteControl } from './remotecontrol';
 import { ProjectStore } from './project';
 import { Scheduler } from './schedule';
 import { eventLog } from './eventlog';
@@ -116,13 +115,17 @@ net.onDmx = (universe, data, fromIp) => {
   dmxTriggers.handle(engine, store.project.dmxTriggers, universe, data);
 };
 
-const osc = config.osc?.enabled ? new OscServer(engine, config.osc.port, () => store.project.oscBindings) : undefined;
-osc?.start();
-const mqtt = config.mqtt?.enabled
-  ? new MqttController(engine, config.mqtt, () => store.project.mqttBindings)
-  : undefined;
-mqtt?.startTelemetry();
-if (mqtt) wireAlarmNotifications(mqtt);
+// Внешние пульты: включаются и перенастраиваются на ходу с вкладки «Внешние
+// пульты»; при старте — как записано в настройках программы.
+const remote = new RemoteControl(
+  engine,
+  () => store.project.oscBindings,
+  () => store.project.mqttBindings,
+  sanitizeRemoteSettings({ osc: config.osc, mqtt: config.mqtt }),
+  { password: config.mqtt?.password, clientId: config.mqtt?.clientId },
+);
+remote.start();
+wireAlarmNotifications(remote);
 
 /** Какой объект открыт сейчас; null — ни одного (экран выбора проекта). */
 let current: { dir: string; name: string } | null = null;
@@ -256,7 +259,7 @@ const projects: ProjectsApi = {
   forget: (dir: string) => forgetRecent(appDataDir, dir),
 };
 
-startServer(engine, store, audio, backups, net, capture, osc, mqtt, telegram, projects, player);
+startServer(engine, store, audio, backups, net, capture, remote, telegram, projects, player);
 
 const scheduler = new Scheduler(engine, () => store.project.schedule);
 scheduler.start();
@@ -340,8 +343,7 @@ process.on('SIGINT', () => {
   console.log('\n[engine] остановка…');
   scheduler.stop();
   player.stop();
-  osc?.stop();
-  mqtt?.stop();
+  void remote.stop();
   backups.stop();
   telegram.stop();
   store.flush();

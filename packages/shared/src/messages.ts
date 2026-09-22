@@ -7,6 +7,7 @@ import type { FailsafeState } from './failsafe';
 import type { FrameMode } from './framemode';
 import type { LicenseStatus } from './license';
 import type { Project } from './project';
+import type { RemoteSettings } from './remote';
 import type { WindLimitConfig } from './windlimit';
 
 export type TestPatternMode =
@@ -471,6 +472,11 @@ export type ClientMessage =
    * трогает — подхватит следующий.
    */
   | { type: 'setAudioVolume'; volumeDb: number; muted: boolean; bassDb: number; trebleDb: number }
+  /**
+   * Внешние пульты: включить/выключить OSC и MQTT, порт, брокер. Применяется на
+   * ходу. mqttPassword: не передан — пароль не меняется, пустая строка — убрать.
+   */
+  | { type: 'setRemoteSettings'; settings: RemoteSettings; mqttPassword?: string }
   // Авто-бэкапы проекта (§27 доработки, УХ п.5) — отдельно от updateConfig: смена
   // интервала не трогает воспроизведение.
   | { type: 'updateBackupConfig'; enabled: boolean; intervalMin: number }
@@ -602,7 +608,16 @@ export type ServerMessage =
   /** Ответ на measureDmxCycle. */
   | { type: 'dmxCycle'; universe: number; periodMs: number | null; confidence: number; analyzedMs: number }
   /** Статус удалённого управления (§1 доработки): включено ли, есть ли связь. */
-  | { type: 'remoteStatus'; osc: { enabled: boolean }; mqtt: { enabled: boolean; connected: boolean } }
+  | {
+      type: 'remoteStatus';
+      /** Что сейчас задано. Пароль брокера наружу не уходит — только «задан / нет». */
+      settings: RemoteSettings;
+      mqttHasPassword: boolean;
+      /** listening — порт открыт; error — почему не открылся (занят другой программой и т. п.). */
+      osc: { enabled: boolean; listening: boolean; error: string | null };
+      /** error — почему не подключается (не указан адрес брокера и т. п.). */
+      mqtt: { enabled: boolean; connected: boolean; error: string | null };
+    }
   // Ответы на rdmRequest.
   | { type: 'rdmResponse'; uid: string; ok: false; action: RdmAction; error: string }
   | { type: 'rdmResponse'; uid: string; ok: true; action: 'deviceInfo'; deviceInfo: RdmDeviceInfoPayload }

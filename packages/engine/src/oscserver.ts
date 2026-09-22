@@ -13,6 +13,13 @@ import { fireRemoteAction } from './remotedispatch';
  * шлёт и нажатие (1), и отпускание (0), а нам нужно только нажатие.
  */
 export class OscServer {
+  /** Порт открылся или не открылся — чтобы вкладка «Внешние пульты» сказала это прямо. */
+  onChange: (() => void) | null = null;
+  /** Порт открыт и команды принимаются. */
+  listening = false;
+  /** Почему порт не открылся; null — всё в порядке. */
+  error: string | null = null;
+
   private socket: dgram.Socket | null = null;
 
   constructor(
@@ -22,10 +29,31 @@ export class OscServer {
   ) {}
 
   start(): void {
-    this.socket = dgram.createSocket('udp4');
-    this.socket.on('message', (msg) => this.handle(msg));
-    this.socket.on('error', (e) => eventLog.log('osc', `ошибка сокета: ${e.message}`, 'error'));
-    this.socket.bind(this.port, () => eventLog.log('osc', `слушаю UDP ${this.port}`));
+    const socket = dgram.createSocket('udp4');
+    this.socket = socket;
+    socket.on('message', (msg) => this.handle(msg));
+    socket.on('error', (e: NodeJS.ErrnoException) => {
+      // Самая частая причина на объекте — порт уже держит другая программа
+      // (второй экземпляр, другой OSC-приёмник). Говорим это словами, а не кодом.
+      this.error = e.code === 'EADDRINUSE' ? `порт ${this.port} занят другой программой` : e.message;
+      this.listening = false;
+      eventLog.log('osc', `не удалось открыть порт ${this.port}: ${this.error}`, 'error');
+      if (this.socket === socket) {
+        this.socket = null;
+        try {
+          socket.close();
+        } catch {
+          /* уже закрыт */
+        }
+      }
+      this.onChange?.();
+    });
+    socket.bind(this.port, () => {
+      this.listening = true;
+      this.error = null;
+      eventLog.log('osc', `слушаю UDP ${this.port}`);
+      this.onChange?.();
+    });
   }
 
   private handle(msg: Buffer): void {
@@ -38,8 +66,25 @@ export class OscServer {
     fireRemoteAction(this.engine, binding.action);
   }
 
-  stop(): void {
-    this.socket?.close();
+  /**
+   * Закрыть порт. Обещание — чтобы при смене настроек новый приёмник открывался
+   * ПОСЛЕ того, как старый порт реально отпущен, иначе тот же порт «занят».
+   */
+  stop(): Promise<void> {
+    const socket = this.socket;
     this.socket = null;
+    this.listening = false;
+    if (!socket) return Promise.resolve();
+    return new Promise((resolve) => {
+      try {
+        socket.close(() => resolve());
+      } catch {
+        resolve();
+      }
+    });
+  }
+
+  get portNumber(): number {
+    return this.port;
   }
 }

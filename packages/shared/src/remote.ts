@@ -108,3 +108,52 @@ export function sanitizeDmxTriggers(raw: unknown, ids: RemoteIds): DmxTrigger[] 
   }
   return out;
 }
+
+/**
+ * Как движок слушает внешние пульты — настройки ПРОГРАММЫ (app-config.json), а
+ * не объекта: порт и брокер зависят от сети компьютера, а не от шоу.
+ *
+ * До 22.09.2026 это можно было включить только правкой файла, а вкладка
+ * «Внешние пульты» лишь писала «выключен — включает наладчик в файле». Файл
+ * фонтанщик не откроет, поэтому теперь то же самое — галочками на вкладке, и
+ * применяется на ходу, без перезапуска движка.
+ */
+export interface RemoteSettings {
+  /** Планшет с TouchOSC и похожие приложения: команды по Wi-Fi на UDP-порт. */
+  osc: { enabled: boolean; port: number };
+  /** Умный дом или диспетчерская: команды и состояние через MQTT-брокер. */
+  mqtt: { enabled: boolean; host: string; port: number; topicPrefix: string; username: string };
+}
+
+/** 8000 — порт, на который TouchOSC шлёт команды, если его не трогать. */
+export const OSC_DEFAULT_PORT = 8000;
+export const MQTT_DEFAULT_PORT = 1883;
+export const MQTT_DEFAULT_PREFIX = 'fountain-studio';
+
+function cleanPort(raw: unknown, fallback: number): number {
+  const n = Math.round(Number(raw));
+  return Number.isFinite(n) && n >= 1 && n <= 65535 ? n : fallback;
+}
+
+/**
+ * Разбор того, что пришло из файла или из редактора. Префикс чистим от
+ * «/» по краям и от «#» и «+»: это маски подписки MQTT, в префиксе они
+ * превратили бы подписку на свои команды в подписку на чужие.
+ */
+export function sanitizeRemoteSettings(raw: unknown): RemoteSettings {
+  const r = (raw ?? {}) as { osc?: Partial<RemoteSettings['osc']>; mqtt?: Partial<RemoteSettings['mqtt']> };
+  const prefix = String(r.mqtt?.topicPrefix ?? '')
+    .replace(/[#+]/g, '')
+    .replace(/^\/+|\/+$/g, '')
+    .trim();
+  return {
+    osc: { enabled: r.osc?.enabled === true, port: cleanPort(r.osc?.port, OSC_DEFAULT_PORT) },
+    mqtt: {
+      enabled: r.mqtt?.enabled === true,
+      host: String(r.mqtt?.host ?? '').trim(),
+      port: cleanPort(r.mqtt?.port, MQTT_DEFAULT_PORT),
+      topicPrefix: prefix || MQTT_DEFAULT_PREFIX,
+      username: String(r.mqtt?.username ?? '').trim(),
+    },
+  };
+}

@@ -1,5 +1,14 @@
-import { uid, type DmxTrigger, type MqttBinding, type OscBinding, type RemoteAction, universeShort } from '@fountain-studio/shared';
-import type { EngineConnection } from '../useEngine';
+import { useState } from 'react';
+import {
+  uid,
+  type DmxTrigger,
+  type MqttBinding,
+  type OscBinding,
+  type RemoteAction,
+  type RemoteSettings,
+  universeShort,
+} from '@fountain-studio/shared';
+import type { EngineConnection, RemoteStatus } from '../useEngine';
 
 const ACTION_LABEL: Record<RemoteAction['type'], string> = {
   scene: 'Включить сцену',
@@ -12,9 +21,9 @@ const ACTION_LABEL: Record<RemoteAction['type'], string> = {
 
 /**
  * Удалённое управление: OSC-пульты (TouchOSC и т.п.) и MQTT (телеметрия +
- * команды). Включение/адрес брокера/порт — в fountain.config.json (как
- * Art-Net/sACN — это настройка конкретной инсталляции, не проекта); здесь —
- * только привязки «адрес/топик → действие», которые живут в проекте.
+ * команды). Включение, порт и брокер — панель «Подключение» наверху: это
+ * настройки программы (app-config.json), они не переезжают с объектом.
+ * Привязки «адрес/топик → действие» ниже — часть объекта.
  */
 export function RemoteView({ engine }: { engine: EngineConnection }) {
   const { project, remote, universes, updateProject } = engine;
@@ -40,26 +49,14 @@ export function RemoteView({ engine }: { engine: EngineConnection }) {
 
   return (
     <main className="view">
-      <section className="panel">
-        <h2>Статус</h2>
-        {!remote ? (
+      {!remote ? (
+        <section className="panel">
+          <h2>Подключение</h2>
           <p className="dim">Жду данные от движка…</p>
-        ) : (
-          <ul className="list">
-            <li className="list-item">
-              OSC: {remote.osc.enabled ? '✔ включён' : 'выключен — включает наладчик в файле настроек программы (app-config.json)'}
-            </li>
-            <li className="list-item">
-              MQTT:{' '}
-              {!remote.mqtt.enabled
-                ? 'выключен — включает наладчик в файле настроек программы (app-config.json)'
-                : remote.mqtt.connected
-                  ? '✔ подключён к брокеру'
-                  : '✖ включён, но нет связи с брокером'}
-            </li>
-          </ul>
-        )}
-      </section>
+        </section>
+      ) : (
+        <ConnectionPanel remote={remote} send={engine.send} />
+      )}
 
       <OscPanel project={project} updateProject={updateProject} refOptions={refOptions} defaultAction={defaultAction} />
       <MqttPanel project={project} updateProject={updateProject} refOptions={refOptions} defaultAction={defaultAction} />
@@ -71,6 +68,177 @@ export function RemoteView({ engine }: { engine: EngineConnection }) {
         defaultAction={defaultAction}
       />
     </main>
+  );
+}
+
+/** Что сейчас с OSC — словами, как человеку на объекте. */
+function oscStatus(r: RemoteStatus): JSX.Element {
+  if (!r.osc.enabled) return <span className="dim">выключен</span>;
+  if (r.osc.error) return <span className="error-text">✖ {r.osc.error}</span>;
+  if (r.osc.listening) return <span className="ok-text status-note">✔ принимает команды на порт {r.settings.osc.port}</span>;
+  return <span className="dim">открываю порт {r.settings.osc.port}…</span>;
+}
+
+function mqttStatus(r: RemoteStatus): JSX.Element {
+  if (!r.mqtt.enabled) return <span className="dim">выключен</span>;
+  if (r.mqtt.error) return <span className="error-text">✖ {r.mqtt.error}</span>;
+  if (r.mqtt.connected) return <span className="ok-text status-note">✔ на связи с брокером</span>;
+  return (
+    <span className="error-text">
+      ✖ нет связи с брокером {r.settings.mqtt.host}:{r.settings.mqtt.port}
+    </span>
+  );
+}
+
+/**
+ * Включение OSC и MQTT — прямо здесь. До 22.09.2026 это делалось только правкой
+ * файла настроек программы, а вкладка лишь писала «выключен — включает
+ * наладчик в файле»: фонтанщик в файл не полезет. Правки копятся и уходят по
+ * «Применить» — чтобы недописанный адрес брокера не пытался подключаться на
+ * каждую букву. Движок применяет на ходу, шоу не останавливается.
+ */
+function ConnectionPanel({ remote, send }: { remote: RemoteStatus; send: EngineConnection['send'] }) {
+  const [draft, setDraft] = useState<RemoteSettings | null>(null);
+  /** Новый пароль брокера; '' — не менять. */
+  const [password, setPassword] = useState('');
+  const [clearPassword, setClearPassword] = useState(false);
+  const d = draft ?? remote.settings;
+  const dirty = JSON.stringify(d) !== JSON.stringify(remote.settings) || password !== '' || clearPassword;
+
+  const patchOsc = (p: Partial<RemoteSettings['osc']>): void => setDraft({ ...d, osc: { ...d.osc, ...p } });
+  const patchMqtt = (p: Partial<RemoteSettings['mqtt']>): void => setDraft({ ...d, mqtt: { ...d.mqtt, ...p } });
+  const reset = (): void => {
+    setDraft(null);
+    setPassword('');
+    setClearPassword(false);
+  };
+  const apply = (): void => {
+    send({
+      type: 'setRemoteSettings',
+      settings: d,
+      ...(clearPassword ? { mqttPassword: '' } : password !== '' ? { mqttPassword: password } : {}),
+    });
+    reset();
+  };
+
+  return (
+    <section className="panel">
+      <h2>Подключение</h2>
+      <p className="dim">
+        Откуда фонтан принимает команды, кроме редактора и клавиатуры. Применяется сразу, шоу не
+        останавливается.
+      </p>
+
+      <div className="form-row">
+        <label
+          className="field"
+          data-hint="Планшет или телефон с приложением TouchOSC (или похожим) шлёт команды по Wi-Fi на этот компьютер. В приложении укажите IP этого компьютера и тот же порт."
+        >
+          <input type="checkbox" checked={d.osc.enabled} onChange={(e) => patchOsc({ enabled: e.target.checked })} />{' '}
+          <b>OSC</b> — планшет (TouchOSC)
+        </label>
+        <label className="field" data-hint="UDP-порт, на который приложение шлёт команды. У TouchOSC по умолчанию 8000.">
+          Порт:{' '}
+          <input
+            className="input"
+            style={{ width: 80 }}
+            type="number"
+            min={1}
+            max={65535}
+            value={d.osc.port}
+            onChange={(e) => patchOsc({ port: Number(e.target.value) })}
+          />
+        </label>
+        {oscStatus(remote)}
+      </div>
+
+      <div className="form-row">
+        <label
+          className="field"
+          data-hint="Умный дом (Home Assistant и т. п.) или диспетчерская: команды фонтану и его состояние раз в 5 секунд — через MQTT-брокер в сети объекта."
+        >
+          <input type="checkbox" checked={d.mqtt.enabled} onChange={(e) => patchMqtt({ enabled: e.target.checked })} />{' '}
+          <b>MQTT</b> — умный дом, диспетчерская
+        </label>
+        {mqttStatus(remote)}
+      </div>
+      <div className="form-row">
+        <label className="field" data-hint="IP-адрес или имя компьютера, на котором работает MQTT-брокер (например, Mosquitto)">
+          Брокер:{' '}
+          <input
+            className="input"
+            style={{ width: 150 }}
+            value={d.mqtt.host}
+            placeholder="192.168.0.10"
+            onChange={(e) => patchMqtt({ host: e.target.value })}
+          />
+        </label>
+        <label className="field" data-hint="Порт брокера. Обычно 1883.">
+          Порт:{' '}
+          <input
+            className="input"
+            style={{ width: 80 }}
+            type="number"
+            min={1}
+            max={65535}
+            value={d.mqtt.port}
+            onChange={(e) => patchMqtt({ port: Number(e.target.value) })}
+          />
+        </label>
+        <label
+          className="field"
+          data-hint="Начало всех топиков этого фонтана: команды — «префикс/cmd/…», состояние — «префикс/status». Если фонтанов несколько — у каждого свой."
+        >
+          Префикс:{' '}
+          <input
+            className="input"
+            style={{ width: 130 }}
+            value={d.mqtt.topicPrefix}
+            placeholder="fountain-studio"
+            onChange={(e) => patchMqtt({ topicPrefix: e.target.value })}
+          />
+        </label>
+        <label className="field" data-hint="Если брокер пускает только по логину. Пусто — без логина.">
+          Логин:{' '}
+          <input
+            className="input"
+            style={{ width: 100 }}
+            value={d.mqtt.username}
+            onChange={(e) => patchMqtt({ username: e.target.value })}
+          />
+        </label>
+        <label
+          className="field"
+          data-hint="Пароль хранится на этом компьютере и в редактор не возвращается — видно только, задан он или нет. Оставьте пустым, чтобы не менять."
+        >
+          Пароль:{' '}
+          <input
+            className="input"
+            style={{ width: 100 }}
+            type="password"
+            value={password}
+            disabled={clearPassword}
+            placeholder={clearPassword ? 'убран' : remote.mqttHasPassword ? 'задан' : 'нет'}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </label>
+        {remote.mqttHasPassword && !clearPassword && (
+          <button className="btn btn-small" onClick={() => setClearPassword(true)}>
+            Убрать пароль
+          </button>
+        )}
+      </div>
+
+      <div className="form-row">
+        <button className="btn active" disabled={!dirty} onClick={apply}>
+          Применить
+        </button>
+        <button className="btn" disabled={!dirty} onClick={reset}>
+          Отменить правки
+        </button>
+        {dirty && <span className="warn">Не применено — работает то, что было.</span>}
+      </div>
+    </section>
   );
 }
 
@@ -207,9 +375,8 @@ function MqttPanel({
     <section className="panel">
       <h2>MQTT-привязки</h2>
       <p className="dim">
-        Полный топик команды — «&lt;префикс&gt;/cmd/&lt;окончание&gt;» (префикс задан в настройках программы,
-        по умолчанию «fountain-studio»); здесь пишется только окончание. Состояние фонтана уходит в
-        «&lt;префикс&gt;/status» раз в 5 с.
+        Полный топик команды — «&lt;префикс&gt;/cmd/&lt;окончание&gt;» (префикс — в «Подключении» выше);
+        здесь пишется только окончание. Состояние фонтана уходит в «&lt;префикс&gt;/status» раз в 5 с.
       </p>
       <table className="table">
         <thead>

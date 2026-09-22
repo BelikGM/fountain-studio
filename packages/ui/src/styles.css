@@ -1657,6 +1657,8 @@ h2.panel-head-search {
 .lines-apply .warn, .lines-apply .error-text { margin: 6px 0 0; font-size: 13px; }
 .lines-apply-dirty .warn { color: var(--warn-text); }
 .ok-text { color: var(--ok); font-weight: 600; }
+/* Статус рядом с полями — тем же кеглем и отступом, что «✖» (.error-text): иначе «на связи» крупнее «нет связи». */
+.ok-text.status-note { font-size: 12px; margin-left: 8px; }
 
 /* ── Настройки: состояние USB-DMX (драйвер FTDI, интерфейсы Musidora) ── */
 .usb-status {

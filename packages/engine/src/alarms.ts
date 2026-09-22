@@ -1,5 +1,4 @@
 import { eventLog } from './eventlog';
-import type { MqttController } from './mqttcontroller';
 
 /**
  * Уведомления об авариях (§27 доработки, §3 п.4) — публикует то же самое, что
@@ -8,7 +7,15 @@ import type { MqttController } from './mqttcontroller';
  * функция, а не код прямо в index.ts — чтобы смоук-тест проверял ровно то,
  * что реально включается в проде, а не переписанную копию.
  */
-export function wireAlarmNotifications(mqtt: MqttController): () => void {
+/**
+ * Кто умеет публиковать: сам MqttController или RemoteControl, у которого
+ * MQTT включается на ходу и может в данный момент отсутствовать.
+ */
+export interface AlarmPublisher {
+  publish(topicSuffix: string, payload: string): void;
+}
+
+export function wireAlarmNotifications(mqtt: AlarmPublisher): () => void {
   return eventLog.subscribe((event) => {
     if (event.level === 'info') return;
     mqtt.publish(

@@ -97,9 +97,8 @@ import { DmxCapture } from '../dmxcapture';
 import { DmxTriggerWatcher } from '../dmxtriggers';
 import { Engine } from '../engine';
 import { canonicalPayload, loadLicenseStatus, machineFingerprint, verifyLicenseFile } from '../license';
-import { MqttController } from '../mqttcontroller';
+import { RemoteControl } from '../remotecontrol';
 import { NetworkMonitor } from '../netmonitor';
-import { OscServer } from '../oscserver';
 import {
   CC_GET_COMMAND,
   CC_SET_COMMAND,
@@ -434,6 +433,9 @@ const engine = new Engine({
   audio: { player: 'none', ffplayPath: 'ffplay', volumeDb: 0, muted: false, bassDb: 0, trebleDb: 0 },
   universes: [{ id: 1, label: 'Тест', outputs: [{ type: 'artnet', host: '127.0.0.1', universe: 0 }] }],
   backup: { enabled: false, intervalMin: 10 }, // таймер выключен — снимки берём вручную в тесте
+  // Настройки программы — во временной папке: тест проверяет, что пульты
+  // записываются в файл, и не должен трогать настоящий app-config.json.
+  configFile: path.join(tmpDir, 'app-config.json'),
 });
 const store = new ProjectStore(projectFile);
 const backups = new BackupStore(projectFile, () => JSON.stringify(store.project, null, 2), {
@@ -459,16 +461,23 @@ net.onDmx = (universe, data, fromIp) => {
 net.start();
 
 const OSC_PORT = 15021;
-const osc = new OscServer(engine, OSC_PORT, () => store.project.oscBindings);
-osc.start();
-const mqtt = new MqttController(
+/** Второй порт OSC — проверка переключения на ходу. */
+const OSC_PORT_2 = 15023;
+// Тот же класс, что поднимает index.ts: OSC и MQTT включаются и
+// перенастраиваются на ходу с вкладки «Внешние пульты».
+const remote = new RemoteControl(
   engine,
-  { host: '127.0.0.1', port: MOCK_MQTT_PORT, topicPrefix: 'test' },
+  () => store.project.oscBindings,
   () => store.project.mqttBindings,
+  {
+    osc: { enabled: true, port: OSC_PORT },
+    mqtt: { enabled: true, host: '127.0.0.1', port: MOCK_MQTT_PORT, topicPrefix: 'test', username: '' },
+  },
 );
-// Та же обёртка, что index.ts включает в проде при активном MQTT — проверяем
-// реальную функцию, не переписанную для теста копию.
-wireAlarmNotifications(mqtt);
+remote.start();
+// Та же обёртка, что index.ts включает в проде — проверяем реальную функцию,
+// не переписанную для теста копию.
+wireAlarmNotifications(remote);
 
 const wss = startServer(
   engine,
@@ -477,8 +486,7 @@ const wss = startServer(
   backups,
   net,
   dmxCapture,
-  osc,
-  mqtt,
+  remote,
 );
 
 // Демо-проект: насос (адрес 1), клапан (2), RGB (10–12).
@@ -2192,6 +2200,78 @@ async function main(): Promise<void> {
   check(true, 'MQTT: публикация test/cmd/stop-all → stopAllPlayback(), команда с «внешнего» издателя дошла');
   mqttPub.end();
 
+  console.log('— Внешние пульты: включение на ходу с вкладки —');
+  const oscEvents = (): number => logEvents.filter((e) => e.source === 'osc' && e.message.includes('/scene/a')).length;
+  send({
+    type: 'setRemoteSettings',
+    settings: {
+      osc: { enabled: true, port: OSC_PORT_2 },
+      mqtt: { enabled: false, host: '127.0.0.1', port: MOCK_MQTT_PORT, topicPrefix: 'test', username: '' },
+    },
+    mqttPassword: 'секрет-брокера',
+  });
+  await waitFor(
+    'OSC переехал на второй порт, MQTT выключен',
+    () =>
+      remoteStatusMsg?.settings.osc.port === OSC_PORT_2 &&
+      remoteStatusMsg.osc.listening &&
+      !remoteStatusMsg.mqtt.enabled &&
+      !remoteStatusMsg.mqtt.connected,
+    3000,
+  );
+  check(true, 'setRemoteSettings: OSC открыл новый порт, MQTT отключился — без перезапуска движка');
+  check(remoteStatusMsg?.mqttHasPassword === true, 'пароль брокера принят: в статусе «задан»');
+  check(!JSON.stringify(remoteStatusMsg).includes('секрет-брокера'), 'сам пароль в редактор не уходит');
+  send({ type: 'setScene', sceneId: null });
+  const beforeNew = oscEvents();
+  mockNode.send(encodeOscMessage('/scene/a'), OSC_PORT_2, '127.0.0.1');
+  await waitFor('OSC на новом порту включил сцену', () => playback.activeSceneId === 'sceneA', 3000);
+  check(oscEvents() === beforeNew + 1, 'команда на новый порт OSC исполнена');
+  send({ type: 'setScene', sceneId: null });
+  await waitFor('сцена снята', () => playback.activeSceneId === null, 2000);
+  mockNode.send(encodeOscMessage('/scene/a'), OSC_PORT, '127.0.0.1');
+  await new Promise((r) => setTimeout(r, 400));
+  check(playback.activeSceneId === null && oscEvents() === beforeNew + 1, 'старый порт OSC больше не слушается');
+  const savedRemote = JSON.parse(fs.readFileSync(path.join(tmpDir, 'app-config.json'), 'utf8')) as {
+    osc?: { enabled: boolean; port: number };
+    mqtt?: { enabled: boolean; password?: string };
+  };
+  check(
+    savedRemote.osc?.port === OSC_PORT_2 && savedRemote.mqtt?.enabled === false && savedRemote.mqtt?.password === 'секрет-брокера',
+    'настройки пультов записаны в настройки программы — переживут перезапуск',
+  );
+
+  // Порт занят другой программой — сказать это словами, а не молчать.
+  const squatter = dgram.createSocket('udp4');
+  await new Promise<void>((r) => squatter.bind(15024, '0.0.0.0', () => r()));
+  send({
+    type: 'setRemoteSettings',
+    settings: {
+      osc: { enabled: true, port: 15024 },
+      mqtt: { enabled: true, host: '127.0.0.1', port: MOCK_MQTT_PORT, topicPrefix: 'test', username: '' },
+    },
+  });
+  await waitFor('занятый порт OSC замечен', () => (remoteStatusMsg?.osc.error ?? '').includes('занят'), 3000);
+  check(!remoteStatusMsg!.osc.listening, `занятый порт: «${remoteStatusMsg!.osc.error}»`);
+  await waitFor('MQTT снова подключён', () => remoteStatusMsg?.mqtt.connected === true, 3000);
+  check(remoteStatusMsg?.mqttHasPassword === true, 'MQTT включён обратно, пароль не потерялся (поле пароля не присылали)');
+  squatter.close();
+  // Возвращаем как было: дальше смоук проверяет аварии в MQTT.
+  send({
+    type: 'setRemoteSettings',
+    settings: {
+      osc: { enabled: true, port: OSC_PORT },
+      mqtt: { enabled: true, host: '127.0.0.1', port: MOCK_MQTT_PORT, topicPrefix: 'test', username: '' },
+    },
+    mqttPassword: '',
+  });
+  await waitFor(
+    'пульты вернулись на исходные настройки',
+    () => remoteStatusMsg?.settings.osc.port === OSC_PORT && remoteStatusMsg.osc.listening && remoteStatusMsg.mqtt.connected,
+    3000,
+  );
+  check(remoteStatusMsg?.mqttHasPassword === false, 'пустой пароль — пароль убран');
+
   console.log('— Хранилище аудио —');
   const audioData = Buffer.from('НЕ-НАСТОЯЩИЙ-MP3: проверка хранилища').toString('base64');
   send({ type: 'uploadAudio', name: 'тест.mp3', dataBase64: audioData });
@@ -2500,8 +2580,7 @@ main()
     ws.close();
     wss.close();
     net.stop();
-    osc.stop();
-    mqtt.stop();
+    void remote.stop();
     mockNode.close();
     vfdServer.close();
     mqttSub.destroy();

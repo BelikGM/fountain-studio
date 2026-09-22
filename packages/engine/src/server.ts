@@ -4,6 +4,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import {
   applyAddressRemap,
   sanitizeProject,
+  sanitizeRemoteSettings,
   type ClientMessage,
   type ConfigUniverse,
   type RdmAction,
@@ -25,9 +26,8 @@ import { eventLog } from './eventlog';
 import type { Engine } from './engine';
 import { activateLicense, loadLicenseStatus } from './license';
 import { refreshRevocationList } from './licenseRevocation';
-import type { MqttController } from './mqttcontroller';
 import type { NetworkMonitor } from './netmonitor';
-import type { OscServer } from './oscserver';
+import type { RemoteControl } from './remotecontrol';
 import type { AudioPlayer } from './audioplayer';
 import type { ProjectStore } from './project';
 import { linesUsable, peekProjectName, resolveProjectDir, type ProjectsApi } from './projects';
@@ -68,8 +68,7 @@ export function startServer(
   backups?: BackupStore,
   net?: NetworkMonitor,
   capture?: DmxCapture,
-  osc?: OscServer,
-  mqtt?: MqttController,
+  remote?: RemoteControl,
   telegram?: TelegramNotifier,
   projects?: ProjectsApi,
   player?: AudioPlayer,
@@ -134,13 +133,16 @@ export function startServer(
   // Аварийное отключение: показываем сразу, не дожидаясь следующего опроса.
   engine.onFailsafeChange = (state) => broadcast({ type: 'failsafe', state });
   engine.pumps.onChange = broadcastModbus;
-  const remoteStatus = (): Extract<ServerMessage, { type: 'remoteStatus' }> => ({
-    type: 'remoteStatus',
-    osc: { enabled: osc !== undefined },
-    mqtt: { enabled: mqtt !== undefined, connected: mqtt?.isConnected ?? false },
-  });
+  const remoteStatus = (): Extract<ServerMessage, { type: 'remoteStatus' }> =>
+    remote?.status() ?? {
+      type: 'remoteStatus',
+      settings: sanitizeRemoteSettings(undefined),
+      mqttHasPassword: false,
+      osc: { enabled: false, listening: false, error: null },
+      mqtt: { enabled: false, connected: false, error: null },
+    };
   const broadcastRemoteStatus = (): void => broadcast(remoteStatus());
-  if (mqtt) mqtt.onChange = broadcastRemoteStatus;
+  if (remote) remote.onChange = broadcastRemoteStatus;
   const backupConfigMessage = (): Extract<ServerMessage, { type: 'backupConfig' }> => ({
     type: 'backupConfig',
     ...(backups?.config() ?? { enabled: false, intervalMin: 10 }),
@@ -473,6 +475,25 @@ export function startServer(
           // Настройка ПРОГРАММЫ: про усилитель на объекте, а не про шоу.
           saveAppConfigPatch(engine.config.configFile ?? '', { audio: engine.config.audio });
           broadcast(configMessage());
+          break;
+        }
+        case 'setRemoteSettings': {
+          if (!remote) break;
+          const next = sanitizeRemoteSettings(msg.settings);
+          const password = typeof msg.mqttPassword === 'string' ? msg.mqttPassword : undefined;
+          void remote.apply(next, password).then(() => {
+            const secret = remote.mqttSecret;
+            // Настройка ПРОГРАММЫ: порт и брокер — про сеть этого компьютера,
+            // а не про объект. Пароль и id клиента пишем рядом, но наружу не отдаём.
+            engine.config.osc = next.osc;
+            engine.config.mqtt = {
+              ...next.mqtt,
+              ...(secret.password ? { password: secret.password } : {}),
+              ...(secret.clientId ? { clientId: secret.clientId } : {}),
+            };
+            saveAppConfigPatch(engine.config.configFile ?? '', { osc: engine.config.osc, mqtt: engine.config.mqtt });
+            broadcastRemoteStatus();
+          });
           break;
         }
         case 'setFrameMode': {
