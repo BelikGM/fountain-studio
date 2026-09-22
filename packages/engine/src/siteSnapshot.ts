@@ -34,12 +34,8 @@ function actionText(p: Project, e: ScheduleEntry): string {
       return `группа секвенсоров «${nameOf(p.sequenceGroups, a.refId)}»`;
     case 'scene':
       return `сцена «${nameOf(p.scenes, a.refId)}»`;
-    case 'pause':
-      return 'пауза — картина замирает';
     case 'stopAll':
-      return 'стоп — фонтан в покое';
-    case 'off':
-      return 'выключить — всё в 0';
+      return 'стоп — погасить всё';
   }
 }
 

@@ -1084,15 +1084,22 @@ async function main(): Promise<void> {
   send({ type: 'setChannel', universe: 1, channel: 12, value: 77 });
   await waitFor('ручной ползунок', () => ch(12) === 77);
   const t2 = hms(1500);
-  setSchedules([{ id: 's1', name: 'Основное', enabled: true, entries: [entry('sch2', t2, { type: 'off' })] }]);
+  setSchedules([{ id: 's1', name: 'Основное', enabled: true, entries: [entry('sch2', t2, { type: 'stopAll' })] }]);
   // Остановку воспроизведения поток расчёта подтверждает чуть позже, чем гаснет
   // кадр, — ждём и её, а не смотрим в тот же миг.
-  await waitFor('«Выключить» сработало', () => playback.dark === 'off' && ch(1) === 0 && ch(12) === 0 && playback.activeSceneId === null, 5000);
-  check(playback.activeSceneId === null, '«Выключить»: сцена остановлена, всё в 0, режим «выключено»');
+  await waitFor('«Стоп» сработал', () => playback.dark === 'off' && ch(1) === 0 && ch(12) === 0 && playback.activeSceneId === null, 5000);
+  check(playback.activeSceneId === null, '«Стоп»: сцена остановлена, всё в 0 до следующего запуска');
   check(ch(12) === 0, 'ручной ползунок с «Отладки» сброшен записью расписания');
+  // Сцена покоя при «Стопе» тоже не горит: стоп гасит всё.
+  send({
+    type: 'updateProject',
+    project: { ...demo, idleSceneId: 'sceneB', schedules: [{ id: 's1', name: 'Основное', enabled: true, entries: [] }] } as never,
+  });
+  await new Promise((r) => setTimeout(r, 600));
+  check(ch(1) === 0 && playback.dark === 'off', `после «Стопа» сцена покоя не горит (насос ${ch(1)})`);
   send({ type: 'setScene', sceneId: 'sceneA' });
-  await waitFor('ручной запуск выводит из «выключено»', () => playback.dark !== 'off' && ch(1) === 200, 3000);
-  check(true, 'ручной запуск после «Выключить» — фонтан снова работает');
+  await waitFor('ручной запуск после стопа', () => playback.dark !== 'off' && ch(1) === 200, 3000);
+  check(true, 'ручной запуск после «Стопа» — фонтан снова работает');
 
   // Гашение перехода: сначала всё в 0, через секунду — новое.
   const t3 = hms(1500);
@@ -1108,7 +1115,7 @@ async function main(): Promise<void> {
   const t4 = hms(1500);
   setSchedules([
     { id: 's1', name: 'Основное', enabled: true, entries: [entry('sch4', t4, { type: 'scene', refId: 'sceneA' })] },
-    { id: 's2', name: 'Второе', enabled: true, entries: [entry('sch5', t4, { type: 'off' })] },
+    { id: 's2', name: 'Второе', enabled: true, entries: [entry('sch5', t4, { type: 'stopAll' })] },
   ]);
   await waitFor('коллизия разобрана', () => playback.activeSceneId === 'sceneA' && !playback.running.some((r) => r.sequenceId === 'seq1'), 5000);
   await new Promise((r) => setTimeout(r, 300));
@@ -1120,7 +1127,7 @@ async function main(): Promise<void> {
 
   // Неактивное расписание не срабатывает.
   const t5 = hms(1500);
-  setSchedules([{ id: 's1', name: 'Основное', enabled: false, entries: [entry('sch6', t5, { type: 'off' })] }]);
+  setSchedules([{ id: 's1', name: 'Основное', enabled: false, entries: [entry('sch6', t5, { type: 'stopAll' })] }]);
   await new Promise((r) => setTimeout(r, 2500));
   check(playback.dark !== 'off' && playback.activeSceneId === 'sceneA', 'выключенное расписание не срабатывает');
 
@@ -1149,6 +1156,14 @@ async function main(): Promise<void> {
   check(
     migrated.schedules.length === 1 && migrated.schedules[0]!.enabled && migrated.schedules[0]!.entries[0]?.action.type === 'stopAll',
     'старый объект: прежние записи — в расписании «Основное», оно активно',
+  );
+  const oldKinds = sanitizeProject({
+    ...demo,
+    schedules: [{ id: 'x', name: 'x', enabled: true, entries: [entry('p', '10:00', { type: 'pause' }), entry('o', '11:00', { type: 'off' })] }],
+  } as never);
+  check(
+    oldKinds.schedules[0]!.entries.every((e) => e.action.type === 'stopAll'),
+    'записи «Пауза» и «Выключить» (были один день) открываются как «Стоп»',
   );
   send({ type: 'stopAllPlayback' });
   await waitFor('сцена снята', () => ch(1) === 0);

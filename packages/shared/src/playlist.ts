@@ -62,11 +62,11 @@ export function sanitizePlaylists(raw: unknown, showIds: Set<string>): Playlist[
  * Раньше запись добавляла действие к уже идущему, и в 20:00 вода дневного
  * макроса смешивалась с шоу по правилу «кто больше».
  *
- *  · pause   — «Пауза»: картина замирает как есть, ничего не гаснет.
- *  · stopAll — «Стоп»: программы останавливаются, фонтан в покое — горят
- *              «Сцена, когда ничего не играет» и служебный свет, если заданы.
- *  · off     — «Выключить»: гаснет ВСЁ, включая сцену покоя и служебный свет,
- *              до следующего включения (записью расписания или руками).
+ *  · stopAll — «Стоп»: гаснет ВСЁ — программы, сцена покоя, служебный свет,
+ *              ручные ползунки — до следующего запуска (записью расписания или
+ *              руками). Заказчик 23.09.2026: «стоп тушит всё, никакой паузы и
+ *              продолжить». До этого были отдельно «Пауза», «Стоп — в покой» и
+ *              «Выключить» — разница между ними только путала.
  */
 export type ScheduleAction =
   | { type: 'playlist'; refId: string }
@@ -74,13 +74,7 @@ export type ScheduleAction =
   | { type: 'sequence'; refId: string }
   | { type: 'sequenceGroup'; refId: string }
   | { type: 'scene'; refId: string }
-  | { type: 'pause' }
-  | { type: 'stopAll' }
-  | { type: 'off' };
-
-/** Действия без цели — им не нужен выбор «что запустить». */
-export type ScheduleControlType = 'pause' | 'stopAll' | 'off';
-export const SCHEDULE_CONTROL_TYPES: ScheduleControlType[] = ['pause', 'stopAll', 'off'];
+  | { type: 'stopAll' };
 
 export function isScheduleProgram(a: ScheduleAction): a is Extract<ScheduleAction, { refId: string }> {
   return 'refId' in a;
@@ -135,7 +129,9 @@ export function sanitizeScheduleEntries(raw: unknown, ids: ScheduleRefIds): Sche
     const a = e.action;
     if (!a) continue;
     let action: ScheduleAction | null = null;
-    if (a.type === 'stopAll' || a.type === 'pause' || a.type === 'off') action = { type: a.type };
+    // «Пауза» и «Выключить» жили один день (22.09.2026) — теперь это «Стоп».
+    const t = a.type as string;
+    if (t === 'stopAll' || t === 'pause' || t === 'off') action = { type: 'stopAll' };
     else if (a.type === 'playlist' && ids.playlists.has(a.refId)) action = { type: 'playlist', refId: a.refId };
     else if (a.type === 'show' && ids.shows.has(a.refId)) action = { type: 'show', refId: a.refId };
     else if (a.type === 'sequence' && ids.sequences.has(a.refId)) action = { type: 'sequence', refId: a.refId };

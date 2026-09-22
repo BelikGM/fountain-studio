@@ -22,12 +22,8 @@ function actionWord(a: ScheduleAction): string {
       return 'группа секвенсоров';
     case 'scene':
       return 'сцена';
-    case 'pause':
-      return 'пауза';
     case 'stopAll':
-      return 'стоп';
-    case 'off':
-      return 'выключить';
+      return 'стоп — погасить всё';
   }
 }
 
@@ -109,7 +105,7 @@ export class Scheduler {
     const last = lastDueScheduleEntry(this.getSchedules(), now);
     if (!last) return;
     const a = last.entry.action;
-    if (a.type === 'show' || a.type === 'pause') return;
+    if (a.type === 'show') return;
     const hm = last.entry.time.slice(0, 5);
     eventLog.log(
       'schedule',
@@ -134,14 +130,9 @@ export class Scheduler {
     }
     this.cancelPending();
     const a = e.action;
-    if (a.type === 'pause') {
-      // Пауза — замереть как есть: ничего не останавливаем и не гасим.
-      this.engine.pauseAll();
-      return;
-    }
     this.engine.takeOverForSchedule();
-    if (a.type === 'stopAll') return;
-    if (a.type === 'off') {
+    if (a.type === 'stopAll') {
+      // Стоп гасит всё — и сцену покоя, и служебный свет — до следующего запуска.
       this.engine.setDark('off');
       return;
     }
