@@ -431,6 +431,11 @@ export type ClientMessage =
   // + вся папка audio/, тем же base64-путём, что и загрузка аудио выше.
   | { type: 'exportProject' }
   | { type: 'importProject'; dataBase64: string }
+  // Резервная копия настроек САМОЙ ПРОГРАММЫ (не объекта): лицензия, токен
+  // бота, настройки движка и список недавних объектов. Копия объекта их не
+  // содержит — они лежат в папке данных приложения.
+  | { type: 'exportAppSettings' }
+  | { type: 'importAppSettings'; dataBase64: string }
   // Лицензия (§27 доработки) — активация содержимым файла fountain.license.json,
   // проверка целиком на движке (см. engine/license.ts).
   | { type: 'activateLicense'; fileText: string }
@@ -612,6 +617,10 @@ export type ServerMessage =
   | { type: 'projectExport'; filename: string; dataBase64: string }
   /** Ответ на importProject — успех/ошибка (например, не ZIP или битый project.json). */
   | { type: 'importResult'; ok: boolean; message: string }
+  /** Ответ на exportAppSettings — .zip с настройками программы. */
+  | { type: 'appSettingsExport'; filename: string; dataBase64: string }
+  /** Ответ на importAppSettings — что восстановлено и что делать дальше. */
+  | { type: 'appSettingsImportResult'; ok: boolean; message: string }
   /** Статус лицензии — при подключении и после activateLicense. */
   | { type: 'license'; status: LicenseStatus }
   /** Ответ на getDmxCapture: последний кадр внешнего ArtDMX; data = '' — захвата нет. */

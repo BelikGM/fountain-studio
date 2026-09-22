@@ -153,6 +153,9 @@ export interface EngineConnection {
   /** Экспорт/импорт проекта одним файлом (§27 доработки) — project.json + audio/ в .zip. */
   requestExportProject: () => Promise<{ filename: string; dataBase64: string }>;
   importProjectArchive: (dataBase64: string) => Promise<{ ok: boolean; message: string }>;
+  /** Резервная копия настроек ПРОГРАММЫ: лицензия, токен бота, настройки движка. */
+  requestExportAppSettings: () => Promise<{ filename: string; dataBase64: string }>;
+  importAppSettingsArchive: (dataBase64: string) => Promise<{ ok: boolean; message: string }>;
   /** Последний кадр внешнего ArtDMX по вселенной проекта (null — захвата нет). */
   requestDmxCapture: (
     universe: number,
@@ -247,6 +250,8 @@ export function useEngine(): EngineConnection {
   const audioWaitersRef = useRef(new Map<string, ((data: Uint8Array | null) => void)[]>());
   const exportWaitersRef = useRef<((data: { filename: string; dataBase64: string }) => void)[]>([]);
   const importWaitersRef = useRef<((r: { ok: boolean; message: string }) => void)[]>([]);
+  const appExportWaitersRef = useRef<((data: { filename: string; dataBase64: string }) => void)[]>([]);
+  const appImportWaitersRef = useRef<((r: { ok: boolean; message: string }) => void)[]>([]);
   const licenseWaitersRef = useRef<((status: LicenseStatus) => void)[]>([]);
   /** Ожидающие ответов захвата DMX по вселенной. */
   const captureWaitersRef = useRef(
@@ -381,6 +386,18 @@ export function useEngine(): EngineConnection {
             const waiters = exportWaitersRef.current;
             exportWaitersRef.current = [];
             for (const resolve of waiters) resolve({ filename: msg.filename, dataBase64: msg.dataBase64 });
+            break;
+          }
+          case 'appSettingsExport': {
+            const waiters = appExportWaitersRef.current;
+            appExportWaitersRef.current = [];
+            for (const resolve of waiters) resolve({ filename: msg.filename, dataBase64: msg.dataBase64 });
+            break;
+          }
+          case 'appSettingsImportResult': {
+            const waiters = appImportWaitersRef.current;
+            appImportWaitersRef.current = [];
+            for (const resolve of waiters) resolve({ ok: msg.ok, message: msg.message });
             break;
           }
           case 'importResult': {
@@ -536,6 +553,24 @@ export function useEngine(): EngineConnection {
     [send],
   );
 
+  const requestExportAppSettings = useCallback(
+    () =>
+      new Promise<{ filename: string; dataBase64: string }>((resolve) => {
+        appExportWaitersRef.current.push(resolve);
+        send({ type: 'exportAppSettings' });
+      }),
+    [send],
+  );
+
+  const importAppSettingsArchive = useCallback(
+    (dataBase64: string) =>
+      new Promise<{ ok: boolean; message: string }>((resolve) => {
+        appImportWaitersRef.current.push(resolve);
+        send({ type: 'importAppSettings', dataBase64 });
+      }),
+    [send],
+  );
+
   const requestDmxCapture = useCallback(
     (universe: number) =>
       new Promise<{ data: Uint8Array; ageMs: number; fromIp: string; frames: number } | null>((resolve) => {
@@ -662,6 +697,8 @@ export function useEngine(): EngineConnection {
     requestAudio,
     requestExportProject,
     importProjectArchive,
+    requestExportAppSettings,
+    importAppSettingsArchive,
     requestDmxCapture,
     requestDmxCycle,
     requestRdm,

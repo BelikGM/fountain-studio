@@ -386,6 +386,94 @@ function ExportImportPanel({ engine }: { engine: EngineConnection }) {
 }
 
 /**
+ * Резервная копия настроек САМОЙ ПРОГРАММЫ. Копия объекта их не содержит:
+ * лицензия, токен бота и настройки движка лежат в папке данных приложения.
+ * Умер диск — объект вернулся бы из копии, а лицензию и бота пришлось бы
+ * заводить заново; здесь они уезжают одним файлом.
+ */
+function AppSettingsBackupPanel({ engine }: { engine: EngineConnection }) {
+  const { requestExportAppSettings, importAppSettingsArchive } = engine;
+  const [saving, setSaving] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const doExport = async (): Promise<void> => {
+    setSaving(true);
+    try {
+      const { filename, dataBase64 } = await requestExportAppSettings();
+      const bytes = Uint8Array.from(atob(dataBase64), (c) => c.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const doImport = async (file: File): Promise<void> => {
+    const ok = await askConfirm('Восстановить настройки программы из файла?', {
+      detail:
+        'Лицензия, токен бота и настройки движка на этом компьютере будут заменены тем, что в файле. Объекты не затрагиваются.',
+      okLabel: 'Восстановить',
+    });
+    if (!ok) return;
+    setRestoring(true);
+    setMsg(null);
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let bin = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      setMsg(await importAppSettingsArchive(btoa(bin)));
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  return (
+    <section className="panel">
+      <h2>Резервная копия настроек программы</h2>
+      <p className="dim">
+        Объект и настройки программы лежат врозь: копия объекта не содержит ни лицензии, ни бота. Здесь — всё о самой
+        программе одним файлом: лицензия, токен Telegram-бота, настройки движка и список недавних объектов. Сделайте
+        такую копию сразу после наладки и держите её не на том же диске.
+      </p>
+      <div className="form-row">
+        <button className="btn" onClick={() => void doExport()} disabled={saving}>
+          {saving ? 'Собираю…' : '⬇ Сохранить в файл'}
+        </button>
+        <label className="btn">
+          {restoring ? 'Восстанавливаю…' : '⬆ Восстановить из файла…'}
+          <input
+            type="file"
+            accept=".zip"
+            style={{ display: 'none' }}
+            disabled={restoring}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void doImport(f);
+              e.target.value = '';
+            }}
+          />
+        </label>
+      </div>
+      <p className="dim">
+        В файле лежит токен бота — храните его как пароль. Лицензия привязана к компьютеру: на другом ПК по ней не
+        заработает, её выпускают заново.
+      </p>
+      {msg && (
+        <p className={msg.ok ? 'ok-text' : 'warn'}>
+          {msg.ok ? '✔ ' : '⚠ '}
+          {msg.message}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
  * Авто-бэкапы проекта (§27 доработки, УХ п.5): именованные снимки по расписанию,
  * отдельно от непрерывного живого автосохранения (то всегда включено и невидимо).
  * Смена интервала применяется сразу, без кнопки «Применить» и без остановки
@@ -401,7 +489,7 @@ function BackupPanel({ engine }: { engine: EngineConnection }) {
   if (!backupConfig) {
     return (
       <section className="panel">
-        <h2>Резервные копии</h2>
+        <h2>Резервные копии объекта</h2>
         <p className="dim">Жду данные от движка…</p>
       </section>
     );
@@ -433,7 +521,7 @@ function BackupPanel({ engine }: { engine: EngineConnection }) {
 
   return (
     <section className="panel">
-      <h2>Резервные копии</h2>
+      <h2>Резервные копии объекта</h2>
       <p className="dim">
         Копии объекта по расписанию — на случай, если в редакторе что-то испортили. Это отдельно от
         автосохранения: оно работает всегда.
@@ -2221,6 +2309,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
 
 
       <ExportImportPanel engine={engine} />
+      <AppSettingsBackupPanel engine={engine} />
       <BackupPanel engine={engine} />
       <AutostartPanel engine={engine} />
       <TelegramPanel engine={engine} />

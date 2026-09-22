@@ -60,6 +60,19 @@ import {
 
 export const ENGINE_VERSION = '0.6.0';
 
+/**
+ * Что кладём в резервную копию настроек ПРОГРАММЫ (папка данных приложения).
+ * Рабочие данные объектов сюда не входят — у них свой перенос одним файлом.
+ * Кэш отзыва лицензий (revoked-cache.json) не берём: он наживной, движок
+ * обновит его сам, когда будет сеть.
+ */
+const APP_BACKUP_FILES: [file: string, what: string][] = [
+  ['fountain.license.json', 'лицензия'],
+  ['fountain.secrets.json', 'токен Telegram-бота'],
+  ['app-config.json', 'настройки движка'],
+  ['app-settings.json', 'недавние объекты'],
+];
+
 /** WebSocket API движка: команды от редактора, поток статистики, кадров и состояния. */
 export function startServer(
   engine: Engine,
@@ -599,6 +612,77 @@ export function startServer(
               dataBase64: zipBuf.toString('base64'),
             } satisfies ServerMessage),
           );
+          break;
+        }
+        case 'exportAppSettings': {
+          // Копия объекта НЕ содержит лицензию, токен бота и настройки
+          // программы: они лежат в папке данных приложения. Умер диск — объект
+          // восстановится из копии, а лицензию и бота пришлось бы заводить
+          // заново. Здесь — «всё о программе» одним файлом.
+          const dir = projects?.appDataDir ?? '';
+          const entries: { name: string; data: Buffer }[] = [];
+          const took: string[] = [];
+          for (const [file, what] of APP_BACKUP_FILES) {
+            const full = path.join(dir, file);
+            if (!dir || !fs.existsSync(full)) continue;
+            entries.push({ name: file, data: fs.readFileSync(full) });
+            took.push(what);
+          }
+          entries.push({
+            name: 'ЧТО-ЭТО.txt',
+            data: Buffer.from(
+              [
+                'Резервная копия настроек программы Fountain Studio.',
+                '',
+                'Внутри: ' + (took.join(', ') || 'ничего не нашлось'),
+                '',
+                'Как восстановить: «Настройки» → «Резервная копия настроек программы»',
+                '→ «Восстановить из файла…», затем перезапустить программу.',
+                '',
+                'ВАЖНО: в этом файле лежат токен Telegram-бота и лицензия — храните',
+                'его как пароль и не выкладывайте никуда. Лицензия привязана к',
+                'компьютеру: на другом ПК её придётся выпустить заново.',
+                '',
+                'Объекты (приборы, сцены, шоу, расписание, музыка) сюда НЕ входят —',
+                'для них «Перенос объекта одним файлом» на той же вкладке.',
+              ].join('\r\n'),
+              'utf8',
+            ),
+          });
+          const stamp = new Date().toISOString().slice(0, 10);
+          ws.send(
+            JSON.stringify({
+              type: 'appSettingsExport',
+              filename: `fountain-настройки-${stamp}.zip`,
+              dataBase64: createZip(entries).toString('base64'),
+            } satisfies ServerMessage),
+          );
+          break;
+        }
+        case 'importAppSettings': {
+          const dir = projects?.appDataDir ?? '';
+          let ok = false;
+          let message = '';
+          try {
+            if (!dir) throw new Error('движок не знает, где папка настроек');
+            const entries = readZip(Buffer.from(msg.dataBase64, 'base64'));
+            const known = new Set(APP_BACKUP_FILES.map(([f]) => f));
+            const restored: string[] = [];
+            for (const e of entries) {
+              if (!known.has(e.name)) continue;
+              // Проверяем, что это JSON, ДО записи: битый app-config.json
+              // движок при следующем запуске не прочитает вовсе.
+              JSON.parse(e.data.toString('utf8'));
+              fs.writeFileSync(path.join(dir, e.name), e.data);
+              restored.push(APP_BACKUP_FILES.find(([f]) => f === e.name)?.[1] ?? e.name);
+            }
+            if (restored.length === 0) throw new Error('в файле нет настроек программы — это копия объекта или чужой архив');
+            ok = true;
+            message = `Восстановлено: ${restored.join(', ')}. Перезапустите программу, чтобы настройки вступили в силу.`;
+          } catch (err) {
+            message = err instanceof Error ? err.message : String(err);
+          }
+          ws.send(JSON.stringify({ type: 'appSettingsImportResult', ok, message } satisfies ServerMessage));
           break;
         }
         case 'importProject': {
