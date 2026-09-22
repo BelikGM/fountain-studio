@@ -236,6 +236,45 @@ export function activeScheduleEntries(schedules: Schedule[]): { entry: ScheduleE
 }
 
 /**
+ * Записи, время которых попало в промежуток (from; to] — по дням недели, как
+ * они и срабатывают. Нужно, когда часы ПРЫГНУЛИ: перевод часов, сверка по
+ * интернету, выход из сна, оживший после простоя компьютер. Планировщик
+ * сверяется с часами дважды в секунду и ждёт точного совпадения секунды, а при
+ * прыжке этой секунды просто не бывает — без этого вечерняя программа не
+ * запускалась вовсе, и узнавали об этом от зрителей.
+ *
+ * Промежуток дальше недели не смотрим: это уже не прыжок часов, а другой день.
+ */
+export function scheduleEntriesInWindow(
+  schedules: Schedule[],
+  from: Date,
+  to: Date,
+): { entry: ScheduleEntry; schedule: Schedule; at: Date }[] {
+  const out: { entry: ScheduleEntry; schedule: Schedule; at: Date }[] = [];
+  if (to.getTime() <= from.getTime()) return out;
+  const days = Math.min(8, Math.floor((to.getTime() - from.getTime()) / 86_400_000) + 2);
+  for (const { entry, schedule } of activeScheduleEntries(schedules)) {
+    const sec = scheduleSecondOfDay(entry.time);
+    for (let d = 0; d < days; d++) {
+      const day = new Date(from.getFullYear(), from.getMonth(), from.getDate() + d);
+      const at = new Date(
+        day.getFullYear(),
+        day.getMonth(),
+        day.getDate(),
+        Math.floor(sec / 3600),
+        Math.floor((sec % 3600) / 60),
+        sec % 60,
+      );
+      if (at.getTime() <= from.getTime() || at.getTime() > to.getTime()) continue;
+      if (entry.days.length > 0 && !entry.days.includes(at.getDay())) continue;
+      out.push({ entry, schedule, at });
+    }
+  }
+  // По времени, а при совпадении — в порядке расписаний, как в движке.
+  return out.sort((a, b) => a.at.getTime() - b.at.getTime());
+}
+
+/**
  * Последняя запись, которая должна была сработать до `now` (смотрим неделю
  * назад). Это «что должно идти сейчас» — по ней движок после перезапуска
  * посреди дня возвращает дневную программу, а не ждёт следующей записи.

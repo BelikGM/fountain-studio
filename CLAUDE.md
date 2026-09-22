@@ -52,6 +52,7 @@ npm -w @fountain-studio/engine run projects-test      # объекты: папк
 npm -w @fountain-studio/engine run dirty-guard-test  # диалог о несохранённых правках при переключении
 npm -w @fountain-studio/engine run license-test      # подпись/срок лицензии, отзыв по сети
 npm -w @fountain-studio/engine run appbackup-test    # копия настроек программы: выгрузка и возврат
+npm -w @fountain-studio/engine run schedule-test     # расписание при прыжках часов (сон ПК, перевод времени)
 npm -w @fountain-studio/engine run musidora-test     # кадр USB-DMX FountanPlay
 npm -w @fountain-studio/engine run failsafe-test     # аварийное отключение
 npm -w @fountain-studio/engine run eventlog-test     # журнал на диске

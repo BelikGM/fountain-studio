@@ -1,6 +1,7 @@
 import {
   activeScheduleEntries,
   lastDueScheduleEntry,
+  scheduleEntriesInWindow,
   scheduleSecondOfDay,
   type Schedule,
   type ScheduleAction,
@@ -8,6 +9,32 @@ import {
 } from '@fountain-studio/shared';
 import { eventLog } from './eventlog';
 import type { Engine } from './engine';
+
+/**
+ * Больше этого промежутка между сверками часов — значит, часы прыгнули (или
+ * компьютер спал), а не просто подзадержались: сверяемся дважды в секунду.
+ */
+const JUMP_MS = 2000;
+
+/** Прыжок больше получаса считаем «долго не работали» — одиночное шоу не поднимаем. */
+const BIG_JUMP_MS = 30 * 60_000;
+
+/** Ключ «эта запись в эту минуту» — тот же, что в check(). */
+function minuteKeyOf(d: Date): string {
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()} ${hh}:${mm}`;
+}
+
+/** «2 ч 5 мин», «45 с» — для журнала, где это читает человек. */
+function humanGap(sec: number): string {
+  if (sec < 90) return `${sec} с`;
+  const min = Math.round(sec / 60);
+  if (min < 90) return `${min} мин`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m === 0 ? `${h} ч` : `${h} ч ${m} мин`;
+}
 
 /** Что сказать в журнале про действие. */
 function actionWord(a: ScheduleAction): string {
@@ -39,6 +66,8 @@ function actionWord(a: ScheduleAction): string {
 export class Scheduler {
   private timer: NodeJS.Timeout | undefined;
   private fired = new Set<string>();
+  /** Когда сверялись с часами в прошлый раз — чтобы заметить прыжок времени. */
+  private lastCheckAt: Date | null = null;
   /** Запуск после гашения, который ещё не наступил. Новая запись его отменяет. */
   private pending: NodeJS.Timeout | null = null;
 
@@ -58,9 +87,8 @@ export class Scheduler {
   }
 
   check(now: Date): void {
-    const hh = String(now.getHours()).padStart(2, '0');
-    const mm = String(now.getMinutes()).padStart(2, '0');
-    const minuteKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()} ${hh}:${mm}`;
+    this.checkClockJump(now);
+    const minuteKey = minuteKeyOf(now);
     const day = now.getDay();
     const nowSec = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
     const due: { entry: ScheduleEntry; schedule: Schedule }[] = [];
@@ -92,6 +120,80 @@ export class Scheduler {
         if (!key.endsWith(minuteKey)) this.fired.delete(key);
       }
     }
+  }
+
+  /**
+   * Часы прыгнули — догнать расписание.
+   *
+   * Планировщик ждёт ТОЧНОГО совпадения секунды, а при прыжке этой секунды не
+   * бывает: перевод часов (в РФ его нет, но программа поедет и туда, где
+   * есть), сверка времени по интернету, выход из сна, ожившее после простоя
+   * железо. Вечерняя запись «21:00» при прыжке 20:59:58 → 21:00:07 не
+   * срабатывала вовсе — фонтан оставался тёмным до следующей записи.
+   *
+   * Что делаем:
+   * · вперёд — исполняем ПОСЛЕДНЮЮ пропущенную запись (записи — переходы, и
+   *   гнать их подряд бессмысленно: осталась бы всё равно последняя). Большой
+   *   прыжок считаем тем же, что и запуск движка: одиночное шоу заново не
+   *   поднимаем, оно давно кончилось;
+   * · назад — записи этого промежутка уже отработали, второй раз их не
+   *   запускаем (иначе перевод часов осенью включил бы вечернюю программу
+   *   дважды); в журнал пишем прямо, что пропустили и почему.
+   */
+  private checkClockJump(now: Date): void {
+    const prev = this.lastCheckAt;
+    this.lastCheckAt = now;
+    if (!prev) return;
+    const diff = now.getTime() - prev.getTime();
+    if (diff >= 0 && diff <= JUMP_MS) return;
+
+    if (diff < 0) {
+      const back = Math.round(-diff / 1000);
+      const skipped = scheduleEntriesInWindow(this.getSchedules(), now, prev);
+      for (const s of skipped) this.fired.add(`${s.entry.id}@${minuteKeyOf(s.at)}`);
+      eventLog.log(
+        'schedule',
+        `часы перевели назад на ${humanGap(back)}` +
+          (skipped.length > 0
+            ? ` — записи ${skipped.map((s) => s.entry.time.slice(0, 5)).join(', ')} сегодня уже отрабатывали, повторно не запускаем`
+            : ' — пропущенных записей нет'),
+        'warn',
+      );
+      return;
+    }
+
+    // Записи, которые сегодня уже отработали (в том числе погашенные переводом
+    // часов назад), догонять не надо — иначе перевод назад и обратно включил
+    // бы вечернюю программу второй раз.
+    const missed = scheduleEntriesInWindow(this.getSchedules(), prev, now).filter(
+      (m) => !this.fired.has(`${m.entry.id}@${minuteKeyOf(m.at)}`),
+    );
+    const gapSec = Math.round(diff / 1000);
+    if (missed.length === 0) {
+      // Молчим про мелкие заминки: две секунды задержки — обычное дело на
+      // занятом ПК, и в журнале от таких строк был бы шум.
+      if (diff > 60_000) eventLog.log('schedule', `часы ушли вперёд на ${humanGap(gapSec)} — пропущенных записей нет`);
+      return;
+    }
+    const last = missed[missed.length - 1]!;
+    const a = last.entry.action;
+    const word = `${actionWord(a)}${last.entry.name ? ` («${last.entry.name}»)` : ''}`;
+    if (a.type === 'show' && diff > BIG_JUMP_MS) {
+      eventLog.log(
+        'schedule',
+        `часы ушли вперёд на ${humanGap(gapSec)} — запись ${last.entry.time.slice(0, 5)} (${word}) пропущена: шоу заново не запускаем`,
+        'warn',
+      );
+      return;
+    }
+    eventLog.log(
+      'schedule',
+      `часы ушли вперёд на ${humanGap(gapSec)} — догоняем расписание «${last.schedule.name}»: ${last.entry.time.slice(0, 5)} ${word}`,
+      'warn',
+    );
+    this.fired.add(`${last.entry.id}@${minuteKeyOf(last.at)}`);
+    // Гашение перехода при догоне не нужно: время его уже прошло.
+    this.fire({ ...last.entry, blackoutSec: 0 }, last.schedule, true);
   }
 
   /**
