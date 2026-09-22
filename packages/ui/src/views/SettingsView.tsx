@@ -55,6 +55,7 @@ import {
   setOperatorPassword,
 } from '../operatorMode';
 import type { EngineConnection, WindState } from '../useEngine';
+import { ComPortPicker, useUsbScan } from '../components/ComPortPicker';
 
 /**
  * Переназначение горячих клавиш редактора (§27 доработки, УХ п.6) — те, что
@@ -1244,12 +1245,10 @@ function WindSourceBlock({
               <>
                 <label className="field" data-hint="COM-порт переходника RS-485. Если датчик на одной линии с частотниками — тот же порт, что у них.">
                   COM-порт:{' '}
-                  <CommitInput
-                    width={90}
-                    list="usb-com-ports"
-                    placeholder="COM3"
+                  <ComPortPicker
+                    engine={engine}
                     value={conn.serialPort}
-                    onCommit={(v) => setModbus({ connection: { ...conn, serialPort: v.trim() } })}
+                    onChange={(v) => setModbus({ connection: { ...conn, serialPort: v } })}
                   />
                 </label>
                 <label className="field" data-hint="Скорость линии — как в паспорте датчика. На одной линии с частотниками у всех она одинаковая.">
@@ -1982,12 +1981,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
   const usbInUse = [...universes, ...(engineConfig?.universes ?? [])].some((u) =>
     u.outputs.some((o) => o.type === 'musidora' || o.type === 'usb-dmx' || o.type === 'open-dmx'),
   );
-  useEffect(() => {
-    if (!engine.connected || !usbInUse) return;
-    send({ type: 'scanUsbDmx' });
-    const id = window.setInterval(() => send({ type: 'scanUsbDmx' }), 2000);
-    return () => window.clearInterval(id);
-  }, [engine.connected, usbInUse, send]);
+  useUsbScan(engine, usbInUse);
 
   if (!engineConfig) {
     return (
@@ -2127,15 +2121,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
                         onChange={(e) => patchOutput(u.id, { host: e.target.value })}
                       />
                     ) : out?.type === 'usb-dmx' || out?.type === 'open-dmx' ? (
-                      <input
-                        className="input"
-                        style={{ width: 120 }}
-                        value={out.path ?? ''}
-                        placeholder="COM5"
-                        list="usb-com-ports"
-                        data-hint="COM-порт адаптера. Найденные порты подсказываются в списке; ещё их видно в Диспетчере устройств Windows, раздел «Порты (COM и LPT)»."
-                        onChange={(e) => patchOutput(u.id, { path: e.target.value })}
-                      />
+                      <ComPortPicker engine={engine} value={out.path ?? ''} onChange={(v) => patchOutput(u.id, { path: v })} />
                     ) : (
                       <span
                         className="dim"
@@ -2226,13 +2212,6 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
           onApply={() => applySettingsDraft(send, engine.connected)}
           onDiscard={clearSettingsDraft}
         />
-        <datalist id="usb-com-ports">
-          {(engine.usbScan?.ports ?? []).map((p) => (
-            <option key={p.path} value={p.path}>
-              {[p.manufacturer, p.vendorId && `VID ${p.vendorId}`].filter(Boolean).join(' · ')}
-            </option>
-          ))}
-        </datalist>
         {usbInUse && <UsbDmxStatus scan={engine.usbScan} universes={engineConfig.universes} />}
       </section>
 

@@ -48,6 +48,7 @@ import { confirmDelete } from '../confirmDelete';
 import { requestTab } from '../navigate';
 import { applySettingsDraft, keepSettingsDraft, takeSettingsDraft } from '../settingsDraft';
 import type { EngineConnection } from '../useEngine';
+import { ComPortPicker } from '../components/ComPortPicker';
 
 const KIND_LABEL: Record<DeviceKind, string> = {
   pump: 'Насос',
@@ -849,6 +850,7 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                     <tr key={`${d.id}-modbus`}>
                       <td colSpan={7}>
                         <ModbusEditor
+                          engine={engine}
                           device={d}
                           status={engine.modbus?.pumps.find((p) => p.deviceId === d.id) ?? null}
                           onChange={(modbus) => patchDevice(d.id, { modbus })}
@@ -941,10 +943,12 @@ function defaultModbusConfig(): ModbusPumpConfig {
  * (для тонкой настройки самого привода — отдельный проект github.com/BelikGM/Modbus).
  */
 function ModbusEditor({
+  engine,
   device,
   status,
   onChange,
 }: {
+  engine: EngineConnection;
   device: PatchedDevice;
   status: PumpModbusStatus | null;
   onChange: (modbus: ModbusPumpConfig | undefined) => void;
@@ -1071,12 +1075,7 @@ function ModbusEditor({
             <div className="form-row">
               <label className="field">
                 COM-порт:{' '}
-                <input
-                  className="input"
-                  placeholder="COM5"
-                  value={config.connection.serialPort}
-                  onChange={(e) => setRtu({ serialPort: e.target.value })}
-                />
+                <ComPortPicker engine={engine} value={config.connection.serialPort} onChange={(v) => setRtu({ serialPort: v })} />
               </label>
               <label className="field">
                 Скорость порта, бод:{' '}

@@ -2215,3 +2215,6 @@ input[type='range']:disabled { opacity: 0.4; cursor: default; }
   .brand-version { display: none; }
   .tab { padding: 4px 5px; }
 }
+
+/* Выбор COM-порта: поле «вручную» и кнопка возврата к списку — в одну строку. */
+.com-picker { display: inline-flex; gap: 4px; align-items: center; }

@@ -44,7 +44,12 @@ fs.mkdirSync(proj, { recursive: true });
 // Настройки программы для изолированного движка — можно дополнить из сценария
 // (поле appConfig): например, несуществующий проигрыватель, чтобы увидеть
 // предупреждение «нечем играть музыку».
-const scenarioAppConfig = (JSON.parse(fs.readFileSync(scenarioFile, 'utf8')) as { appConfig?: Record<string, unknown> }).appConfig ?? {};
+const scenarioHead = JSON.parse(fs.readFileSync(scenarioFile, 'utf8')) as {
+  appConfig?: Record<string, unknown>;
+  lines?: Record<string, unknown>;
+  engineEnv?: Record<string, string>;
+};
+const scenarioAppConfig = scenarioHead.appConfig ?? {};
 fs.writeFileSync(path.join(appData, 'app-config.json'), JSON.stringify({ ...scenarioAppConfig, server: { port: PORT } }));
 const license = path.join(defaultAppDataDir(), 'fountain.license.json');
 if (fs.existsSync(license)) fs.copyFileSync(license, path.join(appData, 'fountain.license.json'));
@@ -56,13 +61,17 @@ fs.writeFileSync(
     tickMs: 50,
     universes: [{ id: 1, label: '', outputs: [{ type: 'artnet', host: '127.0.0.1', port: 16454, universe: 0 }] }],
     backup: { enabled: false, intervalMin: 10 },
+    // lines сценария — свои вселенные и выходы (например, USB-DMX на COM-порту).
+    ...scenarioHead.lines,
   }),
 );
 
 const engine = spawn(
   process.execPath,
   ['--import', 'tsx', 'src/index.ts', '--app-data', appData, '--projects-root', root, '--project', proj],
-  { cwd: path.resolve(__dirname, '..', '..'), stdio: ['ignore', 'pipe', 'pipe'] },
+  // engineEnv сценария — переменные для движка (например, FOUNTAIN_TEST_COM_PORTS:
+  // «подключённые» COM-порты, которых на машине разработчика нет).
+  { cwd: path.resolve(__dirname, '..', '..'), stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...scenarioHead.engineEnv } },
 );
 let log = '';
 engine.stdout.on('data', (d) => (log += d));

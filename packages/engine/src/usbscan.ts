@@ -9,6 +9,20 @@ import { musidoraLinkStates } from './drivers/musidora';
  * Вкладка «Настройки» опрашивает это, пока открыта, — так на объекте сразу
  * видно, нашёлся ли интерфейс и уходят ли кадры.
  */
+/**
+ * Порты «как будто подключены» — только для снимков редактора на изолированном
+ * движке (ui-shots, поле engineEnv): на машине разработчика переходников нет, а
+ * выбор порта надо видеть с настоящими строками. Формат: «COM3:0403,COM1:».
+ */
+function testPorts(): UsbDmxScan['ports'] {
+  const spec = process.env.FOUNTAIN_TEST_COM_PORTS;
+  if (!spec) return [];
+  return spec.split(',').map((item) => {
+    const [p = '', vid = ''] = item.split(':');
+    return { path: p.trim(), manufacturer: '', vendorId: vid.trim(), productId: '', serialNumber: '' };
+  });
+}
+
 export async function scanUsbDmx(): Promise<UsbDmxScan> {
   const d2 = await loadD2xx(true);
   let ports: UsbDmxScan['ports'] = [];
@@ -23,6 +37,7 @@ export async function scanUsbDmx(): Promise<UsbDmxScan> {
   } catch {
     /* список портов — подсказка, без него настройки тоже работают */
   }
+  ports.push(...testPorts());
   return {
     d2xx: d2 ? { ok: true, version: d2.version, dll: d2.dll } : { ok: false, error: d2xxError(), problem: d2xxProblem() },
     ftdi: d2 ? d2.list() : [],
