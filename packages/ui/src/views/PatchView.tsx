@@ -748,6 +748,7 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                         value={d.name}
                         onChange={(e) => patchDevice(d.id, { name: e.target.value })}
                       />
+                      <RdmBadge device={d} engine={engine} />
                     </td>
                     <td>{profile?.name ?? d.profileId}</td>
                     <td>
@@ -921,6 +922,40 @@ function TrimEditor({
         </button>
       )}
     </div>
+  );
+}
+
+/**
+ * Отвечает ли прибор по RDM — прямо в строке «Оборудования».
+ *
+ * RDM показывал связь только на «Диагностике», отдельным списком по UID, и
+ * чтобы понять «жив ли вот этот светильник», приходилось сличать номера
+ * глазами. Теперь у привязанного прибора стоит «✔», а если нода его не видит
+ * — жёлтый «⚠» и в подсказке написано, что именно проверять на объекте.
+ *
+ * У приборов БЕЗ привязки к RDM значка нет вовсе: их состояние по кабелю
+ * узнать нечем, и зелёная галочка там была бы обманом.
+ */
+function RdmBadge({ device, engine }: { device: PatchedDevice; engine: EngineConnection }) {
+  const uid = device.rdmUid;
+  if (!uid) return null;
+  const found = engine.network?.rdmDevices.find((x) => x.uid.toLowerCase() === uid.toLowerCase());
+  if (found && !found.lost) {
+    return (
+      <span className="rdm-ok" data-hint={`Прибор отвечает по RDM (UID ${found.uid}, узел ${found.nodeIp}). Связь по кабелю есть.`}>
+        {' '}
+        ✔
+      </span>
+    );
+  }
+  const hint = found
+    ? `Прибор отвечал по RDM, но перестал (UID ${found.uid}, узел ${found.nodeIp}). Проверьте: питание прибора, кабель DMX до него и терминатор на конце линии; не отключилась ли нода.`
+    : `Прибор привязан к RDM (UID ${uid}), но нода его не видит. Проверьте: включено ли питание прибора, целость кабеля DMX и разъёмов, умеет ли нода RDM и включён ли у неё опрос, не сменился ли UID после замены прибора (привязка — «Диагностика» → «RDM-приборы»).`;
+  return (
+    <span className="rdm-bad" data-hint={hint}>
+      {' '}
+      ⚠
+    </span>
   );
 }
 

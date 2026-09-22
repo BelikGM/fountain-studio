@@ -2224,3 +2224,8 @@ input[type='range']:disabled { opacity: 0.4; cursor: default; }
 .why-headline { font-size: 16px; font-weight: 600; margin: 4px 0 10px; }
 .why-list { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 12px; }
 .why-list li > .dim { margin: 2px 0 6px; }
+
+/* Связь прибора по RDM в списке «Оборудования»: есть ответ — зелёная галочка,
+   нет — жёлтый треугольник (в подсказке написано, что проверять). */
+.rdm-ok { color: var(--ok, #4caf50); font-weight: 600; }
+.rdm-bad { color: #e0a53a; font-weight: 600; }

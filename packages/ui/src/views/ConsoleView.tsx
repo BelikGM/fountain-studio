@@ -14,6 +14,7 @@ import {
   num,
 } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
+import { requestTab } from '../navigate';
 import { Fader } from '../components/Fader';
 import { PauseIcon, PlayIcon, StopIcon } from '../components/Icons';
 import { askConfirm } from '../components/ConfirmDialog';
@@ -85,6 +86,34 @@ function classifyChannel(kind: DeviceKind, role: ChannelRole): string {
 /** Консоль прямого управления: фейдеры адресов, тест-генераторы, СТОП. */
 export function ConsoleView({ engine }: { engine: EngineConnection }) {
   const { project, universes, stats, frames, playback, windState, send } = engine;
+  /**
+   * Почему ползунок «падает сразу» — самая частая жалоба с объекта.
+   *
+   * На «Отладке» человек двигает фейдер, а значение возвращается в 0 — и
+   * выглядит это как сломанная программа. На самом деле поверх ручного
+   * управления работает что-то из трёх: аварийное отключение (каждый такт
+   * гасит насосы и клапаны), стоп по расписанию (гасит всё) или движок вообще
+   * не отвечает (тогда не уходит ничего, а фейдер показывает последний
+   * пришедший кадр). Раньше об этом на вкладке не было ни слова.
+   */
+  const blocked: { text: string; fix: string; tab?: 'settings' | 'schedule' } | null = !engine.connected
+    ? {
+        text: 'Нет связи с движком — ползунки, кнопки и тест-генератор сейчас ни на что не влияют.',
+        fix: 'Кадры приборам шлёт движок, а он не отвечает: запустите программу (значок у часов) и дождитесь, пока точка в шапке станет зелёной.',
+      }
+    : engine.failsafe?.active
+      ? {
+          text: `Работает аварийное отключение: ${engine.failsafe.reason || 'причина не указана'}.`,
+          fix: 'Насосы и клапаны принудительно уходят в 0 каждый такт — поэтому ползунок и «падает». Пока налаживаете без оборудования, выключите его: «Настройки» → «Аварийное отключение».',
+          tab: 'settings',
+        }
+      : playback.dark === 'off'
+        ? {
+            text: 'Стоп по расписанию — всё погашено до следующего запуска.',
+            fix: 'Кадр обнуляется после всех слоёв, включая ручные ползунки и тест-генератор. Запустите что-нибудь руками (сцену, шоу) или дождитесь записи расписания.',
+            tab: 'schedule',
+          }
+        : null;
   const [universeId, setUniverseId] = useState<number | null>(null);
   const [pageSize, setPageSize] = useState(32);
   const [page, setPage] = useState(0);
@@ -216,6 +245,18 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
 
   return (
     <>
+      {blocked && (
+        <div className="license-banner license-banner-grace">
+          <span>
+            ⚠ {blocked.text} {blocked.fix}
+          </span>
+          {blocked.tab && (
+            <button className="btn btn-small" onClick={() => requestTab(blocked.tab!)}>
+              Перейти
+            </button>
+          )}
+        </div>
+      )}
       <div className="toolbar">
         <div className="group">
           {universes.map((u) => (
