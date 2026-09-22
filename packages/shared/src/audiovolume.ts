@@ -29,6 +29,40 @@ export interface AudioLevel {
   volumeDb: number;
   /** Звук выключен совсем — как «Volume is OFF» в FontanPlay. */
   muted: boolean;
+  /** Низкие частоты, дБ (−12…+6). 0 — как в файле. */
+  bassDb?: number;
+  /** Высокие частоты, дБ (−12…+6). 0 — как в файле. */
+  trebleDb?: number;
+}
+
+/**
+ * Тембр — низкие и высокие частоты, как ручки «Bass» и «Treble» на усилителе.
+ *
+ * Зачем: колонки на объектах разные — где-то бубнит низ, где-то режут верха, —
+ * и подстроить звук под место нужно без усилителя под рукой. Появилось после
+ * разбора «частоты» из FontanPlay (22.09.2026): её не делаем (это скорость и
+ * тон трека), а тембр на синхронизацию с водой не влияет вовсе.
+ *
+ * Срез −12 дБ — почти убрать; подъём до +6 дБ — заметно добавить. Сильнее
+ * поднимать нельзя: даже с защитой от перегруза на громком треке звук начнёт
+ * сжиматься, и «добавленный» низ съест громкость остального.
+ */
+export const TONE_DB_MIN = -12;
+export const TONE_DB_MAX = 6;
+/** Где начинаются «низкие» и «высокие», Гц — как у ручек тембра на усилителе. */
+export const BASS_HZ = 100;
+export const TREBLE_HZ = 6000;
+
+export function clampToneDb(raw: unknown): number {
+  const v = Number(raw);
+  if (!Number.isFinite(v)) return 0;
+  return Math.max(TONE_DB_MIN, Math.min(TONE_DB_MAX, Math.round(v)));
+}
+
+/** «+3 дБ», «−6 дБ», «0 дБ» — со знаком: у тембра важно, подъём это или срез. */
+export function toneDbLabel(db: number): string {
+  const v = clampToneDb(db);
+  return v === 0 ? '0 дБ' : v > 0 ? `+${v} дБ` : `−${Math.abs(v)} дБ`;
 }
 
 export function clampVolumeDb(raw: number): number {

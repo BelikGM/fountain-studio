@@ -20,7 +20,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { clampVolumeDb, levelFromPercent, volumeDbLabel } from '@fountain-studio/shared';
+import { clampToneDb, clampVolumeDb, levelFromPercent, toneDbLabel, volumeDbLabel } from '@fountain-studio/shared';
 import { AudioPlayer, playArgs } from '../audioplayer';
 import { sanitizeAudio } from '../config';
 
@@ -59,7 +59,7 @@ check('0 % → звук выключен', levelFromPercent(0).muted === true);
 
 // ── Аргументы запуска ──────────────────────────────────────────────────────
 console.log('— аргументы проигрывателя —');
-const plain = playArgs('C:/объект/audio/track.mp3', [], { volumeDb: 0, muted: false });
+const plain = playArgs('C:/объект/audio/track.mp3', [], { volumeDb: 0, muted: false, bassDb: 0, trebleDb: 0 });
 check('0 дБ: стартовая громкость полная', argOf(plain, '-volume') === '100', argOf(plain, '-volume'));
 check('0 дБ: фильтра громкости нет — звук как в файле', !plain.includes('-af'));
 check('файл передан последним', plain[plain.length - 1] === 'C:/объект/audio/track.mp3', plain[plain.length - 1]);
@@ -80,8 +80,27 @@ check('границы вырезки в секундах', cutAf.includes('betwe
 check('метки времени пересобираются без пауз', cutAf.includes('asetpts'), cutAf);
 check('громкость — в той же цепочке, после вырезок', cutAf.endsWith(',volume=-3dB'), cutAf);
 
-const twoCuts = playArgs('track.mp3', [{ startMs: 0, endMs: 500 }, { startMs: 3000, endMs: 4000 }], { volumeDb: 0, muted: false });
+const twoCuts = playArgs('track.mp3', [{ startMs: 0, endMs: 500 }, { startMs: 3000, endMs: 4000 }], { volumeDb: 0, muted: false, bassDb: 0, trebleDb: 0 });
 check('две вырезки объединены в один фильтр', (argOf(twoCuts, '-af') ?? '').split('between').length === 3, argOf(twoCuts, '-af'));
+
+// ── Тембр ──────────────────────────────────────────────────────────────────
+console.log('— тембр —');
+check('подъём больше +6 дБ не даём', clampToneDb(20) === 6, String(clampToneDb(20)));
+check('срез глубже −12 дБ не даём', clampToneDb(-30) === -12, String(clampToneDb(-30)));
+check('мусор → 0 дБ', clampToneDb('много') === 0);
+check('подпись со знаком «+3 дБ»', toneDbLabel(3) === '+3 дБ', toneDbLabel(3));
+check('подпись «−6 дБ»', toneDbLabel(-6) === '−6 дБ', toneDbLabel(-6));
+const warm = argOf(playArgs('t.mp3', [], { volumeDb: -3, muted: false, bassDb: 3, trebleDb: -6 }), '-af') ?? '';
+check('низкие уходят фильтром bass на 100 Гц', warm.includes('bass=g=3:f=100'), warm);
+check('высокие — фильтром treble на 6 кГц', warm.includes('treble=g=-6:f=6000'), warm);
+check('тембр стоит раньше громкости', warm.indexOf('bass') < warm.indexOf('volume'), warm);
+check('при подъёме в конце ограничитель от хрипа', warm.endsWith('alimiter=limit=0.95:level=false'), warm);
+const cutOnly = argOf(playArgs('t.mp3', [], { volumeDb: 0, muted: false, bassDb: -6, trebleDb: 0 }), '-af') ?? '';
+check('при одном срезе ограничитель не нужен', !cutOnly.includes('alimiter'), cutOnly);
+const flat = playArgs('t.mp3', [], { volumeDb: 0, muted: false, bassDb: 0, trebleDb: 0 });
+check('тембр 0 — фильтров нет, звук как в файле', !flat.includes('-af'));
+const mutedTone = playArgs('t.mp3', [], { volumeDb: 0, muted: true, bassDb: 6, trebleDb: 6 });
+check('«звук выключен» — тембр не применяется', !mutedTone.includes('-af'));
 
 // ── Разбор настройки ───────────────────────────────────────────────────────
 console.log('— настройки из файла —');
@@ -91,13 +110,15 @@ check('старые 50 % из файла стали −6 дБ', sanitizeAudio({ 
 check('старые 0 % — звук выключен', sanitizeAudio({ volume: 0 } as never).muted === true);
 check('старое поле процентов больше не хранится', !('volume' in sanitizeAudio({ volume: 50 } as never)));
 check('битая громкость не роняет движок', sanitizeAudio({ volumeDb: 'громко' } as never).volumeDb === 0);
+check('тембр по умолчанию — как в файле', sanitizeAudio(undefined).bassDb === 0 && sanitizeAudio(undefined).trebleDb === 0);
+check('тембр из файла читается и обрезается', sanitizeAudio({ bassDb: 4, trebleDb: 99 } as never).bassDb === 4 && sanitizeAudio({ bassDb: 4, trebleDb: 99 } as never).trebleDb === 6);
 check('путь к проигрывателю не теряется', sanitizeAudio({ ffplayPath: 'D:/ff/ffplay.exe' } as never).ffplayPath === 'D:/ff/ffplay.exe');
 
 // ── Плеер целиком ──────────────────────────────────────────────────────────
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-audio-'));
 try {
   fs.writeFileSync(path.join(dir, 'track.mp3'), 'не настоящий mp3');
-  const silent = new AudioPlayer({ player: 'none', ffplayPath: 'ffplay', volumeDb: 0, muted: false }, dir);
+  const silent = new AudioPlayer({ player: 'none', ffplayPath: 'ffplay', volumeDb: 0, muted: false, bassDb: 0, trebleDb: 0 }, dir);
   check('режим «без звука»: проигрывателя нет', !silent.ready());
   silent.play('track.mp3', []); // не должно ничего запустить и не должно упасть
   check('режим «без звука»: запуск трека проходит тихо и без ошибки', true);
@@ -126,7 +147,7 @@ try {
       const m = /mean_volume:\s*(-?[\d.]+) dB/.exec(r.stderr ?? '');
       return r.status === 0 && m ? Number(m[1]) : null;
     };
-    const base = measure(argOf(playArgs(tone, [], { volumeDb: 0, muted: false }), '-af'));
+    const base = measure(argOf(playArgs(tone, [], { volumeDb: 0, muted: false, bassDb: 0, trebleDb: 0 }), '-af'));
     const at6 = measure(argOf(playArgs(tone, [], { volumeDb: -6, muted: false }), '-af'));
     const at20 = measure(argOf(playArgs(tone, [], { volumeDb: -20, muted: false }), '-af'));
     const withCut = measure(argOf(playArgs(tone, [{ startMs: 1000, endMs: 2000 }], { volumeDb: -6, muted: false }), '-af'));
@@ -142,6 +163,74 @@ try {
       `${base} → ${at20} дБ`,
     );
     check('громкость с вырезками монтажа — ffmpeg принял всю цепочку', withCut !== null && at6 !== null && Math.abs(withCut - at6) < 0.2, `${withCut}`);
+
+    // Тембр: низкий тон, высокий тон и середина (тот же 440 Гц).
+    const low = path.join(dir, 'low.wav');
+    const high = path.join(dir, 'high.wav');
+    const loud = path.join(dir, 'loud.wav');
+    spawnSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=40:duration=3', low]);
+    spawnSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=12000:duration=3', high]);
+    spawnSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'aevalsrc=0.95*sin(2*PI*50*t):d=3', loud]);
+    const levelOf = (file: string, af: string | undefined): number | null => {
+      const chain = af ? `${af},volumedetect` : 'volumedetect';
+      const r = spawnSync('ffmpeg', ['-hide_banner', '-i', file, '-af', chain, '-f', 'null', '-'], { encoding: 'utf8' });
+      const m = /mean_volume:\s*(-?[\d.]+) dB/.exec(r.stderr ?? '');
+      return r.status === 0 && m ? Number(m[1]) : null;
+    };
+    /*
+     * Пик — через astats: volumedetect пишет max_volume не выше 0 дБ, и выход
+     * за потолок им не увидеть. Заодно ловим «clipping» — это фильтр сам
+     * обрезал пики о потолок, то есть хрип уже случился внутри цепочки.
+     */
+    const peakOf = (file: string, af: string): { peak: number | null; clipped: boolean } => {
+      const r = spawnSync('ffmpeg', ['-hide_banner', '-i', file, '-af', `${af},astats=measure_perchannel=none`, '-f', 'null', '-'], { encoding: 'utf8' });
+      const err = r.stderr ?? '';
+      const m = /Peak level dB:\s*(-?[\d.]+)/.exec(err);
+      return { peak: r.status === 0 && m ? Number(m[1]) : null, clipped: /clipping/i.test(err) };
+    };
+    const af = (bassDb: number, trebleDb: number): string | undefined => argOf(playArgs('x', [], { volumeDb: 0, muted: false, bassDb, trebleDb }), '-af');
+    const low0 = levelOf(low, undefined);
+    const lowCut = levelOf(low, af(-6, 0));
+    const mid0 = base;
+    const midBassCut = levelOf(tone, af(-6, 0));
+    const high0 = levelOf(high, undefined);
+    const highCut = levelOf(high, af(0, -6));
+    const midTrebleCut = levelOf(tone, af(0, -6));
+    check(
+      '«Низкие −6 дБ» убирает бас (40 Гц) почти на 6 дБ',
+      low0 !== null && lowCut !== null && low0 - lowCut > 4,
+      `${low0} → ${lowCut} дБ`,
+    );
+    check(
+      '…и не трогает середину (440 Гц)',
+      mid0 !== null && midBassCut !== null && Math.abs(mid0 - midBassCut) < 1,
+      `${mid0} → ${midBassCut} дБ`,
+    );
+    check(
+      '«Высокие −6 дБ» убирает верха (12 кГц) почти на 6 дБ',
+      high0 !== null && highCut !== null && high0 - highCut > 4,
+      `${high0} → ${highCut} дБ`,
+    );
+    check(
+      '…и не трогает середину',
+      mid0 !== null && midTrebleCut !== null && Math.abs(mid0 - midTrebleCut) < 1,
+      `${mid0} → ${midTrebleCut} дБ`,
+    );
+    // Громкий бас почти в потолок + подъём низов: без ограничителя ушёл бы за 0 дБ.
+    const ours = peakOf(loud, af(6, 0) ?? 'anull');
+    const raw = peakOf(loud, 'aformat=sample_fmts=fltp,bass=g=6:f=100');
+    const naive = peakOf(loud, 'bass=g=6:f=100');
+    check(
+      'без ограничителя подъём низов вывел бы громкий трек за потолок (проверка, что опыт честный)',
+      raw.peak !== null && raw.peak > 1,
+      `${raw.peak} дБ`,
+    );
+    check(
+      'в 16 битах фильтр сам режет пики — поэтому тембр считаем в плавающей точке (проверка, что опыт честный)',
+      naive.clipped,
+    );
+    check('с нашей цепочкой пик ниже потолка', ours.peak !== null && ours.peak < 0, `${ours.peak} дБ`);
+    check('…и ни один фильтр не обрезал пики — хрипа нет', !ours.clipped);
   }
 } finally {
   fs.rmSync(dir, { recursive: true, force: true });

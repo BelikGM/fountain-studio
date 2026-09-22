@@ -1,4 +1,4 @@
-import { clampVolumeDb, levelFromPercent } from '@fountain-studio/shared';
+import { clampToneDb, clampVolumeDb, levelFromPercent } from '@fountain-studio/shared';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -64,6 +64,9 @@ export interface EngineConfig {
     volumeDb: number;
     /** Звук выключен совсем. */
     muted: boolean;
+    /** Тембр: низкие и высокие частоты, дБ (см. shared/audiovolume.ts). */
+    bassDb: number;
+    trebleDb: number;
   };
   universes: UniverseConfig[];
   /** Авто-бэкапы проекта (§27 доработки, УХ п.5) — именованные снимки по расписанию. */
@@ -131,7 +134,7 @@ export interface EngineConfig {
 const DEFAULTS: EngineConfig = {
   server: { port: 9520 },
   timing: { tickMs: 50, spinMs: 10, uiFrameMs: 100 },
-  audio: { player: 'auto', ffplayPath: 'ffplay', volumeDb: 0, muted: false },
+  audio: { player: 'auto', ffplayPath: 'ffplay', volumeDb: 0, muted: false, bassDb: 0, trebleDb: 0 },
   universes: [],
   backup: { enabled: true, intervalMin: 10 },
 };
@@ -184,6 +187,8 @@ export function sanitizeAudio(raw: (Partial<EngineConfig['audio']> & { volume?: 
     ...a,
     volumeDb: fromPercent ? fromPercent.volumeDb : clampVolumeDb(a.volumeDb),
     muted: fromPercent ? fromPercent.muted : a.muted === true,
+    bassDb: clampToneDb(a.bassDb),
+    trebleDb: clampToneDb(a.trebleDb),
   };
 }
 

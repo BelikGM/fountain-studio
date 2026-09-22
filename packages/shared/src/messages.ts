@@ -470,7 +470,7 @@ export type ClientMessage =
    * она про усилитель и колонки на месте, а не про шоу. Уже играющий трек не
    * трогает — подхватит следующий.
    */
-  | { type: 'setAudioVolume'; volumeDb: number; muted: boolean }
+  | { type: 'setAudioVolume'; volumeDb: number; muted: boolean; bassDb: number; trebleDb: number }
   // Авто-бэкапы проекта (§27 доработки, УХ п.5) — отдельно от updateConfig: смена
   // интервала не трогает воспроизведение.
   | { type: 'updateBackupConfig'; enabled: boolean; intervalMin: number }
@@ -545,6 +545,9 @@ export type ServerMessage =
       audioVolumeDb: number;
       /** Звук вечерней программы выключен. */
       audioMuted: boolean;
+      /** Тембр вечерней программы, дБ. */
+      audioBassDb: number;
+      audioTrebleDb: number;
       /**
        * Нашёлся ли ffplay. Без него вода и свет играют, а звука нет —
        * человеку это надо видеть до вечера, а не выяснять по тишине.

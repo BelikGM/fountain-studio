@@ -13,6 +13,7 @@ import {
   frameModeToConfig,
   storedUniverseLabel,
   clampVolumeDb,
+  clampToneDb,
 } from '@fountain-studio/shared';
 import type { AudioStore } from './audio';
 import { saveAppConfigPatch } from './config';
@@ -121,6 +122,8 @@ export function startServer(
     frameModeActive: engine.frameModeActive(),
     audioVolumeDb: engine.config.audio.volumeDb,
     audioMuted: engine.config.audio.muted,
+    audioBassDb: engine.config.audio.bassDb,
+    audioTrebleDb: engine.config.audio.trebleDb,
     audioReady: player?.ready() ?? false,
   });
   const broadcastNetwork = (): void => {
@@ -463,6 +466,8 @@ export function startServer(
             ...engine.config.audio,
             volumeDb: clampVolumeDb(msg.volumeDb),
             muted: msg.muted === true,
+            bassDb: clampToneDb(msg.bassDb),
+            trebleDb: clampToneDb(msg.trebleDb),
           };
           player?.setConfig(engine.config.audio);
           // Настройка ПРОГРАММЫ: про усилитель на объекте, а не про шоу.

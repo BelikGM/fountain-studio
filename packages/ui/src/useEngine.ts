@@ -76,6 +76,9 @@ export interface EngineConfigState {
   audioVolumeDb: number;
   /** Звук вечерней программы выключен. */
   audioMuted: boolean;
+  /** Тембр вечерней программы, дБ. */
+  audioBassDb: number;
+  audioTrebleDb: number;
   /** Нашёлся ли проигрыватель: без него вечерняя программа идёт в тишине. */
   audioReady: boolean;
 }
@@ -296,6 +299,8 @@ export function useEngine(): EngineConnection {
               frameModeActive: msg.frameModeActive,
               audioVolumeDb: msg.audioVolumeDb,
               audioMuted: msg.audioMuted,
+              audioBassDb: msg.audioBassDb,
+              audioTrebleDb: msg.audioTrebleDb,
               audioReady: msg.audioReady,
             });
             break;

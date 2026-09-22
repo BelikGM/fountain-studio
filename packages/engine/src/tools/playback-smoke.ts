@@ -431,7 +431,7 @@ mqttSub.on('data', (chunk: Buffer) => {
 const engine = new Engine({
   server: { port: PORT },
   timing: { tickMs: 50, spinMs: 10, uiFrameMs: 40 },
-  audio: { player: 'none', ffplayPath: 'ffplay', volumeDb: 0, muted: false },
+  audio: { player: 'none', ffplayPath: 'ffplay', volumeDb: 0, muted: false, bassDb: 0, trebleDb: 0 },
   universes: [{ id: 1, label: 'Тест', outputs: [{ type: 'artnet', host: '127.0.0.1', universe: 0 }] }],
   backup: { enabled: false, intervalMin: 10 }, // таймер выключен — снимки берём вручную в тесте
 });

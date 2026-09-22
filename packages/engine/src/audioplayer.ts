@@ -1,7 +1,15 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { clampVolumeDb, volumeDbLabel, type AudioLevel, type CutRange } from '@fountain-studio/shared';
+import {
+  BASS_HZ,
+  clampToneDb,
+  clampVolumeDb,
+  TREBLE_HZ,
+  volumeDbLabel,
+  type AudioLevel,
+  type CutRange,
+} from '@fountain-studio/shared';
 
 export interface AudioPlayerConfig {
   /** auto — использовать ffplay, если найден; none — без звука (только вода/свет). */
@@ -12,6 +20,9 @@ export interface AudioPlayerConfig {
   volumeDb: number;
   /** Звук выключен совсем. */
   muted: boolean;
+  /** Тембр, дБ. */
+  bassDb?: number;
+  trebleDb?: number;
 }
 
 /**
@@ -32,8 +43,28 @@ export function playArgs(file: string, cuts: CutRange[], level: AudioLevel): str
     const not = cuts.map((c) => `between(t,${(c.startMs / 1000).toFixed(3)},${(c.endMs / 1000).toFixed(3)})`).join('+');
     filters.push(`aselect='not(${not})'`, 'asetpts=N/SR/TB');
   }
-  const db = clampVolumeDb(level.volumeDb);
-  if (!level.muted && db !== 0) filters.push(`volume=${db}dB`);
+  if (!level.muted) {
+    // Тембр — до громкости: так громкость остаётся последним словом.
+    const bass = clampToneDb(level.bassDb);
+    const treble = clampToneDb(level.trebleDb);
+    /*
+     * Тембр считаем в плавающей точке. Файл в 16 бит (wav) фильтр bass/treble
+     * обрабатывает в тех же 16 битах и при подъёме сам срезает пики о потолок —
+     * ограничитель после него уже ничего не спасает, хрип остаётся (замерено
+     * 22.09.2026: «clipping 2500 times» на громком басу +6 дБ).
+     */
+    if (bass !== 0 || treble !== 0) filters.push('aformat=sample_fmts=fltp');
+    if (bass !== 0) filters.push(`bass=g=${bass}:f=${BASS_HZ}`);
+    if (treble !== 0) filters.push(`treble=g=${treble}:f=${TREBLE_HZ}`);
+    const db = clampVolumeDb(level.volumeDb);
+    if (db !== 0) filters.push(`volume=${db}dB`);
+    /*
+     * Подъём тембра может вывести громкий трек за потолок — это хрип в
+     * колонках. Ограничитель в конце цепочки срезает такие пики мягко. Без
+     * подъёма он не нужен и не ставится: срез перегруза не даёт.
+     */
+    if (bass > 0 || treble > 0) filters.push('alimiter=limit=0.95:level=false');
+  }
   if (filters.length > 0) args.push('-af', filters.join(','));
   args.push('-i', file);
   return args;
@@ -72,7 +103,7 @@ export class AudioPlayer {
 
   /** Громкость сейчас — для ответа интерфейсу. */
   level(): AudioLevel {
-    return { volumeDb: this.config.volumeDb, muted: this.config.muted };
+    return { volumeDb: this.config.volumeDb, muted: this.config.muted, bassDb: this.config.bassDb ?? 0, trebleDb: this.config.trebleDb ?? 0 };
   }
 
   /**

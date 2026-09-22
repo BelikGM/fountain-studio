@@ -20,6 +20,10 @@ import {
   storedUniverseLabel,
   universeTitle,
   clampVolumeDb,
+  clampToneDb,
+  toneDbLabel,
+  TONE_DB_MAX,
+  TONE_DB_MIN,
   VOLUME_DB_MAX,
   VOLUME_DB_MIN,
   num,
@@ -890,19 +894,39 @@ function AudioPanel({ engine }: { engine: EngineConnection }) {
   const muted = engineConfig.audioMuted;
   const volumeDb = local ?? engineConfig.audioVolumeDb;
 
-  const commit = (db: number, mute = muted): void => {
+  const bassDb = engineConfig.audioBassDb;
+  const trebleDb = engineConfig.audioTrebleDb;
+
+  const commit = (db: number, mute = muted, bass = bassDb, treble = trebleDb): void => {
     const v = clampVolumeDb(db);
     setLocal(v);
-    send({ type: 'setAudioVolume', volumeDb: v, muted: mute });
+    send({ type: 'setAudioVolume', volumeDb: v, muted: mute, bassDb: clampToneDb(bass), trebleDb: clampToneDb(treble) });
   };
+
+  /** Ручка тембра: число со знаком — видно, подъём это или срез. */
+  const tone = (label: string, hint: string, value: number, set: (v: number) => void): JSX.Element => (
+    <label className="field" data-hint={hint}>
+      {label}:{' '}
+      <input
+        type="range"
+        min={TONE_DB_MIN}
+        max={TONE_DB_MAX}
+        step={1}
+        value={value}
+        disabled={muted}
+        onChange={(e) => set(Number(e.target.value))}
+      />{' '}
+      <span className="tone-value">{toneDbLabel(value)}</span>
+    </label>
+  );
 
   return (
     <section className="panel">
       <h2>Звук вечерней программы</h2>
       <p className="dim">
-        Громкость трека, который движок играет сам — по расписанию и в плейлистах, когда редактор
-        закрыт. Меняется с ближайшего следующего трека: обрывать уже идущий ради громкости нельзя,
-        вода уйдёт из-под музыки.
+        Громкость и тембр трека, который движок играет сам — по расписанию и в плейлистах, когда редактор
+        закрыт. Меняются с ближайшего следующего трека: обрывать уже идущий нельзя — вода уйдёт из-под
+        музыки.
       </p>
       <div className="form-row">
         <label
@@ -943,6 +967,32 @@ function AudioPanel({ engine }: { engine: EngineConnection }) {
         <label className="field" data-hint="Трек не звучит вовсе; вода и свет при этом работают по шоу.">
           <input type="checkbox" checked={muted} onChange={(e) => commit(volumeDb, e.target.checked)} /> звук выключен
         </label>
+      </div>
+      {/*
+        Тембр — как ручки «Bass» и «Treble» на усилителе: подстроить звук под колонки
+        конкретного места. На синхронизацию с водой не влияет.
+      */}
+      <div className="form-row">
+        {tone(
+          'Низкие',
+          'Бас, ниже 100 Гц. Колонки бубнят — убавьте; звук плоский — добавьте. 0 — как в файле.',
+          bassDb,
+          (v) => commit(volumeDb, muted, v, trebleDb),
+        )}
+        {tone(
+          'Высокие',
+          'Верха, выше 6 кГц. Режут уши — убавьте; звук глухой — добавьте. 0 — как в файле.',
+          trebleDb,
+          (v) => commit(volumeDb, muted, bassDb, v),
+        )}
+        {(bassDb !== 0 || trebleDb !== 0) && (
+          <button className="btn btn-small" onClick={() => commit(volumeDb, muted, 0, 0)}>
+            Тембр как в файле
+          </button>
+        )}
+        <span className="dim" data-hint="Подъём больше +6 дБ не даём: громкий трек начнёт хрипеть. Пики при подъёме срезаются мягко.">
+          от −12 до +6 дБ
+        </span>
       </div>
       {muted && (
         <p className="warn">Звук выключен — вечерняя программа отыграет в тишине, вода и свет при этом работают.</p>
