@@ -18,7 +18,8 @@
     "app:build": "npm -w @fountain-studio/ui run build && npm -w @fountain-studio/app run build",
     "app:dist": "npm run app:build && npm -w @fountain-studio/app run dist",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "smoke": "npm -w @fountain-studio/engine run smoke"
+    "smoke": "npm -w @fountain-studio/engine run smoke",
+    "app-test": "npm run app:build && node scripts/app-test.cjs"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

@@ -30,6 +30,7 @@
       "preload.cjs",
       "engine.cjs",
       "playback-worker.cjs",
+      "tray.png",
       "ui/**",
       {
         "from": "../../node_modules/serialport",

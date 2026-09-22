@@ -59,6 +59,7 @@ npm -w @fountain-studio/engine run worker-test       # расчёт в отде�
 npm -w @fountain-studio/engine run telegram-test     # уведомления
 npm -w @fountain-studio/engine run audio-test         # звук: громкость, вырезки монтажа
 npm -w @fountain-studio/engine run lines-test         # вселенные и такт на ходу, без провала значений
+npm run app-test                                     # УСТАНОВЛЕННАЯ программа: движок из сборки, окно, значок у часов, автозапуск
 ```
 
 Визуальные правки (3D, вёрстка) проверяются **своими скриншотами**, а не «по

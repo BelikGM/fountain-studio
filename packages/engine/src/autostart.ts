@@ -18,9 +18,45 @@ import { fileURLToPath } from 'node:url';
  */
 const TASK_NAME = 'FountainStudioEngine';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+/**
+ * Установленное приложение (npm run app:dist). main.cjs передаёт движку
+ * готовую команду запуска самого себя «в фоне» (--hidden). До 23.09.2026 в
+ * установленной программе автозапуска не было вовсе: кнопка говорила «только
+ * из репозитория», и после перезагрузки компьютера объекта фонтан молчал.
+ *
+ * Пишем в «Автозагрузку» пользователя (реестр Run), а не в планировщик: прав
+ * администратора не нужно, и Windows сама покажет это в «Диспетчер задач →
+ * Автозагрузка», где человек привык такое искать.
+ */
+const APP_CMD = process.env.FOUNTAIN_APP_CMD ?? '';
+const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+/** Имя записи; переменная — только для проверки, чтобы не трогать настоящую. */
+const RUN_NAME = process.env.FOUNTAIN_AUTOSTART_NAME || 'FountainStudio';
+
+function packagedApp(): boolean {
+  return process.platform === 'win32' && APP_CMD !== '';
+}
+
+/**
+ * Папка этого файла — только когда движок запущен из исходников (tsx, ESM).
+ *
+ * В собранном engine.cjs (CommonJS) import.meta пустой, и прежнее
+ * `fileURLToPath(import.meta.url)` падало ПРИ ЗАГРУЗКЕ модуля: установленная
+ * программа с 21.07.2026 не могла поднять движок вовсе. Поймано 23.09.2026
+ * проверкой собранного приложения; теперь это проверяется всегда
+ * (npm run app-test).
+ */
+function moduleDir(): string | null {
+  try {
+    const url = (import.meta as { url?: string } | undefined)?.url;
+    return url ? path.dirname(fileURLToPath(url)) : null;
+  } catch {
+    return null;
+  }
+}
+const MODULE_DIR = moduleDir();
 /** src/autostart.ts → packages/engine/src → …/packages/engine → …/packages → repo root. */
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
+const REPO_ROOT = MODULE_DIR ? path.resolve(MODULE_DIR, '..', '..', '..') : '';
 
 /**
  * REPO_ROOT — верный путь только пока движок запущен из исходников (tsx).
@@ -31,6 +67,7 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
  * явно — иначе кнопка создаст задачу планировщика с нерабочей командой.
  */
 function repoRootValid(): boolean {
+  if (!REPO_ROOT) return false;
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')) as { workspaces?: unknown };
     return Array.isArray(pkg.workspaces);
@@ -40,18 +77,27 @@ function repoRootValid(): boolean {
 }
 
 export function isAutostartSupported(): boolean {
-  return process.platform === 'win32' && repoRootValid();
+  return packagedApp() || (process.platform === 'win32' && repoRootValid());
 }
 
 /** Причина недоступности — для показа в UI (null, если платформа вообще не Windows: там и так очевидно). */
 export function unsupportedReason(): string | null {
   if (process.platform !== 'win32') return null;
+  if (packagedApp()) return null;
   if (!repoRootValid()) return 'Доступно только при запуске движка из репозитория (не из собранного приложения)';
   return null;
 }
 
 export function isAutostartEnabled(): boolean {
   if (!isAutostartSupported()) return false;
+  if (packagedApp()) {
+    try {
+      execFileSync('reg', ['query', RUN_KEY, '/v', RUN_NAME], { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false; // записи нет — reg возвращает ненулевой код
+    }
+  }
   try {
     execFileSync('schtasks', ['/Query', '/TN', TASK_NAME], { stdio: 'ignore' });
     return true;
@@ -63,6 +109,15 @@ export function isAutostartEnabled(): boolean {
 export function setAutostart(enabled: boolean): { ok: boolean; error?: string } {
   if (!isAutostartSupported()) {
     return { ok: false, error: unsupportedReason() ?? 'Автозапуск через планировщик поддержан только на Windows' };
+  }
+  if (packagedApp()) {
+    try {
+      if (enabled) execFileSync('reg', ['add', RUN_KEY, '/v', RUN_NAME, '/t', 'REG_SZ', '/d', APP_CMD, '/f'], { stdio: 'ignore' });
+      else if (isAutostartEnabled()) execFileSync('reg', ['delete', RUN_KEY, '/v', RUN_NAME, '/f'], { stdio: 'ignore' });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
   try {
     if (enabled) {

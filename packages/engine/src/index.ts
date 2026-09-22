@@ -348,7 +348,12 @@ setInterval(() => {
   );
 }, 10_000);
 
-process.on('SIGINT', () => {
+/**
+ * Остановка по-хорошему: погасить приборы безопасным кадром (engine.stop),
+ * дописать объект и журнал. Убить процесс сразу нельзя — приборы застынут на
+ * последнем кадре.
+ */
+function shutdown(): void {
   console.log('\n[engine] остановка…');
   scheduler.stop();
   player.stop();
@@ -359,4 +364,14 @@ process.on('SIGINT', () => {
   void eventLog.flush();
   engine.stop();
   process.exit(0);
-});
+}
+process.on('SIGINT', shutdown);
+// Установленное приложение держит движок отдельным процессом и при «Выходе»
+// просит его закончиться сообщением: на Windows сигнал SIGINT дочернему
+// процессу не доставить, а kill обрывает без безопасного кадра.
+(process as unknown as { parentPort?: { on: (ev: 'message', cb: (e: { data: unknown }) => void) => void } }).parentPort?.on(
+  'message',
+  (e) => {
+    if (e.data === 'shutdown') shutdown();
+  },
+);

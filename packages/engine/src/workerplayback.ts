@@ -62,6 +62,12 @@ const RESPAWN_DELAY_MS = 2000;
  * и развязка молча не заработает.
  */
 function moduleDir(): string {
+  // CommonJS (собранный engine.cjs): __dirname — переменная МОДУЛЯ, а не
+  // глобальная. Прежняя проверка globalThis.__dirname её не видела, путь
+  // уходил в process.cwd(), и в установленной программе поток расчёта не
+  // поднимался никогда — движок молча считал одним потоком. Поймано
+  // 23.09.2026 проверкой собранного приложения (npm run app-test).
+  if (typeof __dirname === 'string') return __dirname;
   const g = globalThis as { __dirname?: string };
   if (typeof g.__dirname === 'string') return g.__dirname;
   try {
