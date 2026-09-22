@@ -7,6 +7,7 @@
 export interface ModbusTransport {
   writeSingleRegister(unitId: number, address: number, value: number): Promise<void>;
   readHoldingRegister(unitId: number, address: number): Promise<number>;
+  readInputRegister(unitId: number, address: number): Promise<number>;
   readonly isConnected: boolean;
   close(): void;
 }

@@ -54,16 +54,8 @@ export interface AutostartState {
 }
 
 /** Ветер и текущее ограничение высоты струй (§27 доработки, §4 п.1). */
-export interface WindState {
-  /** Сырое показание датчика (или ручного ввода), м/с — что говорит прибор. */
-  speedMs: number | null;
-  limitPercent: number;
-  config: WindLimitConfig;
-  /** Коррекция действует сейчас. false при заданном ветре — идёт выдержка. */
-  correcting: boolean;
-  /** Расчётная скорость, по которой режутся насосы, м/с; null — коррекции нет. */
-  calcSpeedMs: number | null;
-}
+/** Ветер и текущее ограничение — как присылает движок. */
+export type WindState = Omit<Extract<ServerMessage, { type: 'windState' }>, 'type'>;
 
 export interface EngineConfigState {
   tickMs: number;
@@ -450,6 +442,8 @@ export function useEngine(): EngineConnection {
               config: msg.config,
               correcting: msg.correcting,
               calcSpeedMs: msg.calcSpeedMs,
+              directionDeg: msg.directionDeg,
+              sensor: msg.sensor,
             });
             break;
           case 'license': {

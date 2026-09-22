@@ -85,7 +85,7 @@ type Ask = (text: string, options?: ConfirmOptions) => Promise<boolean>;
 
 /** Вкладка «3D»: схема фонтана, живая визуализация струй и света, импорт DXF. */
 export function LayoutView({ engine }: { engine: EngineConnection }) {
-  const { project, frames, wireFrames, send, updateProject } = engine;
+  const { project, frames, wireFrames, send, updateProject, windState } = engine;
   const [selected, setSelected] = useState<Selected>(null);
   const [multi, setMulti] = useState<MultiSel>(EMPTY_MULTI);
   const multiRef = useRef(multi);
@@ -118,9 +118,41 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
     window.addEventListener('pointerup', up);
     return () => window.removeEventListener('pointerup', up);
   }, []);
+  /**
+   * Ветер в 3D и ветер движка — ОДИН, когда ветер учитывается. Раньше ползунок
+   * здесь жил сам по себе: на «Отладке» ввели 8 м/с — насосы в 3D опустились,
+   * а сноса в сторону не было, пока не покрутишь ещё и здесь. Теперь:
+   *  · ветер не учитывается — ползунок только для картинки, как раньше;
+   *  · ручной ввод — ползунок и есть ручной ввод: насосы реагируют;
+   *  · датчик — показывает датчик, крутить нельзя; направление — от датчика,
+   *    если он его даёт, иначе своё.
+   */
+  const windCfg = project?.windLimit;
+  const windMode: 'local' | 'manual' | 'sensor' = !windCfg?.enabled
+    ? 'local'
+    : windCfg.source === 'manual'
+      ? 'manual'
+      : 'sensor';
+  const shownSpeed = windMode === 'local' ? windSpeed : (windState?.speedMs ?? 0);
+  const sensorDir = windMode === 'sensor' && windState?.directionDeg != null ? Math.round(windState.directionDeg) : null;
+  const shownDir = sensorDir ?? windDir;
+  const setSpeed = (v: number): void => {
+    if (windMode === 'manual') send({ type: 'setWindSpeed', speedMs: v > 0 ? v : null });
+    else if (windMode === 'local') setWindSpeed(v);
+  };
   useEffect(() => {
-    sceneRef.current?.setWind(windSpeed, windDir);
-  }, [windSpeed, windDir]);
+    sceneRef.current?.setWind(shownSpeed, shownDir);
+  }, [shownSpeed, shownDir]);
+  const windHint =
+    windMode === 'sensor'
+      ? `Ветер с датчика: ${num(shownSpeed, 1)} м/с${sensorDir !== null ? `, дует с ${sensorDir}°` : ''}. Крутить нельзя — показывает датчик («Настройки» → «Ветер»).`
+      : windMode === 'manual'
+        ? shownSpeed > 0
+          ? `Ветер ${num(shownSpeed, 1)} м/с, дует с ${shownDir}° — ручной ввод: насосы реагируют как на настоящий ветер. Наведите, чтобы изменить.`
+          : 'Ветер — ручной ввод для проверки: насосы реагируют как на настоящий. Тот же, что поле на «Отладке».'
+        : shownSpeed > 0
+          ? `Ветер ${num(shownSpeed, 1)} м/с, дует с ${shownDir}° — только картинка: ветер не учитывается («Настройки» → «Ветер»), на насосы не влияет.`
+          : 'Ветер в 3D: посмотреть, как сложит струи и куда понесёт воду. Ветер не учитывается («Настройки» → «Ветер») — на приборы не влияет.';
 
   // Данные для живого кадра сцены — через ref, чтобы rAF-цикл видел свежие
   // кадры без пересоздания сцены.
@@ -463,7 +495,7 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
         {/* Свёрнуто — только значок; дует ветер — значок и скорость, чтобы было
             понятно, почему струи сносит. Наведение раскрывает полосу целиком. */}
         <div
-          className={'canvas3d-wind' + (windOpen ? ' open' : '') + (windSpeed > 0 ? ' active' : '')}
+          className={'canvas3d-wind' + (windOpen ? ' open' : '') + (shownSpeed > 0 ? ' active' : '')}
           ref={windBoxRef}
           onMouseEnter={() => setWindOpen(true)}
           onMouseLeave={() => {
@@ -472,48 +504,49 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
           onPointerDown={() => {
             windDragRef.current = true;
           }}
-          data-hint={
-            windOpen
-              ? undefined
-              : windSpeed > 0
-                ? `Ветер ${num(windSpeed, 1)} м/с, дует с ${windDir}° — поэтому струи сносит. Наведите, чтобы изменить.`
-                : 'Ветер в 3D: посмотреть, как сложит струи и куда понесёт воду. В объект не сохраняется и на приборы не влияет.'
-          }
+          data-hint={windOpen ? undefined : windHint}
         >
           <span className="canvas3d-wind-icon">
             <WindIcon />
           </span>
-          {!windOpen && windSpeed > 0 && <b className="canvas3d-wind-now">{num(windSpeed, 1)} м/с</b>}
+          {!windOpen && shownSpeed > 0 && <b className="canvas3d-wind-now">{num(shownSpeed, 1)} м/с</b>}
           <div className="canvas3d-wind-body" aria-hidden={!windOpen}>
             <input
               type="range"
               min={0}
               max={15}
               step={0.5}
-              value={windSpeed}
+              value={Math.min(15, shownSpeed)}
               tabIndex={windOpen ? 0 : -1}
-              onChange={(e) => setWindSpeed(Number(e.target.value))}
-              data-hint="Скорость ветра, м/с"
+              disabled={windMode === 'sensor'}
+              onChange={(e) => setSpeed(Number(e.target.value))}
+              data-hint={
+                windMode === 'sensor'
+                  ? 'Скорость с датчика — крутить нельзя'
+                  : windMode === 'manual'
+                    ? 'Скорость ветра, м/с — насосы реагируют как на настоящий ветер'
+                    : 'Скорость ветра, м/с — только картинка'
+              }
             />
-            <b className="canvas3d-wind-val">{num(windSpeed, 1)} м/с</b>
+            <b className="canvas3d-wind-val">{num(shownSpeed, 1)} м/с</b>
             <input
               type="range"
               min={0}
               max={359}
               step={5}
-              value={windDir}
+              value={shownDir}
               tabIndex={windOpen ? 0 : -1}
-              disabled={windSpeed <= 0}
+              disabled={shownSpeed <= 0 || sensorDir !== null}
               onChange={(e) => setWindDir(Number(e.target.value))}
               data-hint="Откуда дует, ° — как в сводке погоды: 0 с севера, 90 с востока"
             />
-            <b className="canvas3d-wind-val canvas3d-wind-deg">{windDir}°</b>
+            <b className="canvas3d-wind-val canvas3d-wind-deg">{shownDir}°</b>
             <button
               className="btn btn-small"
               tabIndex={windOpen ? 0 : -1}
-              disabled={windSpeed <= 0}
+              disabled={shownSpeed <= 0 || windMode === 'sensor'}
               data-hint="Убрать ветер"
-              onClick={() => setWindSpeed(0)}
+              onClick={() => setSpeed(0)}
             >
               ✕
             </button>

@@ -1,8 +1,7 @@
-import type { ModbusConnection, ModbusPumpConfig, ModbusState, PatchedDevice } from '@fountain-studio/shared';
+import type { ModbusPumpConfig, ModbusState, PatchedDevice } from '@fountain-studio/shared';
 import { eventLog } from './eventlog';
-import { ModbusRtuClient } from './drivers/modbus-rtu';
-import { ModbusTcpClient } from './drivers/modbus-tcp';
 import type { ModbusTransport } from './drivers/modbus-transport';
+import { ModbusPool, modbusConnectionKey } from './modbuspool';
 
 const WRITE_THROTTLE_MS = 200; // не чаще 5 записей/с при изменении значения канала
 const KEEPALIVE_MS = 1000; // повтор даже без изменений — у многих ПЧ вотчдог связи гасит привод без свежих команд
@@ -24,24 +23,6 @@ interface PumpEntry {
   tempC: number | null;
 }
 
-function connectionKey(c: ModbusConnection): string {
-  return c.kind === 'tcp'
-    ? `tcp:${c.host}:${c.port ?? 502}`
-    : `rtu:${c.serialPort}:${c.baudRate ?? 9600}:${c.dataBits ?? 8}:${c.stopBits ?? 1}:${c.parity ?? 'none'}`;
-}
-
-function createTransport(c: ModbusConnection): ModbusTransport {
-  return c.kind === 'tcp'
-    ? new ModbusTcpClient(c.host, c.port ?? 502)
-    : new ModbusRtuClient({
-        path: c.serialPort,
-        baudRate: c.baudRate,
-        dataBits: c.dataBits,
-        stopBits: c.stopBits,
-        parity: c.parity,
-      });
-}
-
 /**
  * Прямое управление насосами через Modbus, в обход DMX→аналог (§12 п.9). Несколько
  * насосов на одном физическом канале (мультидроп RS-485 или общий TCP-шлюз) делят
@@ -57,7 +38,6 @@ export class PumpModbusManager {
   /** Новый код аварии ПЧ (0 не приходит — только code!==0) — уведомления (§27 доработки, §3 п.4). */
   onAlarm: ((deviceId: string, code: number) => void) | null = null;
 
-  private readonly transports = new Map<string, { transport: ModbusTransport; refCount: number }>();
   private readonly pumps = new Map<string, PumpEntry>();
   /**
    * Имена приборов для журнала. Раньше в журнал и в Telegram шло «насос
@@ -65,6 +45,12 @@ export class PumpModbusManager {
    */
   private readonly names = new Map<string, string>();
   private faultTimer: NodeJS.Timeout | null = null;
+
+  /**
+   * Пул подключений общий с датчиком ветра (см. modbuspool.ts): он часто
+   * сидит на той же линии RS-485, что и частотники.
+   */
+  constructor(private readonly pool: ModbusPool = new ModbusPool()) {}
 
   setDevices(devices: PatchedDevice[]): void {
     const wanted = new Map<string, ModbusPumpConfig>();
@@ -74,7 +60,7 @@ export class PumpModbusManager {
 
     for (const [id, entry] of this.pumps) {
       const cfg = wanted.get(id);
-      const key = cfg ? connectionKey(cfg.connection) : null;
+      const key = cfg ? modbusConnectionKey(cfg.connection) : null;
       if (!cfg || key !== entry.connKey) {
         this.releaseTransport(entry.connKey);
         this.pumps.delete(id);
@@ -86,8 +72,7 @@ export class PumpModbusManager {
         existing.config = cfg; // регистры/масштаб можно поменять без пересоздания соединения
         continue;
       }
-      const connKey = connectionKey(cfg.connection);
-      this.acquireTransport(connKey, cfg.connection);
+      const connKey = this.pool.acquire(cfg.connection);
       this.pumps.set(id, {
         config: cfg,
         connKey,
@@ -107,23 +92,8 @@ export class PumpModbusManager {
     else this.stopHealthPolling();
   }
 
-  private acquireTransport(key: string, conn: ModbusConnection): void {
-    const existing = this.transports.get(key);
-    if (existing) {
-      existing.refCount++;
-      return;
-    }
-    this.transports.set(key, { transport: createTransport(conn), refCount: 1 });
-  }
-
   private releaseTransport(key: string): void {
-    const entry = this.transports.get(key);
-    if (!entry) return;
-    entry.refCount--;
-    if (entry.refCount <= 0) {
-      entry.transport.close();
-      this.transports.delete(key);
-    }
+    this.pool.release(key);
   }
 
   /** Вызывается движком каждый тик с итоговым значением канала интенсивности (0–255). */
@@ -134,7 +104,7 @@ export class PumpModbusManager {
     const changed = entry.lastValue !== value;
     if (!changed && now - entry.lastWriteAt < KEEPALIVE_MS) return;
     if (changed && now - entry.lastWriteAt < WRITE_THROTTLE_MS) return;
-    const transport = this.transports.get(entry.connKey)?.transport;
+    const transport = this.pool.get(entry.connKey);
     if (!transport) return;
     entry.lastWriteAt = now;
     entry.lastValue = value;
@@ -177,7 +147,7 @@ export class PumpModbusManager {
   private pollHealth(): void {
     for (const [deviceId, entry] of this.pumps.entries()) {
       if (entry.writing) continue;
-      const transport = this.transports.get(entry.connKey)?.transport;
+      const transport = this.pool.get(entry.connKey);
       if (!transport) continue;
       const unitId = entry.config.unitId ?? 1;
 
@@ -248,7 +218,7 @@ export class PumpModbusManager {
     return {
       pumps: [...this.pumps.entries()].map(([deviceId, e]) => ({
         deviceId,
-        connected: this.transports.get(e.connKey)?.transport.isConnected ?? false,
+        connected: this.pool.get(e.connKey)?.isConnected ?? false,
         lastFreqHz: e.lastFreqHz,
         faultCode: e.config.faultRegister === undefined ? null : e.faultCode,
         ageMs: e.lastOkAt === 0 ? -1 : now - e.lastOkAt,
@@ -262,8 +232,7 @@ export class PumpModbusManager {
 
   stop(): void {
     this.stopHealthPolling();
-    for (const { transport } of this.transports.values()) transport.close();
-    this.transports.clear();
+    for (const e of this.pumps.values()) this.pool.release(e.connKey);
     this.pumps.clear();
   }
 }

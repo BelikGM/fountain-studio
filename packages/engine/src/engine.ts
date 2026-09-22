@@ -30,6 +30,7 @@ import {
   type UniverseInfo,
   type UtilityLightConfig,
   type WindLimitConfig,
+  type WindSensorStatus,
   type AddressRemap,
   defaultFailsafeConfig,
   type FailsafeConfig,
@@ -71,7 +72,9 @@ import type { UniverseOutput } from './drivers/output';
 import { Playback } from './playback';
 import { createPlaybackSource, type PlaybackSource } from './playbacksource';
 import { WorkerPlayback } from './workerplayback';
+import { ModbusPool } from './modbuspool';
 import { PumpModbusManager } from './pumpmodbus';
+import { WindSensor } from './windsensor';
 
 interface UniverseState {
   id: number;
@@ -116,8 +119,19 @@ export class Engine {
   private set playback(v: PlaybackSource) {
     this.playbackSource = v;
   }
+  /** Подключения Modbus — общие для насосов и датчика ветра (часто одна линия RS-485). */
+  readonly modbusPool = new ModbusPool();
   /** Насосы с прямым управлением по Modbus (§12 п.9) — читают то же u.out, что уходит в DMX. */
-  readonly pumps = new PumpModbusManager();
+  readonly pumps = new PumpModbusManager(this.modbusPool);
+  /** Датчик ветра (Modbus или MQTT) — источник показаний, когда он выбран в «Настройках». */
+  readonly windSensor = new WindSensor(this.modbusPool);
+  /**
+   * Состояние ветра поменялось: пришло показание, коррекция вошла в силу или
+   * снялась, датчик пропал. Раньше редактору слали его только в момент ввода
+   * — и «Отладка» навсегда оставалась на «⏳ ждём 10 с», хотя насосы уже
+   * резались.
+   */
+  onWindChange: (() => void) | null = null;
   /** Расчётчик: собирает кадр (сцены, шоу, консоль, ветер, переадресация). */
   private ticker: Ticker;
   /**
@@ -239,6 +253,11 @@ export class Engine {
    * говорит датчик. Резать насосы по нему нельзя — см. stepWindCorrection.
    */
   private windRaw: number | null = null;
+  /** Откуда дует, ° — только от датчика, который это умеет; для 3D. */
+  private windDirectionDeg: number | null = null;
+  /** Что последний раз сообщили редактору — чтобы не слать одно и то же каждый тик. */
+  private windReportedKey = '';
+  private windReportedAtMs = 0;
   /**
    * Состояние коррекции во времени: включена ли, по какой скорости считаем,
    * какой силой применяем и сколько уже держатся выдержки. Вся логика — в
@@ -262,6 +281,11 @@ export class Engine {
   onFailsafeChange: ((state: FailsafeState) => void) | null = null;
 
   constructor(readonly config: EngineConfig) {
+    this.windSensor.onReading = (speedMs, directionDeg) => {
+      this.windDirectionDeg = directionDeg;
+      this.setWindSpeed(speedMs);
+    };
+    this.windSensor.onStatus = () => this.onWindChange?.();
     for (const u of config.universes) {
       this.universes.push({
         id: u.id,
@@ -448,6 +472,7 @@ export class Engine {
     this.sendSafeFrames();
     for (const u of this.universes) for (const o of u.outputs) o.close();
     this.pumps.stop();
+    this.windSensor.stop();
   }
 
   /**
@@ -901,7 +926,23 @@ export class Engine {
         }
       }
     }
+    const prevWind = this.windLimitConfig;
     this.windLimitConfig = project.windLimit;
+    // Сменили источник или выключили учёт ветра — прежнее показание к новому
+    // источнику не относится: ручные «8 м/с» не должны остаться висеть, когда
+    // подключили датчик, а при «не учитывать» — держать насосы срезанными.
+    const nw = project.windLimit;
+    const otherSensor =
+      nw.source !== 'manual' &&
+      (JSON.stringify(prevWind.modbus) !== JSON.stringify(nw.modbus) || prevWind.mqtt.topic !== nw.mqtt.topic);
+    // Другой датчик (адрес, порт, топик) — тоже новый источник: показание
+    // прежнего не должно висеть, пока новый молчит.
+    if (prevWind.enabled !== nw.enabled || prevWind.source !== nw.source || otherSensor) {
+      this.windDirectionDeg = null;
+      this.setWindSpeed(null);
+    }
+    this.windSensor.configure(project.windLimit);
+    this.onWindChange?.();
     this.failsafeConfig = project.failsafe;
     this.addressRemap = project.addressRemap ?? {};
 
@@ -1006,6 +1047,7 @@ export class Engine {
     this.windCorrection = stepWindCorrection(this.windCorrection, this.windRaw, dtSec, this.windLimitConfig);
     this.refreshWindCaps();
     this.logWindIfChanged();
+    this.reportWindIfChanged();
   }
 
   /**
@@ -1065,6 +1107,33 @@ export class Engine {
   }
 
   /**
+   * Сказать редактору, что состояние ветра сдвинулось: коррекция вошла в силу,
+   * процент ограничения изменился. Не чаще четырёх раз в секунду — ввод
+   * коррекции за три секунды проходит все проценты подряд.
+   */
+  private reportWindIfChanged(): void {
+    const key = `${this.windCorrection.fade > 0}:${this.windLimitPercent()}:${Math.round(this.windCorrection.level * 10)}`;
+    if (key === this.windReportedKey) return;
+    const now = Date.now();
+    if (now - this.windReportedAtMs < 250) return;
+    this.windReportedKey = key;
+    this.windReportedAtMs = now;
+    this.onWindChange?.();
+  }
+
+  /**
+   * Ручной ввод ветра (поле на «Отладке», ползунок в 3D). Принимается, только
+   * когда в «Настройках» выбран ручной ввод: при подключённом датчике поле с
+   * руки не должно перебивать прибор, а при «не учитывать» — резать насосы.
+   */
+  setManualWind(speedMs: number | null): boolean {
+    if (!this.windLimitConfig.enabled || this.windLimitConfig.source !== 'manual') return false;
+    this.windDirectionDeg = null;
+    this.setWindSpeed(speedMs);
+    return true;
+  }
+
+  /**
    * Показательный процент для статуса в интерфейсе.
    *
    * Насосы режутся каждый по своей форсунке, одного числа на объект больше
@@ -1093,6 +1162,8 @@ export class Engine {
     config: WindLimitConfig;
     correcting: boolean;
     calcSpeedMs: number | null;
+    directionDeg: number | null;
+    sensor: WindSensorStatus | null;
   } {
     return {
       speedMs: this.windRaw,
@@ -1100,6 +1171,8 @@ export class Engine {
       config: this.windLimitConfig,
       correcting: this.windCorrection.fade > 0,
       calcSpeedMs: this.windCorrection.level > 0 ? this.windCorrection.level : null,
+      directionDeg: this.windDirectionDeg,
+      sensor: this.windSensor.status(),
     };
   }
 

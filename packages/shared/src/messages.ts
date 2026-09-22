@@ -8,7 +8,7 @@ import type { FrameMode } from './framemode';
 import type { LicenseStatus } from './license';
 import type { Project } from './project';
 import type { RemoteSettings } from './remote';
-import type { WindLimitConfig } from './windlimit';
+import type { WindLimitConfig, WindSensorStatus } from './windlimit';
 
 export type TestPatternMode =
   | 'off'
@@ -652,4 +652,8 @@ export type ServerMessage =
       correcting: boolean;
       /** Расчётная скорость, по которой режутся насосы, м/с; null — коррекции нет. */
       calcSpeedMs: number | null;
+      /** Откуда дует, °; null — датчик направление не даёт или ветер введён руками. */
+      directionDeg: number | null;
+      /** Что с датчиком; null — выбран ручной ввод или ветер не учитывается. */
+      sensor: WindSensorStatus | null;
     };

@@ -54,7 +54,7 @@ npm -w @fountain-studio/engine run license-test      # подпись/срок �
 npm -w @fountain-studio/engine run musidora-test     # кадр USB-DMX FountanPlay
 npm -w @fountain-studio/engine run failsafe-test     # аварийное отключение
 npm -w @fountain-studio/engine run eventlog-test     # журнал на диске
-npm -w @fountain-studio/engine run wind-test         # ветер: порог, выдержки, борт чаши
+npm -w @fountain-studio/engine run wind-test         # ветер: порог, выдержки, борт чаши, датчик Modbus/MQTT
 npm -w @fountain-studio/engine run worker-test       # расчёт в отдельном потоке
 npm -w @fountain-studio/engine run telegram-test     # уведомления
 npm -w @fountain-studio/engine run audio-test         # звук: громкость, вырезки монтажа

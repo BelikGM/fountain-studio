@@ -28,6 +28,10 @@ import {
   VOLUME_DB_MIN,
   num,
   countOf,
+  durationRu,
+  type WindLimitConfig,
+  type WindSensorModbus,
+  type WindSource,
 } from '@fountain-studio/shared';
 import { askConfirm } from '../components/ConfirmDialog';
 import { TOUR_STORAGE_KEY } from '../tour';
@@ -50,7 +54,7 @@ import {
   lockOperator,
   setOperatorPassword,
 } from '../operatorMode';
-import type { EngineConnection } from '../useEngine';
+import type { EngineConnection, WindState } from '../useEngine';
 
 /**
  * Переназначение горячих клавиш редактора (§27 доработки, УХ п.6) — те, что
@@ -1088,6 +1092,307 @@ function FrameModePanel({ engine }: { engine: EngineConnection }) {
   );
 }
 
+/**
+ * Поле, которое отдаёт значение, когда человек закончил ввод (ушёл с поля или
+ * нажал Enter), а не на каждую букву. Нужно для адреса датчика ветра: каждая
+ * правка открывает подключение заново, и «C», «CO», «COM» по очереди — это
+ * три попытки открыть несуществующие порты.
+ */
+function CommitInput({
+  value,
+  onCommit,
+  width,
+  placeholder,
+  type,
+  list,
+}: {
+  value: string;
+  onCommit: (v: string) => void;
+  width: number;
+  placeholder?: string;
+  type?: 'text' | 'number';
+  list?: string;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = (): void => {
+    if (draft !== null && draft !== value) onCommit(draft);
+    setDraft(null);
+  };
+  return (
+    <input
+      className="input"
+      style={{ width }}
+      type={type ?? 'text'}
+      list={list}
+      value={draft ?? value}
+      placeholder={placeholder}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') commit();
+      }}
+    />
+  );
+}
+
+type WindChoice = 'off' | WindSource;
+
+/** Что сейчас с датчиком — словами, как человеку на объекте. */
+function windSensorLine(ws: WindState | null): JSX.Element | null {
+  const s = ws?.sensor;
+  if (!ws || !s) return null;
+  const dir = s.directionDeg !== null ? `, дует с ${Math.round(s.directionDeg)}°` : '';
+  if (s.online && ws.speedMs !== null) {
+    return (
+      <span className="ok-text status-note">
+        ✔ датчик на связи: {num(ws.speedMs, 1)} м/с{dir}
+      </span>
+    );
+  }
+  if (s.holding && ws.speedMs !== null) {
+    return (
+      <span className="error-text">
+        ✖ датчик не отвечает{s.lastOkAgoSec !== null ? ` ${durationRu(s.lastOkAgoSec * 1000)}` : ''}
+        {s.error ? ` (${s.error})` : ''} — держим последнее показание {num(ws.speedMs, 1)} м/с
+      </span>
+    );
+  }
+  if (s.error) return <span className="error-text">✖ {s.error}</span>;
+  return <span className="dim">жду первое показание…</span>;
+}
+
+/**
+ * Откуда брать ветер. Одно место, где это решается: «не учитывать», ручной
+ * ввод для проверки или датчик. Раньше была только галочка «Включено», а
+ * скорость вводилась руками на «Отладке» — подключить датчик было некуда.
+ */
+function WindSourceBlock({
+  engine,
+  cfg,
+  update,
+}: {
+  engine: EngineConnection;
+  cfg: WindLimitConfig;
+  update: (patch: Partial<WindLimitConfig>) => void;
+}) {
+  const choice: WindChoice = cfg.enabled ? cfg.source : 'off';
+  const m = cfg.modbus;
+  const setModbus = (patch: Partial<WindSensorModbus>): void => update({ modbus: { ...m, ...patch } });
+  const conn = m.connection;
+  const mqttOff = engine.remote !== null && !engine.remote.settings.mqtt.enabled;
+
+  return (
+    <>
+      <div className="form-row">
+        <label
+          className="field"
+          data-hint="Откуда программа узнаёт скорость ветра. Датчик на объекте подключается НЕ через USB-DMX: DMX идёт только к приборам. Анемометр с выходом RS-485 — через USB-переходник RS-485 или шлюз Modbus TCP (часто на той же линии, что частотники); метеостанция или ПЛК — через MQTT."
+        >
+          Откуда брать ветер:{' '}
+          <select
+            value={choice}
+            onChange={(e) => {
+              const v = e.target.value as WindChoice;
+              update(v === 'off' ? { enabled: false } : { enabled: true, source: v });
+            }}
+          >
+            <option value="off">Не учитывать ветер</option>
+            <option value="manual">Ручной ввод — проверка без датчика</option>
+            <option value="modbus">Датчик по Modbus (RS-485 или шлюз)</option>
+            <option value="mqtt">Датчик по MQTT</option>
+          </select>
+        </label>
+        {choice === 'modbus' || choice === 'mqtt' ? windSensorLine(engine.windState) : null}
+      </div>
+
+      {choice === 'off' && (
+        <p className="dim">Насосы от ветра не снижаются. Ветер в 3D — только для картинки.</p>
+      )}
+      {choice === 'manual' && (
+        <p className="dim">
+          Скорость вводится на вкладке «Отладка» (поле «Ветер, м/с») или ползунком ветра в 3D — насосы
+          реагируют как на настоящий ветер. Для проверки без датчика; на объекте с датчиком выберите датчик.
+        </p>
+      )}
+
+      {choice === 'modbus' && (
+        <>
+          <div className="form-row">
+            <label className="field" data-hint="RS-485 — датчик на проводе, в компьютер через USB-переходник (COM-порт). TCP — датчик на линии RS-485 за шлюзом RS-485↔сеть.">
+              Подключение:{' '}
+              <select
+                value={conn.kind}
+                onChange={(e) =>
+                  setModbus({
+                    connection:
+                      e.target.value === 'tcp'
+                        ? { kind: 'tcp', host: '', port: 502 }
+                        : { kind: 'rtu', serialPort: '', baudRate: 9600 },
+                  })
+                }
+              >
+                <option value="rtu">RS-485 (USB-переходник, COM-порт)</option>
+                <option value="tcp">TCP (шлюз RS-485 ↔ сеть)</option>
+              </select>
+            </label>
+            {conn.kind === 'rtu' ? (
+              <>
+                <label className="field" data-hint="COM-порт переходника RS-485. Если датчик на одной линии с частотниками — тот же порт, что у них.">
+                  COM-порт:{' '}
+                  <CommitInput
+                    width={90}
+                    list="usb-com-ports"
+                    placeholder="COM3"
+                    value={conn.serialPort}
+                    onCommit={(v) => setModbus({ connection: { ...conn, serialPort: v.trim() } })}
+                  />
+                </label>
+                <label className="field" data-hint="Скорость линии — как в паспорте датчика. На одной линии с частотниками у всех она одинаковая.">
+                  Скорость:{' '}
+                  <select
+                    value={conn.baudRate ?? 9600}
+                    onChange={(e) => setModbus({ connection: { ...conn, baudRate: Number(e.target.value) } })}
+                  >
+                    {[1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200].map((b) => (
+                      <option key={b} value={b}>
+                        {b}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  Чётность:{' '}
+                  <select
+                    value={conn.parity ?? 'none'}
+                    onChange={(e) =>
+                      setModbus({ connection: { ...conn, parity: e.target.value as 'none' | 'even' | 'odd' } })
+                    }
+                  >
+                    <option value="none">нет</option>
+                    <option value="even">чёт</option>
+                    <option value="odd">нечёт</option>
+                  </select>
+                </label>
+              </>
+            ) : (
+              <>
+                <label className="field" data-hint="IP-адрес шлюза Modbus TCP">
+                  IP шлюза:{' '}
+                  <CommitInput
+                    width={130}
+                    placeholder="192.168.0.20"
+                    value={conn.host}
+                    onCommit={(v) => setModbus({ connection: { ...conn, host: v.trim() } })}
+                  />
+                </label>
+                <label className="field">
+                  Порт:{' '}
+                  <CommitInput
+                    width={70}
+                    type="number"
+                    value={String(conn.port ?? 502)}
+                    onCommit={(v) => setModbus({ connection: { ...conn, port: Number(v) || 502 } })}
+                  />
+                </label>
+              </>
+            )}
+          </div>
+          <div className="form-row">
+            <label className="field" data-hint="Адрес датчика на линии (1–247) — из паспорта или с наклейки. У частотников на той же линии адреса другие.">
+              Адрес:{' '}
+              <CommitInput
+                width={60}
+                type="number"
+                value={String(m.unitId)}
+                onCommit={(v) => setModbus({ unitId: Math.max(1, Math.min(247, Math.round(Number(v)) || 1)) })}
+              />
+            </label>
+            <label className="field" data-hint="Регистр скорости ветра из паспорта датчика, с нуля: «0x0000» — это 0.">
+              Регистр скорости:{' '}
+              <CommitInput
+                width={70}
+                type="number"
+                value={String(m.register)}
+                onCommit={(v) => setModbus({ register: Math.max(0, Math.round(Number(v)) || 0) })}
+              />
+            </label>
+            <label className="field" data-hint="Какой командой читать: в паспорте датчика написано «функция 03» или «функция 04».">
+              Чтение:{' '}
+              <select
+                value={m.registerKind}
+                onChange={(e) => setModbus({ registerKind: e.target.value as 'holding' | 'input' })}
+              >
+                <option value="holding">функция 03</option>
+                <option value="input">функция 04</option>
+              </select>
+            </label>
+            <label className="field" data-hint="Сколько единиц регистра в 1 м/с. У большинства датчиков 10: они отдают скорость в десятых долях (32 = 3,2 м/с).">
+              Единиц на 1 м/с:{' '}
+              <CommitInput
+                width={60}
+                type="number"
+                value={String(m.unitsPerMs)}
+                onCommit={(v) => setModbus({ unitsPerMs: Number(v) > 0 ? Number(v) : 10 })}
+              />
+            </label>
+            <label className="field" data-hint="Регистр направления ветра, если датчик его даёт (в градусах). Пусто — направления нет; тогда в расчёте ветер всегда дует в худшую сторону.">
+              Регистр направления:{' '}
+              <CommitInput
+                width={70}
+                type="number"
+                placeholder="нет"
+                value={m.directionRegister === null ? '' : String(m.directionRegister)}
+                onCommit={(v) =>
+                  setModbus({ directionRegister: v.trim() === '' ? null : Math.max(0, Math.round(Number(v)) || 0) })
+                }
+              />
+            </label>
+          </div>
+        </>
+      )}
+
+      {choice === 'mqtt' && (
+        <div className="form-row">
+          <label
+            className="field"
+            data-hint='Полный топик, куда метеостанция или контроллер присылает ветер. В сообщении — число (3.2) или JSON: {"speed": 3.2, "direction": 270}.'
+          >
+            Топик:{' '}
+            <CommitInput
+              width={220}
+              placeholder="weather/wind"
+              value={cfg.mqtt.topic}
+              onCommit={(v) => update({ mqtt: { topic: v.replace(/[#+]/g, '').trim() } })}
+            />
+          </label>
+          {mqttOff && (
+            <span className="warn">MQTT выключен — включите его на вкладке «Внешние пульты» → «Подключение»</span>
+          )}
+        </div>
+      )}
+
+      {(choice === 'modbus' || choice === 'mqtt') && (
+        <div className="form-row">
+          <label
+            className="field"
+            data-hint="Столько секунд без показаний — и датчик считается пропавшим: авария в журнал и в Telegram. Последнее показание при этом держится: поднять струи в ветер, которого мы просто перестали видеть, опаснее."
+          >
+            Датчик пропал, если молчит, с:{' '}
+            <input
+              className="input input-num"
+              type="number"
+              min={2}
+              max={600}
+              value={cfg.sensorLostSec}
+              onChange={(e) => update({ sensorLostSec: Math.max(2, Math.min(600, Math.round(Number(e.target.value)) || 10)) })}
+            />
+          </label>
+        </div>
+      )}
+    </>
+  );
+}
+
 function WindLimitPanel({ engine }: { engine: EngineConnection }) {
   const { project, updateProject } = engine;
   if (!project) return null;
@@ -1119,18 +1424,14 @@ function WindLimitPanel({ engine }: { engine: EngineConnection }) {
 
   return (
     <section className="panel">
-      <h2>Датчик ветра</h2>
+      <h2>Ветер</h2>
       <p className="dim">
         Ветер выше порога — мощность насосов (высота струй) снижается; свет не трогается. Предел считается
         по ТЕКУЩЕЙ высоте струи и по расстоянию до борта чаши, поэтому приглушённую струю коррекция не
-        трогает, а форсунку у борта режет сильнее центральной. Пока датчик ветра не подключён, скорость
-        вводится вручную на вкладке «Отладка» (поле появляется, когда здесь включено).
+        трогает, а форсунку у борта режет сильнее центральной.
       </p>
+      <WindSourceBlock engine={engine} cfg={cfg} update={update} />
       <div className="form-row">
-        <label className="field">
-          <input type="checkbox" checked={cfg.enabled} onChange={(e) => update({ enabled: e.target.checked })} />{' '}
-          Включено
-        </label>
         <label className="field" data-hint="Ниже этого ветра не делаем ничего и ни для каких струй. Ветер 1–2 м/с на объекте бывает постоянно, и реагировать на него — значит шевелить воду весь день без причины.">
           Порог, м/с:{' '}
           <input

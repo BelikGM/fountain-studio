@@ -101,11 +101,67 @@
 
 import { airDropM, nozzleDropM, referenceAirDropM, windTauFromDrop } from './jetdrop';
 import { clampSpray, type Bowl, type Nozzle } from './layout';
+import type { ModbusConnection } from './project';
 
 const G = 9.81;
 
+// ══ Откуда берётся ветер ═══════════════════════════════════════════════════
+
+/**
+ * Источник скорости ветра. «Не учитывать» — это enabled = false: тогда
+ * источник не важен и насосы от ветра не режутся вовсе.
+ *
+ *  · manual — ручной ввод: поле на «Отладке» или ползунок ветра в 3D. Для
+ *    проверки без датчика: насосы реагируют как на настоящий ветер.
+ *  · modbus — анемометр с выходом RS-485 Modbus RTU: через USB-переходник
+ *    RS-485 или через шлюз Modbus TCP. Часто на той же линии, что частотники.
+ *  · mqtt — показание приходит в топик MQTT (метеостанция, контроллер умного
+ *    дома, ПЛК). Брокер — тот же, что на вкладке «Внешние пульты».
+ *
+ * Через USB-DMX/RDM ветер НЕ приходит: DMX идёт только от компьютера к
+ * приборам, а RDM-анемометров на рынке практически нет. Датчику нужен свой
+ * канал — поэтому и три варианта выше.
+ */
+export type WindSource = 'manual' | 'modbus' | 'mqtt';
+
+export interface WindSensorModbus {
+  connection: ModbusConnection;
+  /** Адрес датчика на линии, 1–247. */
+  unitId: number;
+  /** Регистр скорости, с 0 (как в паспорте датчика, «0x0000» — это 0). */
+  register: number;
+  /** holding — функция 03, input — функция 04. В паспорте датчика написано, какая. */
+  registerKind: 'holding' | 'input';
+  /** Единиц регистра на 1 м/с. У большинства датчиков 10: скорость в десятых долях. */
+  unitsPerMs: number;
+  /** Регистр направления, градусы; null — датчик направление не даёт. */
+  directionRegister: number | null;
+  /** Единиц регистра на 1°. Обычно 1. */
+  directionUnitsPerDeg: number;
+}
+
+export interface WindSensorMqtt {
+  /**
+   * Полный топик, куда приходит показание. Внутри — число («3.2» или «3,2»)
+   * или JSON вида {"speed": 3.2, "direction": 270}.
+   */
+  topic: string;
+}
+
 export interface WindLimitConfig {
+  /** false — ветер не учитывается вовсе, насосы от него не режутся. */
   enabled: boolean;
+  /** Откуда берётся скорость ветра (см. WindSource). */
+  source: WindSource;
+  modbus: WindSensorModbus;
+  mqtt: WindSensorMqtt;
+  /**
+   * Через сколько секунд молчания датчик считается пропавшим: в журнал и в
+   * Telegram уходит авария. Последнее показание при этом ДЕРЖИТСЯ — снять
+   * ограничение из-за замолчавшего датчика значило бы поднять струи в
+   * ветер, которого мы просто больше не видим.
+   */
+  sensorLostSec: number;
   /**
    * Ниже этого ветра (м/с) не делаем НИЧЕГО и ни для каких струй.
    *
@@ -210,9 +266,25 @@ export interface WindLimitConfig {
   maxPlausibleSpeed: number;
 }
 
+export function defaultWindSensorModbus(): WindSensorModbus {
+  return {
+    connection: { kind: 'rtu', serialPort: '', baudRate: 9600 },
+    unitId: 1,
+    register: 0,
+    registerKind: 'holding',
+    unitsPerMs: 10,
+    directionRegister: null,
+    directionUnitsPerDeg: 1,
+  };
+}
+
 export function defaultWindLimitConfig(): WindLimitConfig {
   return {
     enabled: false,
+    source: 'manual',
+    modbus: defaultWindSensorModbus(),
+    mqtt: { topic: '' },
+    sensorLostSec: 10,
     deadbandSpeed: 2,
     activateHoldSec: 10,
     deactivateHoldSec: 10,
@@ -624,8 +696,16 @@ export function sanitizeWindLimitConfig(raw: unknown): WindLimitConfig {
   };
   const num = (v: unknown, def: number, lo: number, hi: number): number =>
     typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : def;
+  // До 22.09.2026 источника не было: включённый ветер вводился только руками.
+  const source: WindSource = r.source === 'modbus' || r.source === 'mqtt' ? r.source : 'manual';
   return {
     enabled: r.enabled === true,
+    source,
+    modbus: sanitizeWindSensorModbus(r.modbus),
+    // Маски «#» и «+» убираем: показание сверяется с топиком точно, а маска
+    // превратила бы подписку на свой датчик в подписку на чужие.
+    mqtt: { topic: typeof r.mqtt?.topic === 'string' ? r.mqtt.topic.replace(/[#+]/g, '').trim() : '' },
+    sensorLostSec: num(r.sensorLostSec, d.sensorLostSec, 2, 600),
     deadbandSpeed: num(r.deadbandSpeed, d.deadbandSpeed, 0, 20),
     // Прежние версии знали выдержку только на возврат (releaseHoldSec) — она
     // по смыслу и есть «сколько ждать, что ветер кончился».
@@ -649,4 +729,90 @@ export function sanitizeWindLimitConfig(raw: unknown): WindLimitConfig {
     stopSpeed: num(r.stopSpeed ?? r.maxSpeed, d.stopSpeed, 0, 60),
     maxPlausibleSpeed: num(r.maxPlausibleSpeed, d.maxPlausibleSpeed, 5, 100),
   };
+}
+
+// ══ Датчик ветра: разбор настроек и показаний ═════════════════════════════
+
+function sanitizeWindConnection(raw: unknown): ModbusConnection {
+  const d = defaultWindSensorModbus().connection;
+  if (!raw || typeof raw !== 'object') return d;
+  const r = raw as Record<string, unknown>;
+  const port = (v: unknown, def: number): number => {
+    const n = Math.round(Number(v));
+    return Number.isFinite(n) && n >= 1 && n <= 65535 ? n : def;
+  };
+  if (r.kind === 'tcp') {
+    return { kind: 'tcp', host: typeof r.host === 'string' ? r.host.trim() : '', port: port(r.port, 502) };
+  }
+  const baud = Math.round(Number(r.baudRate));
+  return {
+    kind: 'rtu',
+    serialPort: typeof r.serialPort === 'string' ? r.serialPort.trim() : '',
+    baudRate: [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200].includes(baud) ? baud : 9600,
+    ...(r.dataBits === 7 ? { dataBits: 7 as const } : {}),
+    ...(r.stopBits === 2 ? { stopBits: 2 as const } : {}),
+    ...(r.parity === 'even' || r.parity === 'odd' ? { parity: r.parity } : {}),
+  };
+}
+
+export function sanitizeWindSensorModbus(raw: unknown): WindSensorModbus {
+  const d = defaultWindSensorModbus();
+  if (!raw || typeof raw !== 'object') return d;
+  const r = raw as Partial<WindSensorModbus>;
+  const int = (v: unknown, def: number, lo: number, hi: number): number => {
+    const n = Math.round(Number(v));
+    return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : def;
+  };
+  const scale = Number(r.unitsPerMs);
+  const dirScale = Number(r.directionUnitsPerDeg);
+  return {
+    connection: sanitizeWindConnection(r.connection),
+    unitId: int(r.unitId, d.unitId, 1, 247),
+    register: int(r.register, d.register, 0, 65535),
+    registerKind: r.registerKind === 'input' ? 'input' : 'holding',
+    unitsPerMs: Number.isFinite(scale) && scale > 0 ? scale : d.unitsPerMs,
+    directionRegister:
+      r.directionRegister === null || r.directionRegister === undefined ? null : int(r.directionRegister, 0, 0, 65535),
+    directionUnitsPerDeg: Number.isFinite(dirScale) && dirScale > 0 ? dirScale : d.directionUnitsPerDeg,
+  };
+}
+
+/**
+ * Показание из MQTT: число («3.2», «3,2») или JSON с полем скорости и,
+ * если есть, направления. null — показания в сообщении нет.
+ */
+export function parseWindPayload(payload: string): { speedMs: number; directionDeg: number | null } | null {
+  const text = payload.trim();
+  const plain = Number(text.replace(',', '.'));
+  if (text !== '' && Number.isFinite(plain)) return { speedMs: plain, directionDeg: null };
+  try {
+    const o = JSON.parse(text) as Record<string, unknown>;
+    if (!o || typeof o !== 'object') return null;
+    const pick = (keys: string[]): number | null => {
+      for (const k of keys) {
+        const v = Number(o[k]);
+        if (o[k] !== undefined && o[k] !== null && Number.isFinite(v)) return v;
+      }
+      return null;
+    };
+    const speed = pick(['speed', 'windSpeed', 'wind_speed', 'wind', 'value']);
+    if (speed === null) return null;
+    return { speedMs: speed, directionDeg: pick(['direction', 'windDirection', 'wind_direction', 'dir']) };
+  } catch {
+    return null;
+  }
+}
+
+/** Что сейчас с датчиком ветра — для «Настроек», «Отладки» и 3D. */
+export interface WindSensorStatus {
+  /** Датчик отвечает. */
+  online: boolean;
+  /** Сколько секунд назад было последнее показание; null — ещё не было ни одного. */
+  lastOkAgoSec: number | null;
+  /** Почему показаний нет: порт не указан, нет ответа, показание вне разумного… */
+  error: string | null;
+  /** Датчик пропал, держим последнее показание. */
+  holding: boolean;
+  /** Направление, откуда дует, °; null — датчик его не даёт. */
+  directionDeg: number | null;
 }

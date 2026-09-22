@@ -1,5 +1,12 @@
 import net from 'node:net';
-import { checkException, parseHoldingRegisters, pduReadHoldingRegisters, pduWriteSingleRegister } from './modbus-pdu';
+import {
+  checkException,
+  parseHoldingRegisters,
+  parseInputRegisters,
+  pduReadHoldingRegisters,
+  pduReadInputRegisters,
+  pduWriteSingleRegister,
+} from './modbus-pdu';
 import type { ModbusTransport } from './modbus-transport';
 
 /**
@@ -89,7 +96,7 @@ export class ModbusTcpClient implements ModbusTransport {
     if (!item) return;
     if (!this.socket || this.socket.connecting) {
       this.connect();
-      item.reject(new Error('нет соединения с ПЧ'));
+      item.reject(new Error('нет соединения со шлюзом'));
       this.queue.length = 0; // без соединения остаток очереди ждёт следующего вызова
       return;
     }
@@ -101,7 +108,7 @@ export class ModbusTcpClient implements ModbusTransport {
     header.writeUInt8(item.unitId, 6);
     const timer = setTimeout(() => {
       this.inFlight = null;
-      item.reject(new Error('таймаут ответа ПЧ'));
+      item.reject(new Error('таймаут ответа прибора'));
       this.pump();
     }, this.timeoutMs);
     this.inFlight = { txId, resolve: item.resolve, reject: item.reject, timer };
@@ -114,6 +121,11 @@ export class ModbusTcpClient implements ModbusTransport {
 
   async readHoldingRegister(unitId: number, address: number): Promise<number> {
     const values = parseHoldingRegisters(await this.request(unitId, pduReadHoldingRegisters(address, 1)));
+    return values[0] ?? 0;
+  }
+
+  async readInputRegister(unitId: number, address: number): Promise<number> {
+    const values = parseInputRegisters(await this.request(unitId, pduReadInputRegisters(address, 1)));
     return values[0] ?? 0;
   }
 

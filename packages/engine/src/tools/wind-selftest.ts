@@ -639,7 +639,192 @@ async function liveEngineCheck(): Promise<void> {
   }
 }
 
+
+// ── Источник ветра и датчик (22.09.2026) ──────────────────────────────────
+//
+// Откуда берётся ветер: не учитывать / ручной ввод / датчик по Modbus / по
+// MQTT. Датчик опрашивается по-настоящему — поддельным анемометром на TCP
+// (Modbus TCP, как шлюз RS-485 ↔ сеть), функциями 03 и 04.
+async function sensorCheck(): Promise<void> {
+  console.log('— источник ветра и датчик —');
+  const { emptyProject, sanitizeProject, sanitizeWindLimitConfig: sanitizeWind, parseWindPayload } = await import('@fountain-studio/shared');
+  const net = await import('node:net');
+  const { eventLog } = await import('../eventlog');
+  const { Engine } = await import('../engine');
+
+  // Разбор настроек: старые объекты и мусор.
+  const old = sanitizeWind({ enabled: true });
+  check(old.enabled && old.source === 'manual', 'старый объект с включённым ветром — ручной ввод, как и было');
+  check(sanitizeWind({ source: 'modbus' }).source === 'modbus', 'источник «датчик Modbus» сохраняется');
+  check(sanitizeWind({ source: 'радио' }).source === 'manual', 'непонятный источник — ручной ввод');
+  check(sanitizeWind({ modbus: { unitId: 999 } }).modbus.unitId === 247, 'адрес датчика не больше 247');
+  check(sanitizeWind({ modbus: { unitsPerMs: 0 } }).modbus.unitsPerMs === 10, 'нулевой масштаб — заводские 10');
+  check(sanitizeWind({ mqtt: { topic: 'weather/#' } }).mqtt.topic === 'weather/', 'маски MQTT из топика убраны');
+  check(sanitizeWind({ sensorLostSec: 0 }).sensorLostSec === 2, 'датчик считается пропавшим не раньше 2 с');
+
+  // Показание из MQTT.
+  check(parseWindPayload('3.2')?.speedMs === 3.2, 'MQTT: «3.2»');
+  check(parseWindPayload('3,2')?.speedMs === 3.2, 'MQTT: «3,2» с запятой');
+  const js = parseWindPayload('{"speed": 4.5, "direction": 270}');
+  check(js?.speedMs === 4.5 && js.directionDeg === 270, 'MQTT: JSON со скоростью и направлением');
+  check(parseWindPayload('ветрено') === null, 'MQTT: текст без числа — не показание');
+
+  // Поддельный анемометр: holding 0 = 32 (3,2 м/с), holding 1 = 270°,
+  // input 0 = 45 (4,5 м/с). Запись (06) — для насоса на той же линии.
+  const holding = new Map<number, number>([
+    [0, 32],
+    [1, 270],
+  ]);
+  const input = new Map<number, number>([[0, 45]]);
+  let silent = false;
+  const sockets = new Set<import('node:net').Socket>();
+  const server = net.createServer((sock) => {
+    sockets.add(sock);
+    sock.on('close', () => sockets.delete(sock));
+    sock.on('data', (buf: Buffer) => {
+      if (silent) return;
+      for (let off = 0; off + 8 <= buf.length; ) {
+        const len = buf.readUInt16BE(off + 4);
+        const unit = buf.readUInt8(off + 6);
+        const pdu = buf.subarray(off + 7, off + 6 + len);
+        const fc = pdu.readUInt8(0);
+        let resp: Buffer;
+        if (fc === 3 || fc === 4) {
+          const v = (fc === 3 ? holding : input).get(pdu.readUInt16BE(1)) ?? 0;
+          resp = Buffer.from([fc, 2, (v >> 8) & 0xff, v & 0xff]);
+        } else resp = pdu; // 06 — эхо
+        const head = Buffer.alloc(7);
+        buf.copy(head, 0, off, off + 4);
+        head.writeUInt16BE(resp.length + 1, 4);
+        head.writeUInt8(unit, 6);
+        sock.write(Buffer.concat([head, resp]));
+        off += 6 + len;
+      }
+    });
+  });
+  await new Promise<void>((r) => server.listen(15502, '127.0.0.1', () => r()));
+
+  const events: string[] = [];
+  const unsub = eventLog.subscribe((e) => {
+    if (e.source === 'wind') events.push(`${e.level}:${e.message}`);
+  });
+
+  const engine = new Engine({
+    server: { port: 9598 },
+    timing: { tickMs: 50, spinMs: 2, uiFrameMs: 100 },
+    audio: { player: 'none', ffplayPath: '', volumeDb: 0, muted: false, bassDb: 0, trebleDb: 0 },
+    universes: [{ id: 1, label: 'Вселенная 1', outputs: [] }],
+    backup: { enabled: false, intervalMin: 60 },
+  } as never);
+  const sensorCfg = {
+    ...defaultWindLimitConfig(),
+    enabled: true,
+    source: 'modbus' as const,
+    activateHoldSec: 0.2,
+    deactivateHoldSec: 0.2,
+    fadeInSec: 0.3,
+    sensorLostSec: 2,
+    modbus: {
+      connection: { kind: 'tcp' as const, host: '127.0.0.1', port: 15502 },
+      unitId: 1,
+      register: 0,
+      registerKind: 'holding' as const,
+      unitsPerMs: 10,
+      directionRegister: 1,
+      directionUnitsPerDeg: 1,
+    },
+  };
+  const project = (windLimit: unknown, withPump = false): never =>
+    sanitizeProject({
+      ...emptyProject('Датчик ветра'),
+      devices: [
+        {
+          id: 'p1',
+          name: 'Насос',
+          profileId: 'pump',
+          universe: 1,
+          address: 1,
+          ...(withPump
+            ? { modbus: { connection: { kind: 'tcp', host: '127.0.0.1', port: 15502 }, unitId: 2, freqRegister: 10, freqScaleHz: 50 } }
+            : {}),
+        },
+      ],
+      windLimit,
+    } as never) as never;
+  const changes: boolean[] = [];
+  engine.onWindChange = () => changes.push(engine.windState().correcting);
+  const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+  const until = async (cond: () => boolean, limitMs = 8000): Promise<void> => {
+    const t0 = Date.now();
+    while (!cond() && Date.now() - t0 < limitMs) await sleep(50);
+  };
+  engine.setProject(project(sensorCfg, true));
+  engine.start();
+  try {
+    await until(() => engine.windState().speedMs === 3.2);
+    const ws = engine.windState();
+    check(ws.speedMs === 3.2, `датчик по Modbus (функция 03): 32 единицы = 3,2 м/с (${ws.speedMs})`);
+    check(ws.directionDeg === 270, `направление с датчика: 270° (${ws.directionDeg})`);
+    check(ws.sensor?.online === true, 'датчик на связи');
+    const pool = (engine.modbusPool as unknown as { transports: Map<string, unknown> }).transports;
+    check(pool.size === 1, `насос и датчик на одной линии — одно подключение, а не два (${pool.size})`);
+
+    check(engine.setManualWind(9) === false, 'при датчике ручной ввод не принимается');
+    await sleep(300);
+    check(engine.windState().speedMs === 3.2, 'и показание датчика не перебито');
+
+    // Коррекция вошла в силу — редактор должен об этом узнать сам.
+    await until(() => engine.windState().correcting);
+    await sleep(400);
+    check(changes.includes(true), 'коррекция вошла в силу — редактору сообщено без нового ввода');
+
+    engine.setProject(project({ ...sensorCfg, modbus: { ...sensorCfg.modbus, registerKind: 'input', directionRegister: null } }, true));
+    await until(() => engine.windState().speedMs === 4.5);
+    check(engine.windState().speedMs === 4.5, `функция 04 (input-регистр): 4,5 м/с (${engine.windState().speedMs})`);
+
+    // Датчик замолчал — показание держится, в журнале авария (одна).
+    silent = true;
+    await until(() => engine.windState().sensor?.holding === true, 10000);
+    const held = engine.windState();
+    check(held.sensor?.holding === true && held.speedMs === 4.5, `датчик молчит — держим последние 4,5 м/с (${held.speedMs})`);
+    const lostEvents = events.filter((e) => e.startsWith('warn:') && e.includes('не отвечает'));
+    check(lostEvents.length === 1, `в журнале одна авария «не отвечает», а не строка в секунду (${lostEvents.length})`);
+    silent = false;
+    await until(() => engine.windState().sensor?.online === true, 10000);
+    check(events.some((e) => e.includes('снова на связи')), 'датчик вернулся — «снова на связи» в журнале');
+
+    // Ручной ввод: показание датчика не остаётся висеть.
+    engine.setProject(project({ ...sensorCfg, source: 'manual' }));
+    check(engine.windState().speedMs === null, 'переключили на ручной ввод — показание датчика сброшено');
+    check(engine.setManualWind(6) === true && engine.windState().speedMs === 6, 'ручной ввод принят');
+
+    // «Не учитывать»: ни показания, ни ручного ввода.
+    engine.setProject(project({ ...sensorCfg, enabled: false }));
+    check(engine.windState().speedMs === null, '«не учитывать ветер» — показание сброшено');
+    check(engine.setManualWind(5) === false, '«не учитывать ветер» — ручной ввод не принимается');
+
+    // MQTT: свой топик — показание, чужой — мимо, мусор — ошибка в статусе.
+    engine.setProject(project({ ...sensorCfg, source: 'mqtt', mqtt: { topic: 'weather/wind' } }));
+    check(engine.windSensor.mqttTopic === 'weather/wind', 'MQTT: топик датчика известен подписке');
+    engine.windSensor.handleMqtt('weather/other', '9');
+    check(engine.windState().speedMs === null, 'MQTT: чужой топик — не показание');
+    engine.windSensor.handleMqtt('weather/wind', '{"speed": 7.5, "direction": 90}');
+    check(engine.windState().speedMs === 7.5 && engine.windState().directionDeg === 90, 'MQTT: JSON со скоростью и направлением принят');
+    engine.windSensor.handleMqtt('weather/wind', 'ветрено');
+    check(
+      engine.windState().speedMs === 7.5 && engine.windState().sensor?.online === true,
+      'MQTT: мусор в топике не сбивает свежее показание и не роняет «на связи»',
+    );
+  } finally {
+    unsub();
+    engine.stop();
+    for (const s of sockets) s.destroy();
+    server.close();
+  }
+}
+
 void liveEngineCheck()
+  .then(() => sensorCheck())
   .catch((err) => {
     failed++;
     console.error('  ✖ живой движок: проверка не прошла —', err);

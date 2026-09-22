@@ -11,6 +11,12 @@ export interface MqttControllerOptions {
   username?: string;
   password?: string;
   topicPrefix?: string;
+  /**
+   * Топики сверх команд — например, показание датчика ветра. Подписываемся
+   * при каждом подключении; сообщения из них уходят в onOther.
+   */
+  extraTopics?: () => string[];
+  onOther?: (topic: string, payload: string) => void;
 }
 
 /**
@@ -28,6 +34,8 @@ export class MqttController {
   private readonly topicPrefix: string;
   private connected = false;
   private statusTimer: NodeJS.Timeout | null = null;
+  private readonly extraTopics: () => string[];
+  private readonly onOther: ((topic: string, payload: string) => void) | undefined;
 
   constructor(
     private readonly engine: Engine,
@@ -35,6 +43,8 @@ export class MqttController {
     private readonly getBindings: () => MqttBinding[],
   ) {
     this.topicPrefix = opts.topicPrefix ?? 'fountain-studio';
+    this.extraTopics = opts.extraTopics ?? (() => []);
+    this.onOther = opts.onOther;
     this.client = new MqttClient({
       host: opts.host,
       port: opts.port,
@@ -44,10 +54,16 @@ export class MqttController {
     });
     this.client.onStatus = (connected) => {
       this.connected = connected;
-      if (connected) this.client.subscribe(`${this.topicPrefix}/cmd/#`);
+      if (connected) {
+        this.client.subscribe(`${this.topicPrefix}/cmd/#`);
+        for (const t of this.extraTopics()) this.client.subscribe(t);
+      }
       this.onChange?.();
     };
-    this.client.onMessage = (topic) => this.handleMessage(topic);
+    this.client.onMessage = (topic, payload) => {
+      this.handleMessage(topic);
+      this.onOther?.(topic, payload.toString('utf8'));
+    };
   }
 
   private handleMessage(topic: string): void {
@@ -58,6 +74,12 @@ export class MqttController {
     if (!binding) return;
     eventLog.log('mqtt', `${topic} → ${binding.action.type}`);
     fireRemoteAction(this.engine, binding.action);
+  }
+
+  /** Подписаться на дополнительные топики заново — поменялся топик датчика. */
+  resubscribe(): void {
+    if (!this.connected) return;
+    for (const t of this.extraTopics()) this.client.subscribe(t);
   }
 
   /** Публикация в произвольный топик под тем же префиксом — уведомления об авариях (§27 доработки, §3 п.4). */

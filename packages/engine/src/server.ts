@@ -142,6 +142,8 @@ export function startServer(
       mqtt: { enabled: false, connected: false, error: null },
     };
   const broadcastRemoteStatus = (): void => broadcast(remoteStatus());
+  // Ветер: показание датчика, вход и выход коррекции — сразу в редактор.
+  engine.onWindChange = () => broadcast({ type: 'windState', ...engine.windState() } satisfies ServerMessage);
   if (remote) remote.onChange = broadcastRemoteStatus;
   const backupConfigMessage = (): Extract<ServerMessage, { type: 'backupConfig' }> => ({
     type: 'backupConfig',
@@ -772,7 +774,10 @@ export function startServer(
           break;
         }
         case 'setWindSpeed':
-          engine.setWindSpeed(msg.speedMs);
+          // Принимается только при ручном вводе: при датчике поле с руки не
+          // перебивает прибор. Состояние шлём в любом случае — чтобы поле
+          // вернулось к тому, что на самом деле.
+          engine.setManualWind(msg.speedMs);
           broadcast({ type: 'windState', ...engine.windState() } satisfies ServerMessage);
           break;
       }

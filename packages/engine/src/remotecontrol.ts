@@ -10,6 +10,12 @@ import { eventLog } from './eventlog';
 import { MqttController } from './mqttcontroller';
 import { OscServer } from './oscserver';
 
+/** Дополнительные подписки MQTT — показание датчика ветра и т. п. */
+export interface MqttExtra {
+  topics: () => string[];
+  onMessage: (topic: string, payload: string) => void;
+}
+
 /** То, что про MQTT хранится в файле, но в редактор не уходит. */
 export interface MqttSecret {
   password?: string;
@@ -42,6 +48,7 @@ export class RemoteControl {
     private readonly getMqttBindings: () => MqttBinding[],
     initial: RemoteSettings,
     private readonly secret: MqttSecret = {},
+    private readonly extra?: MqttExtra,
   ) {
     this.settings = sanitizeRemoteSettings(initial);
   }
@@ -118,12 +125,19 @@ export class RemoteControl {
         username: m.username || undefined,
         password: this.secret.password,
         clientId: this.secret.clientId,
+        extraTopics: this.extra?.topics,
+        onOther: this.extra?.onMessage,
       },
       this.getMqttBindings,
     );
     mqtt.onChange = () => this.onChange?.();
     mqtt.startTelemetry();
     this.mqtt = mqtt;
+  }
+
+  /** Поменялся топик датчика ветра — подписаться, не переподключаясь к брокеру. */
+  refreshSubscriptions(): void {
+    this.mqtt?.resubscribe();
   }
 
   /** Публикация под префиксом MQTT (аварии); без подключения — молча ничего. */

@@ -333,11 +333,11 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
           </label>
         </div>
 
-        {project?.windLimit.enabled && (
+        {project?.windLimit.enabled && project.windLimit.source === 'manual' && (
           <div className="group">
             <label
               className="field"
-              data-hint="Ручной ввод — пока нет датчика по Modbus/MQTT. Пороги настраиваются на вкладке «Настройки»"
+              data-hint="Ручной ввод ветра для проверки: насосы реагируют как на настоящий. Тот же ветер — в 3D. Откуда брать ветер и пороги — «Настройки» → «Ветер»"
             >
               Ветер, м/с:{' '}
               <input
@@ -353,6 +353,25 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
                 }}
               />
             </label>
+          </div>
+        )}
+        {/*
+          Датчик: показание только смотреть — поле с руки не должно перебивать
+          прибор. Замолчал — видно здесь же, а не только в «Настройках».
+        */}
+        {project?.windLimit.enabled && project.windLimit.source !== 'manual' && windState && (
+          <div className="group">
+            <span
+              className="field"
+              data-hint="Показание датчика ветра. Откуда он берётся и что с ним — «Настройки» → «Ветер»"
+            >
+              Ветер (датчик): {windState.speedMs !== null ? `${num(windState.speedMs, 1)} м/с` : '—'}
+            </span>
+            {windState.sensor && !windState.sensor.online && (
+              <span className="error-text">
+                {windState.sensor.holding ? '✖ датчик молчит — держим последнее' : `✖ ${windState.sensor.error ?? 'нет показаний'}`}
+              </span>
+            )}
           </div>
         )}
         {/*

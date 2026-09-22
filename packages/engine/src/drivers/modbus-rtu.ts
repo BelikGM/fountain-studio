@@ -1,11 +1,14 @@
 import { SerialPort } from 'serialport';
 import {
   FC_READ_HOLDING_REGISTERS,
+  FC_READ_INPUT_REGISTERS,
   FC_WRITE_SINGLE_REGISTER,
   checkException,
   crc16Modbus,
   parseHoldingRegisters,
+  parseInputRegisters,
   pduReadHoldingRegisters,
+  pduReadInputRegisters,
   pduWriteSingleRegister,
 } from './modbus-pdu';
 import type { ModbusTransport } from './modbus-transport';
@@ -95,7 +98,7 @@ export class ModbusRtuClient implements ModbusTransport {
     const fc = buf.readUInt8(1);
     if ((fc & 0x80) !== 0) return 5; // адрес + fc-с-флагом + код исключения + CRC16
     if (fc === FC_WRITE_SINGLE_REGISTER) return 8; // адрес + fc + адрес(2) + значение(2) + CRC16
-    if (fc === FC_READ_HOLDING_REGISTERS) return 5 + buf.readUInt8(2); // + данные
+    if (fc === FC_READ_HOLDING_REGISTERS || fc === FC_READ_INPUT_REGISTERS) return 5 + buf.readUInt8(2); // + данные
     return null; // код функции, который мы не запрашивали — считаем кадр непонятным
   }
 
@@ -142,7 +145,7 @@ export class ModbusRtuClient implements ModbusTransport {
     this.recvBuf = Buffer.alloc(0);
     const timer = setTimeout(() => {
       this.inFlight = null;
-      item.reject(new Error('таймаут ответа ПЧ'));
+      item.reject(new Error('таймаут ответа прибора'));
       this.pump();
     }, this.timeoutMs);
     this.inFlight = { resolve: item.resolve, reject: item.reject, timer };
@@ -155,6 +158,11 @@ export class ModbusRtuClient implements ModbusTransport {
 
   async readHoldingRegister(unitId: number, address: number): Promise<number> {
     const values = parseHoldingRegisters(await this.request(unitId, pduReadHoldingRegisters(address, 1)));
+    return values[0] ?? 0;
+  }
+
+  async readInputRegister(unitId: number, address: number): Promise<number> {
+    const values = parseInputRegisters(await this.request(unitId, pduReadInputRegisters(address, 1)));
     return values[0] ?? 0;
   }
 

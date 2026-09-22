@@ -123,7 +123,13 @@ const remote = new RemoteControl(
   () => store.project.mqttBindings,
   sanitizeRemoteSettings({ osc: config.osc, mqtt: config.mqtt }),
   { password: config.mqtt?.password, clientId: config.mqtt?.clientId },
+  // Датчик ветра может присылать показание в MQTT — на том же брокере.
+  {
+    topics: () => (engine.windSensor.mqttTopic ? [engine.windSensor.mqttTopic] : []),
+    onMessage: (topic, payload) => engine.windSensor.handleMqtt(topic, payload),
+  },
 );
+engine.windSensor.onTopicChange = () => remote.refreshSubscriptions();
 remote.start();
 wireAlarmNotifications(remote);
 
