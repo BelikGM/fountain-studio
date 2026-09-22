@@ -179,6 +179,7 @@ function openProject(target: string): OpenResult {
     writeMarker(dir, store.project.name);
     rememberOpened(appDataDir, dir, store.project.name);
     eventLog.log('проект', `открыт «${store.project.name}» (${dir})`);
+    warnIfNoPlayer();
     return { ok: true };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
@@ -364,6 +365,26 @@ engine.start();
 // Объект открыт, движок пошёл — включить то, что по расписанию должно идти
 // сейчас (перезапуск посреди дня не должен оставлять фонтан тёмным).
 scheduler.catchUp(new Date());
+
+/**
+ * Нечем играть музыку — сказать сразу при запуске, авария уйдёт и в Telegram.
+ * Без этого вечерняя программа отыграла бы воду и свет в тишине, и узнали бы
+ * об этом от зрителей. Говорим, только если музыку движку играть придётся:
+ * есть плейлисты или шоу в расписании.
+ */
+function warnIfNoPlayer(): void {
+  if (player.ready()) return;
+  const p = store.project;
+  const needsMusic =
+    p.playlists.length > 0 ||
+    p.schedules.some((s) => s.enabled && s.entries.some((e) => e.enabled && (e.action.type === 'playlist' || e.action.type === 'show')));
+  if (!needsMusic) return;
+  eventLog.log(
+    'audio',
+    'нечем играть музыку (не установлен ffmpeg) — плейлисты и расписание отыграют воду и свет в тишине',
+    'warn',
+  );
+}
 
 setInterval(() => {
   const s = engine.stats();

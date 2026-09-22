@@ -349,6 +349,7 @@ const SOURCE_LABEL: Record<string, string> = {
   schedule: 'расписание',
   net: 'сеть',
   'dmx-in': 'вход DMX',
+  audio: 'музыка',
 };
 const sourceLabel = (s: string): string => SOURCE_LABEL[s] ?? s;
 

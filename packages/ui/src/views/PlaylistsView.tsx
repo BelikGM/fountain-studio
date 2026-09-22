@@ -159,6 +159,12 @@ function PlaylistEditor({
 
   return (
     <>
+      {engine.engineConfig?.audioReady === false && (
+        <p className="error-text">
+        ⚠ На этом компьютере нечем играть музыку (не установлен ffmpeg) — движок отыграет воду и свет в
+        тишине. Как поставить — «Настройки» → «Громкость и тембр музыки» и памятка по установке.
+      </p>
+      )}
       <div className="form-row">
         <input
           className="input input-title"

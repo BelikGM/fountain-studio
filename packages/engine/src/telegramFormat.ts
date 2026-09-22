@@ -288,6 +288,7 @@ function checklist(source: string, message: string): string | null {
   if (source === 'net') return 'питание Art-Net ноды, сетевой кабель и коммутатор, IP-адрес ноды';
   if (source === 'wind') return 'датчик ветра и его кабель; при сильном ветре ограничение струй — штатная работа';
   if (source === 'license') return 'файл лицензии в папке программы';
+  if (source === 'audio') return 'установить ffmpeg на компьютере объекта: winget install Gyan.FFmpeg (памятка по установке, п. 4)';
   if (source === 'engine' || source === 'server') return 'компьютер управления: нагрузка, свободное место, перезапуск программы';
   return null;
 }
@@ -302,6 +303,7 @@ const SOURCE_NAME: Record<string, string> = {
   osc: 'OSC-пульт',
   mqtt: 'MQTT',
   license: 'Лицензия',
+  audio: 'Музыка',
 };
 
 /** Авария или предупреждение — сразу, как случилось. */

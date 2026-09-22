@@ -261,6 +261,13 @@ function ScheduleEditor({
         после перезапуска сам включает то, что должно идти сейчас.
       </p>
       {!schedule.enabled && <p className="warn">Расписание выключено — его записи не срабатывают.</p>}
+      {engine.engineConfig?.audioReady === false &&
+        entries.some((e) => e.enabled && (e.action.type === 'playlist' || e.action.type === 'show')) && (
+          <p className="error-text">
+            ⚠ На этом компьютере нечем играть музыку (не установлен ffmpeg) — движок отыграет воду и свет в
+            тишине. Как поставить — «Настройки» → «Громкость и тембр музыки» и памятка по установке.
+          </p>
+        )}
       {ownCollisions.length > 0 && (
         <p className="error-text">
           ⚠ Записи в одно и то же время:{' '}

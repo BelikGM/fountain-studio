@@ -41,7 +41,11 @@ const root = path.join(tmp, 'Проекты');
 const proj = path.join(root, 'Проверка');
 fs.mkdirSync(appData, { recursive: true });
 fs.mkdirSync(proj, { recursive: true });
-fs.writeFileSync(path.join(appData, 'app-config.json'), JSON.stringify({ server: { port: PORT } }));
+// Настройки программы для изолированного движка — можно дополнить из сценария
+// (поле appConfig): например, несуществующий проигрыватель, чтобы увидеть
+// предупреждение «нечем играть музыку».
+const scenarioAppConfig = (JSON.parse(fs.readFileSync(scenarioFile, 'utf8')) as { appConfig?: Record<string, unknown> }).appConfig ?? {};
+fs.writeFileSync(path.join(appData, 'app-config.json'), JSON.stringify({ ...scenarioAppConfig, server: { port: PORT } }));
 const license = path.join(defaultAppDataDir(), 'fountain.license.json');
 if (fs.existsSync(license)) fs.copyFileSync(license, path.join(appData, 'fountain.license.json'));
 else console.warn('лицензии на этом компьютере нет — редактор покажет экран активации');
