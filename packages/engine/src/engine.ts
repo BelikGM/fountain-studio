@@ -1248,7 +1248,7 @@ export class Engine {
 function createOutput(cfg: OutputConfig): UniverseOutput {
   switch (cfg.type) {
     case 'artnet': {
-      if (!cfg.host) throw new Error('Art-Net: не указан IP-адрес узла — впишите его в столбец «Адрес»');
+      if (!cfg.host) throw new Error('Art-Net: не указан IP-адрес ноды — впишите его в столбец «Адрес»');
       return new ArtNetOutput({
         host: cfg.host,
         port: cfg.port,

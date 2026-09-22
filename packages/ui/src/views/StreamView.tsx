@@ -402,7 +402,7 @@ function RdmStream({ network }: { network: EngineConnection['network'] }) {
           <thead>
             <tr>
               <th>UID</th>
-              <th data-hint="Через какой узел Art-Net (преобразователь «сеть → кабель DMX») пришёл ответ прибора">Узел Art-Net</th>
+              <th data-hint="Через какую Art-Net ноду (преобразователь «сеть → кабель DMX») пришёл ответ прибора">Нода</th>
               <th>Вселенная</th>
               <th>Ответ</th>
               <th>Состояние</th>

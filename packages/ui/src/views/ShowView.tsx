@@ -877,7 +877,7 @@ function ShowEditor({
     }
 
     onChange({ ...show, tracks: [...show.tracks, ...newTracks] });
-    const bpmText = tempo.bpm > 0 ? `темп ≈ ${tempo.bpm} уд/мин` : 'темп не определён';
+    const bpmText = tempo.bpm > 0 ? `темп ≈ ${tempo.bpm} BPM` : 'темп не определён';
     setAutoStatus(`Черновик: ${summary.join(', ')}, ${bpmText}. Правьте на таймлайне.`);
   };
 
@@ -1275,7 +1275,7 @@ function ShowEditor({
         {bpm > 0 && (
           <label className="field" data-hint="Темп определён автоматически по аудиодорожке (та же оценка, что у «Автопостановки»)">
             <input type="checkbox" checked={snapToBeat} onChange={(e) => setSnapToBeat(e.target.checked)} /> прилипание к
-            долям ({bpm} уд/мин)
+            долям ({bpm} BPM)
           </label>
         )}
         <label className={videoBusy ? 'btn' : 'btn'} data-hint="Черновик шоу по видеоролику: яркость и цвет кадров — на дорожки, монтажные склейки — вспышками. Дальше правится руками">
@@ -1476,12 +1476,12 @@ function ShowEditor({
                     className={track.muted ? 'btn btn-small btn-danger' : 'btn btn-small'}
                     data-hint={
                       track.muted
-                        ? 'Дорожка выключена: её блоки и кривые не играют. Нажмите, чтобы включить'
-                        : 'Выключить дорожку: её блоки и кривые перестанут играть, остальные дорожки — как были'
+                        ? 'Mute: дорожка выключена — её блоки и кривые не играют. Нажмите, чтобы включить'
+                        : 'Mute — выключить дорожку: её блоки и кривые перестанут играть, остальные дорожки — как были'
                     }
                     onClick={() => updateTrack({ ...track, muted: !track.muted })}
                   >
-                    Выкл
+                    Mute
                   </button>
                   {track.kind === 'blocks' && (
                     <button

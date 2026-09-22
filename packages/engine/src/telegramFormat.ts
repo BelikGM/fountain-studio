@@ -151,10 +151,10 @@ function equipmentLines(s: SiteSnapshot): Line[] {
   if (s.artnet) {
     out.push(
       s.artnet.lost.length === 0
-        ? { mark: '✅', text: `Узлы Art-Net: ${s.artnet.online} из ${s.artnet.total} на связи` }
+        ? { mark: '✅', text: `Art-Net ноды: ${s.artnet.online} из ${s.artnet.total} на связи` }
         : {
             mark: s.artnet.online === 0 ? '❌' : '⚠️',
-            text: `Узлы Art-Net: ${s.artnet.online} из ${s.artnet.total}, пропали ${listShort(s.artnet.lost)}`,
+            text: `Art-Net ноды: ${s.artnet.online} из ${s.artnet.total}, пропали ${listShort(s.artnet.lost)}`,
           },
     );
   }
@@ -285,7 +285,7 @@ function checklist(source: string, message: string): string | null {
     return 'питание и автомат ПЧ, кабель RS-485 (разъём, терминатор), код аварии по паспорту привода';
   }
   if (source === 'net' && m.includes('rdm')) return 'питание прибора, DMX-кабель и разъёмы на участке, адрес прибора';
-  if (source === 'net') return 'питание узла Art-Net, сетевой кабель и коммутатор, IP-адрес узла';
+  if (source === 'net') return 'питание Art-Net ноды, сетевой кабель и коммутатор, IP-адрес ноды';
   if (source === 'wind') return 'датчик ветра и его кабель; при сильном ветре ограничение струй — штатная работа';
   if (source === 'license') return 'файл лицензии в папке программы';
   if (source === 'engine' || source === 'server') return 'компьютер управления: нагрузка, свободное место, перезапуск программы';

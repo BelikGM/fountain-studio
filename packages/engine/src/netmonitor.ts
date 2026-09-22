@@ -294,8 +294,8 @@ export class NetworkMonitor {
       lost: false,
     };
     this.nodes.set(fromIp, rec);
-    if (!prev) this.event(`Узел Art-Net «${rec.shortName}» (${fromIp}) на связи, вселенных: ${outputUniverses.length}`);
-    else if (prev.lost) this.event(`Узел Art-Net «${rec.shortName}» (${fromIp}) снова на связи`);
+    if (!prev) this.event(`Art-Net нода «${rec.shortName}» (${fromIp}) на связи, вселенных: ${outputUniverses.length}`);
+    else if (prev.lost) this.event(`Art-Net нода «${rec.shortName}» (${fromIp}) снова на связи`);
   }
 
   private parseTodData(msg: Buffer, fromIp: string): void {
@@ -313,7 +313,7 @@ export class NetworkMonitor {
       const uid = `${man}:${dev}`;
       const prev = this.rdm.get(uid);
       this.rdm.set(uid, { uid, nodeIp: fromIp, universe, lastSeen: now, lost: false });
-      if (!prev) this.event(`RDM-прибор ${uid} обнаружен (вселенная ${universe}, узел Art-Net ${fromIp})`);
+      if (!prev) this.event(`RDM-прибор ${uid} обнаружен (вселенная ${universe}, Art-Net нода ${fromIp})`);
       else if (prev.lost) this.event(`RDM-прибор ${uid} снова на связи`);
     }
   }
@@ -323,7 +323,7 @@ export class NetworkMonitor {
     for (const n of this.nodes.values()) {
       if (!n.lost && now - n.lastSeen > this.opts.nodeTimeoutMs) {
         n.lost = true;
-        this.event(`Узел Art-Net «${n.shortName}» (${n.ip}) ПОТЕРЯН — нет ответа ${Math.round((now - n.lastSeen) / 1000)} с`);
+        this.event(`Art-Net нода «${n.shortName}» (${n.ip}) ПОТЕРЯНА — нет ответа ${Math.round((now - n.lastSeen) / 1000)} с`);
       }
     }
     for (const d of this.rdm.values()) {

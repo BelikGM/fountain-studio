@@ -40,7 +40,7 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
     return (
       <main className="view">
         <section className="panel">
-          <h2>Узлы Art-Net</h2>
+          <h2>Art-Net ноды</h2>
           <p className="dim">
             Опрос сети выключен: у объекта нет вселенных на Art-Net (интерфейсу FountanPlay он не нужен) —
             или движок ещё не прислал данные.
@@ -57,15 +57,15 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
     <main className="view">
       <section className="panel">
         <h2>
-          Узлы Art-Net ({network.nodes.length}){' '}
+          Art-Net ноды ({network.nodes.length}){' '}
           <button className="btn btn-small" onClick={() => send({ type: 'refreshNetwork' })}>
             Обновить сейчас
           </button>
         </h2>
         {network.nodes.length === 0 ? (
           <p className="dim">
-            Узлов не найдено. Программа опрашивает адреса, указанные у вселенных в «Настройках», —
-            проверьте, что узел включён, подключён к той же сети и адрес вписан верно.
+            Нод не найдено. Программа опрашивает адреса, указанные у вселенных в «Настройках», —
+            проверьте, что нода включена, подключена к той же сети и адрес вписан верно.
           </p>
         ) : (
           <table className="table">
@@ -74,7 +74,7 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
                 <th>Статус</th>
                 <th>Имя</th>
                 <th>IP</th>
-                <th>Вселенные узла</th>
+                <th>Вселенные ноды</th>
                 <th>Последний ответ</th>
               </tr>
             </thead>
@@ -97,7 +97,7 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
         <h2>RDM-приборы ({network.rdmDevices.length})</h2>
         {network.rdmDevices.length === 0 ? (
           <p className="dim">
-            Приборы не обнаружены. Нужен узел Art-Net с поддержкой RDM; узлы без RDM этот раздел не
+            Приборы не обнаружены. Нужна Art-Net нода с поддержкой RDM; ноды без RDM этот раздел не
             заполняют — вывод DMX при этом работает.
           </p>
         ) : (

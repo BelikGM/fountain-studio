@@ -147,7 +147,7 @@ export function botCommands(): { command: string; description: string }[] {
     { command: 'report', description: 'Отчёт за сутки' },
     { command: 'quiet', description: 'Тихий режим: /quiet 4 — на 4 ч, /quiet 0 — снять' },
     { command: 'stop', description: 'Остановить воспроизведение (спросит подтверждение)' },
-    { command: 'blackout', description: 'Погасить всё (спросит подтверждение)' },
+    { command: 'blackout', description: 'Blackout — погасить всё (спросит подтверждение)' },
     { command: 'help', description: 'Что умеет бот' },
   ];
 }

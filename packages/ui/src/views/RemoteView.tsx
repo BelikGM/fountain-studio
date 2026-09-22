@@ -7,7 +7,7 @@ const ACTION_LABEL: Record<RemoteAction['type'], string> = {
   show: 'Запустить шоу',
   playlist: 'Запустить плейлист',
   stopAll: 'Стоп всё',
-  blackout: 'Погасить всё',
+  blackout: 'Blackout — погасить всё',
 };
 
 /**

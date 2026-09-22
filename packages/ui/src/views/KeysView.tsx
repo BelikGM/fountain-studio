@@ -9,7 +9,7 @@ const ACTION_LABEL: Record<KeyAction['type'], string> = {
   show: 'Шоу (пуск/стоп)',
   playlist: 'Плейлист (пуск/стоп)',
   stopAll: 'Стоп всё',
-  blackout: 'Погасить всё',
+  blackout: 'Blackout — погасить всё',
   pauseAll: 'Пауза всего (вкл/выкл)',
 };
 

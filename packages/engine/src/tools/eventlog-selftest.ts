@@ -30,7 +30,7 @@ async function main(): Promise<void> {
   eventLog.attachFile(dir);
   check('папка журнала создана', fs.existsSync(logs));
   eventLog.log('расписание', 'запуск шоу по расписанию');
-  eventLog.log('авария', 'узел Art-Net пропал', 'error');
+  eventLog.log('авария', 'Art-Net нода пропала', 'error');
   await eventLog.flush();
 
   const files = fs.readdirSync(logs);

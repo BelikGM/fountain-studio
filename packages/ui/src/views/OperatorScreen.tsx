@@ -100,8 +100,8 @@ export function OperatorScreen({ engine, onUnlock }: { engine: EngineConnection;
               <StopIcon />
               Стоп всё
             </button>
-            <button className="btn btn-big btn-danger" onClick={() => void doBlackout()}>
-              ⚠ Погасить всё
+            <button className="btn btn-big btn-danger" data-hint="Погасить всё: вода и свет — в ноль" onClick={() => void doBlackout()}>
+              ⚠ BLACKOUT
             </button>
           </section>
 

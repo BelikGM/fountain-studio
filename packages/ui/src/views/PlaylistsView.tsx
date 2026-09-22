@@ -97,9 +97,9 @@ export function PlaylistsView({ engine, readOnly = false }: { engine: EngineConn
       <section className="content">
         {selected === null ? (
           <div className="dim">
-            Создайте плейлист: последовательность шоу для вечерней программы. Движок играет его сам —
+            Создайте плейлист: несколько шоу подряд — программа на день или на вечер. Движок играет его сам —
             редактор можно закрыть. Музыку при этом играет сам движок: громкость и есть ли чем играть — в
-            «Настройках», «Звук вечерней программы».
+            «Настройках», «Звук плейлистов и расписания».
           </div>
         ) : (
           <PlaylistEditor playlist={selected} engine={engine} onChange={updatePlaylist} readOnly={readOnly} />
