@@ -126,7 +126,12 @@ export function SequencesView({ engine }: { engine: EngineConnection }) {
         {groupsOpen ? (
           <SequenceGroupsPanel engine={engine} />
         ) : selected === null ? (
-          <div className="dim">Создайте секвенсор слева.</div>
+          <div className="dim">
+            Секвенсор — сцены друг за другом: сколько держать каждую и за сколько плавно перейти к следующей, по
+            кругу или один раз. Это дневная программа фонтана — в FontanPlay такое называлось макросом.
+            Запускается кнопкой «Пуск», клавишей, из «Расписания» или с внешнего пульта. Создайте секвенсор слева:
+            «+ Секвенсор», затем добавьте шаги-сцены.
+          </div>
         ) : (
           <SequenceEditor
             sequence={selected}
