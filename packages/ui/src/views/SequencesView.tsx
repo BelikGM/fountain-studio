@@ -10,6 +10,7 @@ import {
   num,
 } from '@fountain-studio/shared';
 import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
+import { useDragOrder } from '../components/DragOrder';
 import { ListFilter } from '../components/ListFilter';
 import { PauseIcon, PencilIcon, PlayIcon, StopIcon, TrashIcon } from '../components/Icons';
 import { confirmDelete } from '../confirmDelete';
@@ -20,6 +21,7 @@ import { SequenceMatrix } from './SequenceMatrix';
 /** Секвенсоры: последовательности сцен с длительностью и фейдом, транспорт запуска. */
 export function SequencesView({ engine }: { engine: EngineConnection }) {
   const { project, playback, send, updateProject } = engine;
+  const drag = useDragOrder(project?.sequences ?? [], (next) => updateProject({ ...project!, sequences: next }));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   // Группы секвенсоров (§27 доработки) — переключает контент справа на панель
@@ -103,7 +105,9 @@ export function SequencesView({ engine }: { engine: EngineConnection }) {
                   (q.id === selectedId ? 'list-item selected' : 'list-item') + (r ? ' playing' : '')
                 }
                 onClick={() => setSelectedId(q.id)}
+                {...drag.dropProps(q.id)}
               >
+                {drag.handle(q.id, 'Перетащить, чтобы изменить порядок секвенсоров')}
                 {q.name}
                 {r && <span className="badge badge-live">{r.paused ? 'пауза' : `шаг ${r.stepIndex + 1}`}</span>}
               </li>

@@ -31,6 +31,7 @@ import {
   SMOOTHNESS_DEFAULT,
 } from '@fountain-studio/shared';
 import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
+import { useDragOrder } from '../components/DragOrder';
 import { ListFilter } from '../components/ListFilter';
 import { confirmDelete } from '../confirmDelete';
 import { comboFromEvent, getCombo } from '../hotkeys';
@@ -90,6 +91,7 @@ export function ShowView({ engine, readOnly = false }: { engine: EngineConnectio
    * ушла бы в проект тихо. Так — не уйдёт даже если кнопка осталась на виду.
    */
   const updateProject = readOnly ? () => {} : engine.updateProject;
+  const dragShows = useDragOrder(project?.shows ?? [], (next) => updateProject({ ...project!, shows: next }));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showFilter, setShowFilter] = useState('');
   const [templateId, setTemplateId] = useState('');
@@ -209,7 +211,9 @@ export function ShowView({ engine, readOnly = false }: { engine: EngineConnectio
                 (playback.show?.showId === s.id ? ' playing' : '')
               }
               onClick={() => setSelectedId(s.id)}
+              {...dragShows.dropProps(s.id)}
             >
+              {dragShows.handle(s.id, 'Перетащить, чтобы изменить порядок шоу')}
               {s.name}
               {playback.show?.showId === s.id && (
                 <span className="badge badge-live badge-icon">

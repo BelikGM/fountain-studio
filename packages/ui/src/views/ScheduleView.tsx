@@ -8,6 +8,7 @@ import {
   type ScheduleEntry,
 } from '@fountain-studio/shared';
 import { askConfirm } from '../components/ConfirmDialog';
+import { useDragOrder } from '../components/DragOrder';
 import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
 import type { EngineConnection } from '../useEngine';
 
@@ -56,6 +57,7 @@ export function ScheduleView({ engine }: { engine: EngineConnection }) {
   const schedules = project.schedules;
   const selected = schedules.find((s) => s.id === selectedId) ?? schedules[0] ?? null;
   const setSchedules = (next: Schedule[]): void => updateProject({ ...project, schedules: next });
+  const drag = useDragOrder(project.schedules, setSchedules);
   const patchSchedule = (id: string, p: Partial<Schedule>): void =>
     setSchedules(schedules.map((s) => (s.id === id ? { ...s, ...p } : s)));
 
@@ -129,7 +131,9 @@ export function ScheduleView({ engine }: { engine: EngineConnection }) {
               key={s.id}
               className={s.id === selected?.id ? 'list-item selected' : 'list-item'}
               onClick={() => setSelectedId(s.id)}
+              {...drag.dropProps(s.id)}
             >
+              {drag.handle(s.id, 'Перетащить, чтобы изменить порядок расписаний. Порядок решает спор: при совпадении времени срабатывает запись из первого по списку')}
               <input
                 type="checkbox"
                 checked={s.enabled}

@@ -3,6 +3,7 @@ import { playlistDependents, uid, type Playlist, type PlaylistItem,
   durationRu,
 } from '@fountain-studio/shared';
 import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
+import { useDragOrder } from '../components/DragOrder';
 import { ListFilter } from '../components/ListFilter';
 import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
@@ -16,6 +17,7 @@ export function PlaylistsView({ engine, readOnly = false }: { engine: EngineConn
   const { project, playback, send } = engine;
   /** Тариф Pro: плейлист можно выбрать и запустить, но не менять (см. ShowView). */
   const updateProject = readOnly ? () => {} : engine.updateProject;
+  const dragLists = useDragOrder(project?.playlists ?? [], (next) => updateProject({ ...project!, playlists: next }));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
 
@@ -84,7 +86,9 @@ export function PlaylistsView({ engine, readOnly = false }: { engine: EngineConn
                 (live?.playlistId === p.id ? ' playing' : '')
               }
               onClick={() => setSelectedId(p.id)}
+              {...dragLists.dropProps(p.id)}
             >
+              {dragLists.handle(p.id, 'Перетащить, чтобы изменить порядок плейлистов')}
               {p.name}
               {live?.playlistId === p.id && (
                 <span className="badge badge-live">{live.inGap ? 'пауза' : `№${live.itemIndex + 1}`}</span>

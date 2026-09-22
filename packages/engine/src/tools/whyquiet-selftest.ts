@@ -12,7 +12,7 @@ import { whyQuiet, type QuietFacts } from '@fountain-studio/shared';
 
 let failed = 0;
 let passed = 0;
-function check(name: string, ok: boolean, detail = ''): void {
+function check(name: string, ok: boolean | undefined, detail = ''): void {
   if (ok) passed++;
   else {
     failed++;
