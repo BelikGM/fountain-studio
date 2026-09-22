@@ -27,4 +27,5 @@ export * from './vfdpresets';
 export * from './videoanalysis';
 export * from './failsafe';
 export * from './windlimit';
+export * from './whyquiet';
 export * from './wizard';

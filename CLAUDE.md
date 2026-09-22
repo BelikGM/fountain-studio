@@ -54,6 +54,7 @@ npm -w @fountain-studio/engine run license-test      # подпись/срок �
 npm -w @fountain-studio/engine run appbackup-test    # копия настроек программы: выгрузка и возврат
 npm -w @fountain-studio/engine run schedule-test     # расписание при прыжках часов (сон ПК, перевод времени)
 npm -w @fountain-studio/engine run editors-test      # два редактора сразу: чужая правка не затирается
+npm -w @fountain-studio/engine run why-test          # экран «почему ничего не играет»: порядок причин
 npm -w @fountain-studio/engine run musidora-test     # кадр USB-DMX FountanPlay
 npm -w @fountain-studio/engine run failsafe-test     # аварийное отключение
 npm -w @fountain-studio/engine run eventlog-test     # журнал на диске

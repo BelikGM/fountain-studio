@@ -12,6 +12,7 @@ import { ConsoleView } from './views/ConsoleView';
 import { ConfirmHost } from './components/ConfirmDialog';
 import { HintHost } from './hints';
 import { LinesDraftBanner } from './components/LinesDraftBanner';
+import { WhyQuietView } from './views/WhyQuietView';
 import { TourOverlay, type TourStepDef } from './components/TourOverlay';
 import { HelpView } from './views/HelpView';
 import { LicenseView } from './views/LicenseView';
@@ -251,6 +252,8 @@ export function App() {
     localStorage.getItem('fs-theme') === 'light' ? 'light' : 'dark',
   );
   const [helpOpen, setHelpOpen] = useState(false);
+  /** Экран «почему ничего не играет» — один ответ вместо поисков по вкладкам. */
+  const [whyOpen, setWhyOpen] = useState(false);
   // Тур при первом запуске (§27 доработки) — null = не идёт; иначе индекс
   // шага в TOUR_STEPS. Переключает вкладку вслед за собой, чтобы подсказка
   // всегда указывала на реально открытый раздел.
@@ -532,6 +535,16 @@ export function App() {
         </div>
       )}
       {helpOpen && <HelpView onClose={() => setHelpOpen(false)} />}
+      {whyOpen && (
+        <WhyQuietView
+          engine={engine}
+          onClose={() => setWhyOpen(false)}
+          onGo={(tab) => {
+            if (tab === 'license') setLicenseOpen(true);
+            else setTab(tab);
+          }}
+        />
+      )}
       {licenseOpen && <LicenseView engine={engine} onClose={() => setLicenseOpen(false)} />}
       {/*
         В открытом объекте есть правки, ещё не долетевшие до диска, а человек
@@ -608,6 +621,19 @@ export function App() {
 
       <footer className="statusbar">
         {showSaved && <span className="ok-text">✔ сохранено</span>}
+        {/*
+          Причин «почему тихо» с десяток, и раньше их искали по разным вкладкам.
+          Кнопка стоит в строке состояния — она видна на любой вкладке и рядом с
+          тем самым «воспроизведение остановлено», из-за которого вопрос и
+          возникает.
+        */}
+        <button
+          className="statusbar-link"
+          data-hint="Один экран с ответом: что именно мешает фонтану играть прямо сейчас"
+          onClick={() => setWhyOpen(true)}
+        >
+          почему не играет?
+        </button>
         {/*
           Без открытого объекта цифры тика и кадров остались бы от прошлого
           фонтана и врали бы: приборам сейчас ничего не уходит.

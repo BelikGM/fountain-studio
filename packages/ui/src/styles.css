@@ -2218,3 +2218,9 @@ input[type='range']:disabled { opacity: 0.4; cursor: default; }
 
 /* Выбор COM-порта: поле «вручную» и кнопка возврата к списку — в одну строку. */
 .com-picker { display: inline-flex; gap: 4px; align-items: center; }
+
+/* Экран «почему ничего не играет»: заголовок-ответ и список причин по порядку. */
+.why-modal { width: min(680px, calc(100vw - 48px)); }
+.why-headline { font-size: 16px; font-weight: 600; margin: 4px 0 10px; }
+.why-list { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 12px; }
+.why-list li > .dim { margin: 2px 0 6px; }
