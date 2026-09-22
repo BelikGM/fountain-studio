@@ -25,7 +25,8 @@
     "dirty-guard-test": "tsx src/tools/dirty-guard-selftest.ts",
     "license-test": "tsx src/tools/license-selftest.ts",
     "appbackup-test": "tsx src/tools/appbackup-selftest.ts",
-    "schedule-test": "tsx src/tools/schedule-selftest.ts"
+    "schedule-test": "tsx src/tools/schedule-selftest.ts",
+    "editors-test": "tsx src/tools/editors-selftest.ts"
   },
   "dependencies": {
     "@fountain-studio/shared": "*",

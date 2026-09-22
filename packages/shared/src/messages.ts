@@ -399,7 +399,10 @@ export type ClientMessage =
   | { type: 'resumeAll' }
   | { type: 'testPattern'; mode: TestPatternMode; scope?: TestPatternScope; speedSec?: number }
   // Проект: полная замена (редактор шлёт после каждого изменения, движок сохраняет на диск).
-  | { type: 'updateProject'; project: Project }
+  // rev — версия объекта, на которой правка основана (см. ServerMessage
+  // 'project'). Движок отвергает правку, если объект с тех пор изменил ДРУГОЙ
+  // редактор: иначе тот, кто сохранил последним, молча затирал чужую работу.
+  | { type: 'updateProject'; project: Project; rev?: number }
   // Ctrl+S (§27 доработки, УХ п.6): принудительный немедленный flush на диск —
   // живое автосохранение и так непрерывное (дебаунс 500мс), эта команда просто
   // не даёт ждать и подтверждает результат в UI.
@@ -585,7 +588,18 @@ export type ServerMessage =
    * 3D-вид: там должно быть видно, что произойдёт на объекте.
    */
   | { type: 'frame'; universe: number; data: string; wire?: string }
-  | { type: 'project'; project: Project }
+  /**
+    * Объект целиком. rev — его версия (растёт с каждой правкой), by — кто
+    * правку сделал: свой же отклик редактор узнаёт по нему и не перерисовывает
+    * то, что человек печатает прямо сейчас.
+    */
+  | { type: 'project'; project: Project; rev?: number; by?: string }
+  /** Кто мы для движка в этом подключении — приходит сразу после hello. */
+  | { type: 'clientId'; id: string }
+  /** Кто ещё сидит в этом движке: чтобы сказать «объект открыт и в другом редакторе». */
+  | { type: 'editors'; list: { id: string; ip: string; sinceMs: number }[] }
+  /** Правка не принята: объект успел измениться в другом редакторе. */
+  | { type: 'projectRejected'; message: string }
   | { type: 'playback'; state: PlaybackState }
   | { type: 'network'; state: NetworkState }
   | { type: 'modbus'; state: ModbusState }

@@ -505,6 +505,32 @@ export function App() {
       {effectiveTab !== 'settings' && (
         <LinesDraftBanner engine={engine} onOpenSettings={() => setTab('settings')} />
       )}
+      {/*
+        Объект правят вдвоём с разных машин. Каждый редактор шлёт движку объект
+        ЦЕЛИКОМ, поэтому правки спорят: раньше тот, кто сохранил последним,
+        молча затирал чужую работу. Теперь движок такую правку не принимает
+        (см. server.ts, projectRev), а здесь человек видит, что он не один.
+      */}
+      {engine.editors.length > 1 && (
+        <div className="license-banner">
+          <span>
+            ⚠ Объект открыт ещё в {engine.editors.length === 2 ? 'одном редакторе' : `${engine.editors.length - 1} редакторах`} (
+            {engine.editors
+              .filter((e) => e.id !== engine.clientId)
+              .map((e) => e.ip)
+              .join(', ')}
+            ). Правьте по очереди: правку поверх чужой движок не примет.
+          </span>
+        </div>
+      )}
+      {engine.editConflict && (
+        <div className="license-banner license-banner-grace">
+          <span>⚠ {engine.editConflict}</span>
+          <button className="btn btn-small" onClick={engine.dismissEditConflict}>
+            Понятно
+          </button>
+        </div>
+      )}
       {helpOpen && <HelpView onClose={() => setHelpOpen(false)} />}
       {licenseOpen && <LicenseView engine={engine} onClose={() => setLicenseOpen(false)} />}
       {/*

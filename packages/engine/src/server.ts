@@ -114,7 +114,8 @@ export function startServer(
   const broadcastProjectSwitched = (): void => {
     broadcast({ type: 'hello', version: ENGINE_VERSION, tickMs: engine.config.timing.tickMs, universes: engine.universeInfos() });
     broadcast(configMessage());
-    broadcast({ type: 'project', project: store.project });
+    bumpRev();
+    broadcast(projectMessage());
     broadcast(backupConfigMessage());
     broadcast(backupListMessage());
     broadcast({ type: 'logHistory', events: eventLog.list() });
@@ -210,7 +211,52 @@ export function startServer(
     };
   };
 
+  /**
+   * Двое правят объект с разных машин — обычное дело: наладчик на объекте и
+   * второй за столом. Раньше правки последнего затирали чужие МОЛЧА: каждый
+   * редактор шлёт объект целиком. Теперь у объекта есть версия, редактор шлёт
+   * ту, на которой правил, и правку «поверх чужой» движок не принимает.
+   */
+  /** Номера редакторов: «р1», «р2» — их видно в журнале и в предупреждении. */
+  let editorSeq = 0;
+  let projectRev = 1;
+  let lastEditorId = '';
+  const editors = new Map<WebSocket, { id: string; ip: string; sinceMs: number }>();
+  const editorsMessage = (): ServerMessage => ({
+    type: 'editors',
+    list: [...editors.values()],
+  });
+  const projectMessage = (project = store.project, by?: string): ServerMessage => ({
+    type: 'project',
+    project,
+    rev: projectRev,
+    by,
+  });
+  /** Объект поменялся не через updateProject (импорт, восстановление, смена объекта). */
+  const bumpRev = (): void => {
+    projectRev++;
+    lastEditorId = '';
+  };
+
   wss.on('connection', (ws) => {
+    const clientId = `р${++editorSeq}`;
+    const ip = String((ws as unknown as { _socket?: { remoteAddress?: string } })._socket?.remoteAddress ?? '')
+      .replace('::ffff:', '')
+      .replace('::1', '127.0.0.1');
+    editors.set(ws, { id: clientId, ip, sinceMs: Date.now() });
+    ws.send(JSON.stringify({ type: 'clientId', id: clientId } satisfies ServerMessage));
+    if (editors.size === 2) {
+      eventLog.log(
+        'server',
+        `объект открыт сразу в двух редакторах (${[...editors.values()].map((e) => e.ip).join(' и ')}) — правки могут спорить`,
+        'warn',
+      );
+    }
+    broadcast(editorsMessage());
+    ws.on('close', () => {
+      editors.delete(ws);
+      broadcast(editorsMessage());
+    });
     const hello: ServerMessage = {
       type: 'hello',
       version: ENGINE_VERSION,
@@ -219,7 +265,7 @@ export function startServer(
     };
     ws.send(JSON.stringify(hello));
     ws.send(JSON.stringify(configMessage()));
-    ws.send(JSON.stringify({ type: 'project', project: store.project } satisfies ServerMessage));
+    ws.send(JSON.stringify(projectMessage()));
     ws.send(JSON.stringify({ type: 'playback', state: engine.playbackState() } satisfies ServerMessage));
     if (net) ws.send(JSON.stringify({ type: 'network', state: net.state() } satisfies ServerMessage));
     if (telegram) ws.send(JSON.stringify({ type: 'telegram', state: telegram.status() } satisfies ServerMessage));
@@ -264,11 +310,32 @@ export function startServer(
           engine.setTestPattern(msg.mode, msg.scope ?? 'all', msg.speedSec);
           break;
         case 'updateProject': {
+          /*
+           * Правка «поверх чужой»: редактор основывался на версии, которую с
+           * тех пор поменял ДРУГОЙ редактор. Не принимаем и возвращаем ему
+           * текущий объект — пусть увидит чужую работу, а не затрёт её.
+           * Свои же подряд идущие правки (отклик ещё не дошёл) принимаем: для
+           * них lastEditorId — мы сами.
+           */
+          const stale = msg.rev !== undefined && msg.rev !== projectRev && lastEditorId !== clientId;
+          if (stale) {
+            const other = [...editors.values()].find((e) => e.id === lastEditorId);
+            ws.send(
+              JSON.stringify({
+                type: 'projectRejected',
+                message: `Правка не принята: объект уже изменён в другом редакторе${other ? ` (${other.ip})` : ''}. На экране — то, что в движке сейчас; повторите правку.`,
+              } satisfies ServerMessage),
+            );
+            ws.send(JSON.stringify(projectMessage()));
+            break;
+          }
           const project = sanitizeProject(msg.project);
           store.update(project);
           engine.setProject(project);
-          // Эхо всем клиентам (включая отправителя — он отсеет по содержимому).
-          broadcast({ type: 'project', project });
+          projectRev++;
+          lastEditorId = clientId;
+          // Эхо всем клиентам: свой отклик отправитель узнает по полю by.
+          broadcast(projectMessage(project, clientId));
           broadcastPlayback();
           break;
         }
@@ -728,7 +795,8 @@ export function startServer(
             }
             store.update(project);
             engine.setProject(project);
-            broadcast({ type: 'project', project });
+            bumpRev();
+            broadcast(projectMessage(project));
             if (linesApplied > 0) {
               broadcast({
                 type: 'hello',
@@ -828,7 +896,8 @@ export function startServer(
             const project = sanitizeProject(backups.read(msg.file));
             store.update(project);
             engine.setProject(project);
-            broadcast({ type: 'project', project });
+            bumpRev();
+            broadcast(projectMessage(project));
             broadcastPlayback();
             eventLog.log('server', `объект восстановлен из резервной копии ${msg.file}`);
           } catch (err) {

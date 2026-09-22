@@ -153,6 +153,13 @@ export interface EngineConnection {
   /** Экспорт/импорт проекта одним файлом (§27 доработки) — project.json + audio/ в .zip. */
   requestExportProject: () => Promise<{ filename: string; dataBase64: string }>;
   importProjectArchive: (dataBase64: string) => Promise<{ ok: boolean; message: string }>;
+  /** Кто ещё открыл этот движок редактором — чтобы сказать «объект правят вдвоём». */
+  editors: { id: string; ip: string; sinceMs: number }[];
+  /** Наш номер в движке («р1»): по нему отличаем свой отклик от чужой правки. */
+  clientId: string;
+  /** Правка не принята: объект успел изменить другой редактор. null — всё спокойно. */
+  editConflict: string | null;
+  dismissEditConflict: () => void;
   /** Резервная копия настроек ПРОГРАММЫ: лицензия, токен бота, настройки движка. */
   requestExportAppSettings: () => Promise<{ filename: string; dataBase64: string }>;
   importAppSettingsArchive: (dataBase64: string) => Promise<{ ok: boolean; message: string }>;
@@ -251,6 +258,12 @@ export function useEngine(): EngineConnection {
   const exportWaitersRef = useRef<((data: { filename: string; dataBase64: string }) => void)[]>([]);
   const importWaitersRef = useRef<((r: { ok: boolean; message: string }) => void)[]>([]);
   const appExportWaitersRef = useRef<((data: { filename: string; dataBase64: string }) => void)[]>([]);
+  const [editors, setEditors] = useState<{ id: string; ip: string; sinceMs: number }[]>([]);
+  const [clientId, setClientId] = useState('');
+  const clientIdRef = useRef('');
+  const [editConflict, setEditConflict] = useState<string | null>(null);
+  /** Версия объекта, на которой основаны наши правки (см. ServerMessage 'project'). */
+  const projectRevRef = useRef<number | undefined>(undefined);
   const appImportWaitersRef = useRef<((r: { ok: boolean; message: string }) => void)[]>([]);
   const licenseWaitersRef = useRef<((status: LicenseStatus) => void)[]>([]);
   /** Ожидающие ответов захвата DMX по вселенной. */
@@ -321,11 +334,34 @@ export function useEngine(): EngineConnection {
             break;
           }
           case 'project':
+            projectRevRef.current = msg.rev;
+            /*
+             * Свой отклик узнаём по by — движок помечает им автора правки.
+             * Раньше считали «сколько своих правок в пути», и чужая правка,
+             * пришедшая в этот момент, съедалась как своя: двое правили объект,
+             * и один из них не видел работу другого вовсе.
+             */
+            if (msg.by !== undefined) {
+              if (msg.by === clientIdRef.current) break;
+              setProject(msg.project);
+              pendingEditsRef.current = 0;
+              break;
+            }
             if (pendingEditsRef.current > 0) {
               pendingEditsRef.current--;
             } else {
               setProject(msg.project);
             }
+            break;
+          case 'clientId':
+            clientIdRef.current = msg.id;
+            setClientId(msg.id);
+            break;
+          case 'editors':
+            setEditors(msg.list);
+            break;
+          case 'projectRejected':
+            setEditConflict(msg.message);
             break;
           case 'playback':
             setPlayback(msg.state);
@@ -496,10 +532,12 @@ export function useEngine(): EngineConnection {
       redoStackRef.current = [];
       setProject(next);
       pendingEditsRef.current++;
-      send({ type: 'updateProject', project: next });
+      send({ type: 'updateProject', project: next, rev: projectRevRef.current });
     },
     [project, send],
   );
+
+  const dismissEditConflict = useCallback(() => setEditConflict(null), []);
 
   /** Ctrl+Z — откат последней правки, по одному действию за вызов, в памяти сеанса. */
   const undo = useCallback(() => {
@@ -508,7 +546,7 @@ export function useEngine(): EngineConnection {
     redoStackRef.current.push(project);
     setProject(prev);
     pendingEditsRef.current++;
-    send({ type: 'updateProject', project: prev });
+    send({ type: 'updateProject', project: prev, rev: projectRevRef.current });
   }, [project, send]);
 
   /** Ctrl+Y — вернуть то, что отменили Ctrl+Z. */
@@ -518,7 +556,7 @@ export function useEngine(): EngineConnection {
     undoStackRef.current.push(project);
     setProject(next);
     pendingEditsRef.current++;
-    send({ type: 'updateProject', project: next });
+    send({ type: 'updateProject', project: next, rev: projectRevRef.current });
   }, [project, send]);
 
   const requestAudio = useCallback(
@@ -699,6 +737,10 @@ export function useEngine(): EngineConnection {
     importProjectArchive,
     requestExportAppSettings,
     importAppSettingsArchive,
+    editors,
+    clientId,
+    editConflict,
+    dismissEditConflict,
     requestDmxCapture,
     requestDmxCycle,
     requestRdm,
