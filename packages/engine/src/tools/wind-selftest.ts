@@ -782,17 +782,26 @@ async function sensorCheck(): Promise<void> {
     await until(() => engine.windState().speedMs === 4.5);
     check(engine.windState().speedMs === 4.5, `функция 04 (input-регистр): 4,5 м/с (${engine.windState().speedMs})`);
 
-    // Датчик 4–20 мА через модуль: ноль шкалы не равен нулю регистра.
-    engine.setProject(project({ ...sensorCfg, modbus: { ...sensorCfg.modbus, registerKind: 'input', directionRegister: null, zeroRaw: 5 } }, true));
-    await until(() => engine.windState().speedMs === 4);
-    check(engine.windState().speedMs === 4, `«при безветрии» 5: (45 − 5) / 10 = 4 м/с (${engine.windState().speedMs})`);
-    // Обрыв петли 4–20 мА: сигнал падает ниже нуля шкалы — неисправность, а не
-    // штиль. Изображаем самим сигналом, а не сменой настроек (смена настроек —
-    // это другой датчик, и показание сбрасывается честно).
+    // 0–10 В через модуль: 0…100 в регистре — это 0…10 м/с.
+    engine.setProject(
+      project({ ...sensorCfg, modbus: { ...sensorCfg.modbus, registerKind: 'input', directionRegister: null, signal: 'volt', rawAtMin: 0, rawAtMax: 100, speedAtMax: 10 } }, true),
+    );
+    await until(() => engine.windState().speedMs === 4.5);
+    check(engine.windState().speedMs === 4.5, `0–10 В: в регистре 45 из 100 при шкале 10 м/с = 4,5 м/с (${engine.windState().speedMs})`);
+    check(engine.windState().sensor?.raw === 45, 'число из регистра видно в статусе датчика — по нему настраивают шкалу');
+    // 4–20 мА через модуль: начало шкалы (4 мА) — не ноль регистра.
+    engine.setProject(
+      project({ ...sensorCfg, modbus: { ...sensorCfg.modbus, registerKind: 'input', directionRegister: null, signal: 'current', rawAtMin: 40, rawAtMax: 140, speedAtMax: 10 } }, true),
+    );
+    await until(() => engine.windState().speedMs === 0.5);
+    check(engine.windState().speedMs === 0.5, `4–20 мА: (45 − 40) / (140 − 40) × 10 = 0,5 м/с (${engine.windState().speedMs})`);
+    // Обрыв петли 4–20 мА: ток ниже 4 мА — неисправность, а не штиль.
+    // Изображаем самим сигналом, а не сменой настроек (смена настроек — это
+    // другой датчик, и показание сбрасывается честно).
     input.set(0, 2);
     await until(() => (engine.windState().sensor?.error ?? '').includes('обрыв'), 5000);
-    check((engine.windState().sensor?.error ?? '').includes('обрыв'), 'сигнал ниже нуля шкалы — «обрыв линии», а не 0 м/с');
-    check(engine.windState().speedMs === 4, `и ветер не сброшен в ноль — держим 4 м/с (${engine.windState().speedMs})`);
+    check((engine.windState().sensor?.error ?? '').includes('обрыв'), 'ток ниже 4 мА — «обрыв линии», а не 0 м/с');
+    check(engine.windState().speedMs === 0.5, `и ветер не сброшен в ноль — держим 0,5 м/с (${engine.windState().speedMs})`);
     input.set(0, 45);
     engine.setProject(project({ ...sensorCfg, modbus: { ...sensorCfg.modbus, registerKind: 'input', directionRegister: null } }, true));
     await until(() => engine.windState().speedMs === 4.5);

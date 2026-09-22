@@ -1,5 +1,6 @@
 import {
   parseWindPayload,
+  windSpeedFromRaw,
   type WindLimitConfig,
   type WindSensorModbus,
   type WindSensorStatus,
@@ -39,6 +40,8 @@ export class WindSensor {
   private directionDeg: number | null = null;
   private error: string | null = null;
   private lostLogged = false;
+  /** Последнее число из регистра скорости — показать человеку для настройки шкалы. */
+  private lastRaw: number | null = null;
   /** Когда включили этот источник — от него считается «не ответил ни разу». */
   private configuredAt = Date.now();
 
@@ -64,6 +67,7 @@ export class WindSensor {
       this.directionDeg = null;
       this.lostLogged = false;
       this.error = null;
+      this.lastRaw = null;
       this.configuredAt = Date.now();
     }
     if (active && !this.timer) {
@@ -123,14 +127,15 @@ export class WindSensor {
             : await transport.readHoldingRegister(m.unitId, m.directionRegister);
         dir = ((d / m.directionUnitsPerDeg) % 360 + 360) % 360;
       }
-      // «Живой ноль» 4–20 мА: обрыв линии даёт сигнал заметно НИЖЕ нуля шкалы.
-      // Это неисправность датчика, а не штиль — принять за 0 м/с значило бы
+      this.lastRaw = raw;
+      // «Живой ноль» 4–20 мА: обрыв линии даёт ток заметно НИЖЕ 4 мА. Это
+      // неисправность датчика, а не штиль — принять за 0 м/с значило бы
       // поднять струи в ветер, которого мы просто перестали видеть.
-      if (m.zeroRaw > 0 && raw < m.zeroRaw * 0.9) {
-        this.fail('сигнал ниже нуля шкалы — обрыв линии датчика 4–20 мА?');
+      const speed = windSpeedFromRaw(raw, m);
+      if (speed === null) {
+        this.fail('ток ниже 4 мА — обрыв линии датчика?');
         return;
       }
-      const speed = Math.max(0, (raw - m.zeroRaw) / m.unitsPerMs);
       if (speed > maxPlausible) {
         this.fail(`показание ${speed.toFixed(1)} м/с — больше разумного, проверьте масштаб`);
         return;
@@ -202,6 +207,7 @@ export class WindSensor {
       error: this.online ? null : this.error,
       holding: !this.online && this.lastSpeed !== null,
       directionDeg: this.directionDeg,
+      raw: this.lastRaw,
     };
   }
 

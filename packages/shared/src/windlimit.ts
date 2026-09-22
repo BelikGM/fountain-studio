@@ -124,22 +124,41 @@ const G = 9.81;
  */
 export type WindSource = 'manual' | 'modbus' | 'mqtt';
 
+/**
+ * Какой сигнал выдаёт сам датчик. Компьютер читает только цифру (Modbus), а
+ * аналоговый датчик — через модуль «аналог → Modbus», и тогда в регистре не
+ * скорость, а то, как модуль оцифровал напряжение или ток. Поэтому шкалы
+ * разные:
+ *  · digital — цифровой анемометр RS-485: в регистре скорость (например, в
+ *    десятых долях м/с);
+ *  · volt    — 0–10 В через модуль: 0 В — безветрие, 10 В — конец шкалы датчика;
+ *  · current — 4–20 мА через модуль: 4 мА — безветрие, 20 мА — конец шкалы.
+ *    Ток ниже 4 мА — обрыв линии, и это видно («живой ноль»); у 0–10 В обрыв
+ *    от безветрия не отличить.
+ */
+export type WindSensorSignal = 'digital' | 'volt' | 'current';
+
 export interface WindSensorModbus {
   connection: ModbusConnection;
+  /** Какой сигнал выдаёт датчик (см. WindSensorSignal). */
+  signal: WindSensorSignal;
   /** Адрес датчика на линии, 1–247. */
   unitId: number;
   /** Регистр скорости, с 0 (как в паспорте датчика, «0x0000» — это 0). */
   register: number;
   /** holding — функция 03, input — функция 04. В паспорте датчика написано, какая. */
   registerKind: 'holding' | 'input';
-  /** Единиц регистра на 1 м/с. У большинства датчиков 10: скорость в десятых долях. */
+  /** Цифровой датчик: единиц регистра на 1 м/с. У большинства 10: скорость в десятых долях. */
   unitsPerMs: number;
   /**
-   * Значение регистра при безветрии. У цифрового датчика 0. У датчика с
-   * выходом 4–20 мА через модуль «аналог → Modbus» безветрию соответствуют
-   * 4 мА — это не ноль в регистре (например, 4000 при счёте в микроамперах).
+   * Аналоговый через модуль: что модуль показывает в начале шкалы (0 В или
+   * 4 мА — безветрие) и в конце (10 В или 20 мА). Зависит от настройки модуля:
+   * часто милливольты (0…10000) или микроамперы (4000…20000).
    */
-  zeroRaw: number;
+  rawAtMin: number;
+  rawAtMax: number;
+  /** Скорость ветра в конце шкалы датчика, м/с — из его паспорта. */
+  speedAtMax: number;
   /** Регистр направления, градусы; null — датчик направление не даёт. */
   directionRegister: number | null;
   /** Единиц регистра на 1°. Обычно 1. */
@@ -278,8 +297,11 @@ export function defaultWindSensorModbus(): WindSensorModbus {
     unitId: 1,
     register: 0,
     registerKind: 'holding',
+    signal: 'digital',
     unitsPerMs: 10,
-    zeroRaw: 0,
+    rawAtMin: 0,
+    rawAtMax: 10000,
+    speedAtMax: 30,
     directionRegister: null,
     directionUnitsPerDeg: 1,
   };
@@ -777,8 +799,15 @@ export function sanitizeWindSensorModbus(raw: unknown): WindSensorModbus {
     unitId: int(r.unitId, d.unitId, 1, 247),
     register: int(r.register, d.register, 0, 65535),
     registerKind: r.registerKind === 'input' ? 'input' : 'holding',
+    signal: r.signal === 'volt' || r.signal === 'current' ? r.signal : 'digital',
     unitsPerMs: Number.isFinite(scale) && scale > 0 ? scale : d.unitsPerMs,
-    zeroRaw: int(r.zeroRaw, 0, 0, 65535),
+    rawAtMin: int(r.rawAtMin, d.rawAtMin, 0, 65535),
+    // Конец шкалы должен быть выше начала — иначе делить не на что.
+    rawAtMax: Math.max(int(r.rawAtMin, d.rawAtMin, 0, 65535) + 1, int(r.rawAtMax, d.rawAtMax, 1, 65535)),
+    speedAtMax: (() => {
+      const v = Number(r.speedAtMax);
+      return Number.isFinite(v) && v > 0 && v <= 100 ? v : d.speedAtMax;
+    })(),
     directionRegister:
       r.directionRegister === null || r.directionRegister === undefined ? null : int(r.directionRegister, 0, 0, 65535),
     directionUnitsPerDeg: Number.isFinite(dirScale) && dirScale > 0 ? dirScale : d.directionUnitsPerDeg,
@@ -823,4 +852,17 @@ export interface WindSensorStatus {
   holding: boolean;
   /** Направление, откуда дует, °; null — датчик его не даёт. */
   directionDeg: number | null;
+  /** Что сейчас в регистре скорости — по этому числу настраивают шкалу. */
+  raw: number | null;
+}
+
+/**
+ * Скорость из числа в регистре — по типу выхода датчика. null — сигнал ниже
+ * начала шкалы 4–20 мА: это обрыв линии, а не безветрие.
+ */
+export function windSpeedFromRaw(raw: number, m: WindSensorModbus): number | null {
+  if (m.signal === 'digital') return Math.max(0, raw / m.unitsPerMs);
+  const span = m.rawAtMax - m.rawAtMin;
+  if (m.signal === 'current' && raw < m.rawAtMin - span * 0.05) return null;
+  return Math.max(0, ((raw - m.rawAtMin) / span) * m.speedAtMax);
 }

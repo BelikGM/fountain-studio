@@ -1142,10 +1142,12 @@ function windSensorLine(ws: WindState | null): JSX.Element | null {
   const s = ws?.sensor;
   if (!ws || !s) return null;
   const dir = s.directionDeg !== null ? `, дует с ${Math.round(s.directionDeg)}°` : '';
+  const raw = s.raw !== null ? ` (в регистре ${s.raw})` : '';
   if (s.online && ws.speedMs !== null) {
     return (
       <span className="ok-text status-note">
         ✔ датчик на связи: {num(ws.speedMs, 1)} м/с{dir}
+        {raw}
       </span>
     );
   }
@@ -1326,27 +1328,6 @@ function WindSourceBlock({
                 <option value="input">функция 04</option>
               </select>
             </label>
-            <label className="field" data-hint="Сколько единиц регистра в 1 м/с. У большинства датчиков 10: они отдают скорость в десятых долях (32 = 3,2 м/с).">
-              Единиц на 1 м/с:{' '}
-              <CommitInput
-                width={60}
-                type="number"
-                value={String(m.unitsPerMs)}
-                onCommit={(v) => setModbus({ unitsPerMs: Number(v) > 0 ? Number(v) : 10 })}
-              />
-            </label>
-            <label
-              className="field"
-              data-hint="Значение регистра при безветрии. Цифровой датчик — 0. Датчик 4–20 мА через модуль — то, что модуль показывает при 4 мА (например, 4000). Сигнал заметно ниже этого — обрыв линии: считаем датчик неисправным, а не штилем."
-            >
-              При безветрии:{' '}
-              <CommitInput
-                width={70}
-                type="number"
-                value={String(m.zeroRaw)}
-                onCommit={(v) => setModbus({ zeroRaw: Math.max(0, Math.round(Number(v)) || 0) })}
-              />
-            </label>
             <label className="field" data-hint="Регистр направления ветра, если датчик его даёт (в градусах). Пусто — направления нет; тогда в расчёте ветер всегда дует в худшую сторону.">
               Регистр направления:{' '}
               <CommitInput
@@ -1360,9 +1341,86 @@ function WindSourceBlock({
               />
             </label>
           </div>
+          {/*
+            Шкала — по типу выхода датчика. Компьютер читает только цифру: у
+            аналогового датчика в регистре не скорость, а то, как модуль
+            «аналог → Modbus» оцифровал напряжение или ток.
+          */}
+          <div className="form-row">
+            <label
+              className="field"
+              data-hint="Какой сигнал выдаёт сам датчик — написано в его паспорте. Цифровой — сразу RS-485 Modbus. 0–10 В или 4–20 мА (например, Musidora «Wind» — 0–10 В) компьютер напрямую не читает: между датчиком и компьютером ставится модуль «аналог → Modbus»."
+            >
+              Выход датчика:{' '}
+              <select
+                value={m.signal}
+                onChange={(e) => {
+                  const signal = e.target.value as WindSensorModbus['signal'];
+                  // Для аналоговых — типичная шкала модулей: милливольты или микроамперы.
+                  setModbus(
+                    signal === 'volt'
+                      ? { signal, rawAtMin: 0, rawAtMax: 10000 }
+                      : signal === 'current'
+                        ? { signal, rawAtMin: 4000, rawAtMax: 20000 }
+                        : { signal },
+                  );
+                }}
+              >
+                <option value="digital">цифровой (RS-485 Modbus)</option>
+                <option value="volt">0–10 В через модуль</option>
+                <option value="current">4–20 мА через модуль</option>
+              </select>
+            </label>
+            {m.signal === 'digital' ? (
+              <label className="field" data-hint="Сколько единиц регистра в 1 м/с. У большинства датчиков 10: они отдают скорость в десятых долях (32 = 3,2 м/с).">
+                Единиц на 1 м/с:{' '}
+                <CommitInput
+                  width={60}
+                  type="number"
+                  value={String(m.unitsPerMs)}
+                  onCommit={(v) => setModbus({ unitsPerMs: Number(v) > 0 ? Number(v) : 10 })}
+                />
+              </label>
+            ) : (
+              <>
+                <label
+                  className="field"
+                  data-hint={`Что модуль показывает при ${m.signal === 'volt' ? '0 В' : '4 мА'} — это безветрие. Обычно ${m.signal === 'volt' ? '0' : '4000'}, но смотрите настройку модуля.`}
+                >
+                  При {m.signal === 'volt' ? '0 В' : '4 мА'}:{' '}
+                  <CommitInput
+                    width={70}
+                    type="number"
+                    value={String(m.rawAtMin)}
+                    onCommit={(v) => setModbus({ rawAtMin: Math.max(0, Math.round(Number(v)) || 0) })}
+                  />
+                </label>
+                <label className="field" data-hint={`Что модуль показывает при ${m.signal === 'volt' ? '10 В' : '20 мА'} — конце шкалы датчика.`}>
+                  При {m.signal === 'volt' ? '10 В' : '20 мА'}:{' '}
+                  <CommitInput
+                    width={70}
+                    type="number"
+                    value={String(m.rawAtMax)}
+                    onCommit={(v) => setModbus({ rawAtMax: Math.max(1, Math.round(Number(v)) || 1) })}
+                  />
+                </label>
+                <label className="field" data-hint="Какая скорость ветра соответствует концу шкалы — из паспорта датчика. Если в паспорте нет — сверьте с ручным анемометром и подберите.">
+                  Это ветер, м/с:{' '}
+                  <CommitInput
+                    width={60}
+                    type="number"
+                    value={String(m.speedAtMax)}
+                    onCommit={(v) => setModbus({ speedAtMax: Number(v) > 0 ? Number(v) : 30 })}
+                  />
+                </label>
+              </>
+            )}
+          </div>
           <p className="dim">
-            Всё это — из паспорта датчика. Анемометр с выходом 0–10 В или 4–20 мА (например, Musidora «Wind»)
-            компьютер напрямую не читает: нужен модуль «аналог → Modbus», а числа здесь — как его настроили.
+            Всё это — из паспорта датчика и настройки модуля. Число из регистра видно в строке состояния
+            датчика — по нему удобно проверить шкалу.
+            {m.signal === 'current' && ' Ток ниже 4 мА — обрыв линии: датчик считается неисправным, показание держится.'}
+            {m.signal === 'volt' && ' У 0–10 В обрыв линии не отличить от безветрия — если есть выбор, берите 4–20 мА.'}
           </p>
         </>
       )}
