@@ -860,6 +860,7 @@ function TelegramPanel({ engine }: { engine: EngineConnection }) {
           />
         </label>
       </div>
+      <RecipientsBlock engine={engine} />
       <p className="dim">
         Состояние: {telegram.hasToken ? 'токен задан' : 'токен не задан'} ·{' '}
         {telegram.chatId
@@ -874,6 +875,87 @@ function TelegramPanel({ engine }: { engine: EngineConnection }) {
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * Ещё получатели уведомлений, помимо главного чата: дежурный, инженер,
+ * начальник объекта. У каждого свои разделы — дежурному аварии ночью,
+ * начальнику только утренний отчёт.
+ *
+ * Номер чата человек про себя не знает, и выспрашивать его неоткуда: поэтому
+ * тех, кто написал боту, движок запоминает и показывает списком — добавить
+ * можно одним нажатием. Кнопок («Принято», «Остановить») в копиях нет: команды
+ * движок принимает только из главного чата, и кнопка у дежурного всё равно бы
+ * не сработала.
+ */
+function RecipientsBlock({ engine }: { engine: EngineConnection }) {
+  const { telegram, send } = engine;
+  if (!telegram) return null;
+  const list = telegram.recipients;
+  const save = (next: typeof list): void => send({ type: 'updateTelegram', recipients: next });
+  const patch = (i: number, p: Partial<(typeof list)[number]>): void =>
+    save(list.map((r, j) => (j === i ? { ...r, ...p } : r)));
+  const known = telegram.knownChats.filter((k) => k.chatId !== telegram.chatId && !list.some((r) => r.chatId === k.chatId));
+
+  return (
+    <>
+      <div className="form-row">
+        <span
+          className="quick-row-label"
+          data-hint="Кому ещё слать, кроме главного чата. Команды и кнопки остаются только у главного: копии — для чтения."
+        >
+          Ещё получатели:
+        </span>
+        {list.length === 0 && <span className="dim">никого — всё идёт только в главный чат</span>}
+      </div>
+      {list.map((r, i) => (
+        <div className="form-row" key={r.chatId + i}>
+          <input
+            className="input"
+            style={{ width: 160 }}
+            placeholder="Кто это"
+            value={r.name}
+            data-hint="Как подписан в настройках: «Дежурный», «Инженер». Нужно, чтобы отличать номера друг от друга."
+            onChange={(e) => patch(i, { name: e.target.value })}
+          />
+          <span className="dim">чат {r.chatId}</span>
+          <label className="field">
+            <input type="checkbox" checked={r.alarms} onChange={(e) => patch(i, { alarms: e.target.checked })} /> аварии
+          </label>
+          <label className="field">
+            <input type="checkbox" checked={r.reports} onChange={(e) => patch(i, { reports: e.target.checked })} /> отчёты
+          </label>
+          <label className="field">
+            <input type="checkbox" checked={r.state} onChange={(e) => patch(i, { state: e.target.checked })} /> состояние
+          </label>
+          <button
+            className="btn btn-small"
+            data-hint="Убрать получателя — ему перестанут приходить копии"
+            onClick={() => save(list.filter((_, j) => j !== i))}
+          >
+            Убрать
+          </button>
+        </div>
+      ))}
+      {known.length > 0 && (
+        <div className="form-row">
+          <span className="quick-row-label" data-hint="Кто писал боту за последнее время. Пусть человек откроет бота и нажмёт «Start» — и появится здесь.">
+            Писали боту:
+          </span>
+          {known.map((k) => (
+            <button
+              key={k.chatId}
+              className="btn btn-small"
+              data-hint={`Добавить «${k.name}» (чат ${k.chatId}) в получатели: по умолчанию аварии и отчёты`}
+              onClick={() => save([...list, { chatId: k.chatId, name: k.name, alarms: true, reports: true, state: false }])}
+            >
+              + {k.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </>
   );
 }
 

@@ -325,6 +325,80 @@ check('после снятия аварии снова уходят', queued().l
   tg.setConfig({ commands: true });
 }
 
+// ---- Несколько получателей ---------------------------------------------------
+/*
+ * Дежурному — аварии ночью, начальнику — только утренний отчёт. Проверяем
+ * настоящую отправку: подменяем fetch и смотрим, в какие чаты ушло. Копии
+ * идут БЕЗ кнопок — команды движок принимает только из главного чата.
+ */
+{
+  interface Sent {
+    chatId: string;
+    hasButtons: boolean;
+  }
+  const sent: Sent[] = [];
+  let failFor = '';
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init?: { body?: string }) => {
+    const body = JSON.parse(String(init?.body ?? '{}')) as { chat_id?: string; reply_markup?: unknown };
+    if (String(url).includes('sendMessage')) {
+      sent.push({ chatId: String(body.chat_id), hasButtons: body.reply_markup !== undefined });
+      const ok = String(body.chat_id) !== failFor;
+      return { json: async () => ({ ok, description: ok ? '' : 'bot was blocked by the user' }) };
+    }
+    return { json: async () => ({ ok: true, result: {} }) };
+  }) as unknown as typeof globalThis.fetch;
+
+  const drain = async (): Promise<void> => {
+    await (tg as unknown as { tick: () => Promise<void> }).tick();
+  };
+
+  tg.setConfig({
+    chatId: '1',
+    recipients: [
+      { chatId: '777', name: 'Дежурный', alarms: true, reports: false, state: false },
+      { chatId: '888', name: 'Начальник', alarms: false, reports: true, state: false },
+      { chatId: '1', name: 'Он же главный', alarms: true, reports: true, state: true },
+    ],
+  });
+  check('получатели видны в состоянии', tg.status().recipients.length === 3);
+
+  // Сначала разгребаем всё, что накопилось от прошлых проверок, — иначе
+  // в подсчёт попадут чужие сообщения.
+  await drain();
+
+  sent.length = 0;
+  tg.enqueue('alarm', 'Авария: насос встал');
+  await drain();
+  check('авария ушла в главный чат', sent.some((x) => x.chatId === '1'), JSON.stringify(sent));
+  check('авария ушла дежурному', sent.some((x) => x.chatId === '777'), JSON.stringify(sent));
+  check('начальника аварией не будим', !sent.some((x) => x.chatId === '888'), JSON.stringify(sent));
+  check('главный чат не задваивается', sent.filter((x) => x.chatId === '1').length === 1, JSON.stringify(sent));
+  check('в копии кнопок нет', sent.filter((x) => x.chatId === '777').every((x) => !x.hasButtons), JSON.stringify(sent));
+
+  sent.length = 0;
+  tg.enqueue('report', 'Отчёт за сутки');
+  await drain();
+  check('отчёт ушёл начальнику', sent.some((x) => x.chatId === '888'), JSON.stringify(sent));
+  check('дежурному отчёт не шлём', !sent.some((x) => x.chatId === '777'), JSON.stringify(sent));
+
+  // Дежурный заблокировал бота — главный чат об этом знать не должен.
+  failFor = '777';
+  sent.length = 0;
+  const logged: string[] = [];
+  const off = eventLog.subscribe((e) => {
+    if (e.source === 'telegram') logged.push(e.message);
+  });
+  tg.enqueue('alarm', 'Авария: вторая');
+  await drain();
+  off();
+  check('главный чат получил, хотя копия не дошла', sent.some((x) => x.chatId === '1'), JSON.stringify(sent));
+  check('о недошедшей копии сказано в журнале', logged.some((m) => m.includes('Дежурный')), logged.join(' | '));
+
+  tg.setConfig({ recipients: [] });
+  globalThis.fetch = realFetch;
+}
+
 tg.stop();
 fs.rmSync(dir, { recursive: true, force: true });
 console.log(`telegram: пройдено ${passed}, ошибок ${failed}`);

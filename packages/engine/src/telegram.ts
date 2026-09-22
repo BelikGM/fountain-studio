@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { eventLog } from './eventlog';
-import { substituteRdmNames, type LogEvent } from '@fountain-studio/shared';
+import { substituteRdmNames, type LogEvent, type TelegramKnownChat, type TelegramRecipient } from '@fountain-studio/shared';
 import {
   formatAlarm,
   formatQuietOver,
@@ -92,6 +92,13 @@ export interface TelegramConfig {
   /** Созданные темы объектов: имя объекта → номер темы. */
   siteTopics: Record<string, number>;
   /**
+   * Ещё получатели, помимо главного чата: дежурный, инженер, начальник. У
+   * каждого свои разделы — дежурному аварии, начальнику только отчёт. Главный
+   * чат остаётся главным: команды принимаются только из него, копии уходят
+   * туда же, куда и всегда.
+   */
+  recipients: TelegramRecipient[];
+  /**
    * Тихий режим: до этого момента (unix, мс) аварии не отправляем — на
    * время работ на объекте, когда всё и так «мигает». Отчёты и состояние
    * ходят как обычно. Сколько аварий смолчали, скажем одним сообщением,
@@ -113,6 +120,7 @@ export function defaultTelegramConfig(): TelegramConfig {
     topicState: 0,
     topicsBySite: true,
     siteTopics: {},
+    recipients: [],
     quietUntilMs: 0,
   };
 }
@@ -187,8 +195,12 @@ export class TelegramNotifier {
    * discoverChatId) после его включения находил бы пустоту.
    */
   private lastCandidateChatId = '';
+  /** Кто писал боту — подсказка для добавления получателей, не адресная книга. */
+  private knownChats = new Map<string, TelegramKnownChat>();
   /** Меню команд у бота уже выставлено — второй раз незачем. */
   private menuSet = false;
+  /** О недошедшей копии пишем в журнал не чаще раза в час: иначе завалит. */
+  private lastCopyErrorMs = 0;
   /** О чужом чате пишем в журнал не чаще раза в час: иначе завалит. */
   private lastRejectLogMs = 0;
 
@@ -226,6 +238,8 @@ export class TelegramNotifier {
         const raw = JSON.parse(fs.readFileSync(this.secretsFile, 'utf8')) as { telegram?: Partial<TelegramConfig> };
         this.cfg = { ...defaultTelegramConfig(), ...(raw.telegram ?? {}) };
         if (!this.cfg.siteTopics || typeof this.cfg.siteTopics !== 'object') this.cfg.siteTopics = {};
+        // Файл от прежней версии: получателей в нём нет вовсе.
+        if (!Array.isArray(this.cfg.recipients)) this.cfg.recipients = [];
       }
     } catch (err) {
       console.error('[telegram] не удалось прочитать настройки:', err);
@@ -289,6 +303,8 @@ export class TelegramNotifier {
     topicsAvailable: boolean | null;
     siteTopicCount: number;
     quietUntilMs: number;
+    recipients: TelegramRecipient[];
+    knownChats: TelegramKnownChat[];
   } {
     return {
       enabled: this.cfg.enabled,
@@ -306,6 +322,8 @@ export class TelegramNotifier {
       topicsAvailable: this.topicsKnown(),
       siteTopicCount: Object.keys(this.cfg.siteTopics).length,
       quietUntilMs: this.cfg.quietUntilMs,
+      recipients: this.cfg.recipients,
+      knownChats: [...this.knownChats.values()].sort((a, b) => b.atMs - a.atMs).slice(0, 8),
     };
   }
 
@@ -372,6 +390,7 @@ export class TelegramNotifier {
         for (const u of list) {
           if (typeof u.update_id === 'number') this.updateOffset = Math.max(this.updateOffset, u.update_id + 1);
           this.rememberChatCandidate(u);
+          this.rememberKnownChat(u);
           try {
             await this.applyEffects(handleTelegramUpdate(u, this.getSiteName(), this.commandContext()), topicOf(u));
           } catch (err) {
@@ -400,6 +419,25 @@ export class TelegramNotifier {
    * Mode боту пишут из чужих чатов, и посторонний не должен стать получателем
    * аварий объекта.
    */
+  /**
+   * Кто писал боту — чтобы в настройках добавить дежурного одним нажатием, а
+   * не выспрашивать у него «пришли свой номер чата». Держим только последних:
+   * это подсказка, а не адресная книга.
+   */
+  private rememberKnownChat(u: TgUpdate): void {
+    const m = u.message;
+    const id = m?.chat?.id;
+    if (typeof id !== 'number') return;
+    const who = [m?.from?.first_name, m?.from?.last_name].filter(Boolean).join(' ').trim();
+    const name = who !== '' ? who : m?.from?.username ? '@' + m.from.username : m?.chat?.type === 'private' ? 'личный чат' : 'группа';
+    this.knownChats.set(String(id), { chatId: String(id), name, atMs: Date.now() });
+    if (this.knownChats.size > 20) {
+      const oldest = [...this.knownChats.values()].sort((a, b) => a.atMs - b.atMs)[0];
+      if (oldest) this.knownChats.delete(oldest.chatId);
+    }
+    this.onStatusChange?.();
+  }
+
   private rememberChatCandidate(u: TgUpdate): void {
     if (this.cfg.chatId.trim() !== '') return;
     const privateStart = u.message?.chat?.type === 'private' && (u.message.text ?? '').startsWith('/start');
@@ -654,6 +692,7 @@ export class TelegramNotifier {
   private async deliver(kind: TelegramKind, site: string, html: string, keyboard?: TgKeyboard): Promise<boolean> {
     const manual = this.manualTopic(kind);
     const topic = manual > 0 ? manual : await this.siteTopic(site);
+    void this.sendCopies(kind, html);
     const r = await this.send(html, topic, keyboard);
     if (r.ok) return true;
     if (topic > 0 && manual === 0 && /thread|topic/i.test(r.description)) {
@@ -664,6 +703,32 @@ export class TelegramNotifier {
     }
     if (r.description !== '') console.error('[telegram] не отправлено:', r.description);
     return false;
+  }
+
+  /**
+   * Копии дополнительным получателям (дежурный, инженер, начальник).
+   *
+   * Отдельно от главного чата и БЕЗ кнопок: кнопки («Принято», «Остановить»)
+   * — это управление объектом, а команды принимаются только из главного чата;
+   * у остальных они всё равно не сработали бы, и нажимать их было бы обманом.
+   * Тем у дополнительных чатов тоже нет: это, как правило, личка.
+   *
+   * Ошибку одного получателя (заблокировал бота, вышел из группы) не даём
+   * испортить доставку остальным: говорим в журнал не чаще раза в час, иначе
+   * при выключенном телефоне дежурного журнал забьётся.
+   */
+  private async sendCopies(kind: TelegramKind, html: string): Promise<void> {
+    for (const r of this.cfg.recipients) {
+      const want = kind === 'alarm' ? r.alarms : kind === 'report' ? r.reports : r.state;
+      const id = r.chatId.trim();
+      if (!want || id === '' || id === this.cfg.chatId.trim()) continue;
+      const res = await this.sendTo(id, html);
+      if (res.ok) continue;
+      if (Date.now() - this.lastCopyErrorMs > 3600_000) {
+        this.lastCopyErrorMs = Date.now();
+        eventLog.log('telegram', `не доходит до получателя «${r.name || id}»: ${res.description || 'нет связи'}`, 'warn');
+      }
+    }
   }
 
   /** Имя бота и доступность тем в личных чатах — из getMe. */
@@ -733,9 +798,19 @@ export class TelegramNotifier {
   }
 
   private async send(html: string, topicId = 0, keyboard?: TgKeyboard): Promise<{ ok: boolean; description: string }> {
+    return this.sendTo(this.cfg.chatId, html, topicId, keyboard);
+  }
+
+  /** То же самое, но в указанный чат: главный получатель и копии идут одним путём. */
+  private async sendTo(
+    chatId: string,
+    html: string,
+    topicId = 0,
+    keyboard?: TgKeyboard,
+  ): Promise<{ ok: boolean; description: string }> {
     try {
       const body: Record<string, unknown> = {
-        chat_id: this.cfg.chatId,
+        chat_id: chatId,
         text: html,
         parse_mode: 'HTML',
         link_preview_options: { is_disabled: true },

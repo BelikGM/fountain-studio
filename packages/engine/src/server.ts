@@ -872,6 +872,20 @@ export function startServer(
           if (tr !== undefined) patch.topicReport = tr;
           if (ts !== undefined) patch.topicState = ts;
           if (typeof msg.topicsBySite === 'boolean') patch.topicsBySite = msg.topicsBySite;
+          // Дополнительные получатели приходят списком целиком: правки по
+          // одному потребовали бы согласовывать порядок между редакторами.
+          if (Array.isArray(msg.recipients)) {
+            patch.recipients = msg.recipients
+              .filter((r) => typeof r?.chatId === 'string' && r.chatId.trim() !== '')
+              .slice(0, 20)
+              .map((r) => ({
+                chatId: r.chatId.trim(),
+                name: String(r.name ?? '').slice(0, 60),
+                alarms: r.alarms !== false,
+                reports: r.reports !== false,
+                state: r.state === true,
+              }));
+          }
           telegram.setConfig(patch);
           // В журнал уходит только ФАКТ настройки: токен туда попасть не должен.
           eventLog.log('server', 'настройки уведомлений в Telegram обновлены');

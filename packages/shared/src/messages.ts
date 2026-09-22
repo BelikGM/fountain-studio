@@ -253,6 +253,26 @@ export interface ModbusState {
  * а не от потери процесса.
  */
 /** Что можно показать про уведомления в интерфейсе — токена здесь нет и быть не должно. */
+/**
+ * Ещё один получатель уведомлений: дежурный, инженер, начальник объекта.
+ * У каждого свои разделы — дежурному аварии, начальнику только отчёт.
+ */
+export interface TelegramRecipient {
+  chatId: string;
+  /** Как подписан в настройках, чтобы отличать номера друг от друга. */
+  name: string;
+  alarms: boolean;
+  reports: boolean;
+  state: boolean;
+}
+
+/** Кто недавно писал боту — из них выбирают новых получателей. */
+export interface TelegramKnownChat {
+  chatId: string;
+  name: string;
+  atMs: number;
+}
+
 export interface TelegramStatus {
   enabled: boolean;
   hasToken: boolean;
@@ -276,6 +296,10 @@ export interface TelegramStatus {
   siteTopicCount: number;
   /** Тихий режим действует до этого момента (unix, мс); 0 — выключен. */
   quietUntilMs: number;
+  /** Дополнительные получатели, помимо главного чата. */
+  recipients: TelegramRecipient[];
+  /** Кто писал боту за последнее время — чтобы добавить в получатели одним нажатием. */
+  knownChats: TelegramKnownChat[];
 }
 
 export interface BackupInfo {
@@ -516,6 +540,8 @@ export type ClientMessage =
       topicReport?: number;
       topicState?: number;
       topicsBySite?: boolean;
+      /** Список дополнительных получателей целиком (проще, чем правки по одному). */
+      recipients?: TelegramRecipient[];
     }
   | { type: 'testTelegram' }
   /** Тихий режим на N часов (0 — снять): не слать аварии во время работ на объекте. */
