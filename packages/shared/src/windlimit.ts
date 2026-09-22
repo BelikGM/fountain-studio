@@ -134,6 +134,12 @@ export interface WindSensorModbus {
   registerKind: 'holding' | 'input';
   /** Единиц регистра на 1 м/с. У большинства датчиков 10: скорость в десятых долях. */
   unitsPerMs: number;
+  /**
+   * Значение регистра при безветрии. У цифрового датчика 0. У датчика с
+   * выходом 4–20 мА через модуль «аналог → Modbus» безветрию соответствуют
+   * 4 мА — это не ноль в регистре (например, 4000 при счёте в микроамперах).
+   */
+  zeroRaw: number;
   /** Регистр направления, градусы; null — датчик направление не даёт. */
   directionRegister: number | null;
   /** Единиц регистра на 1°. Обычно 1. */
@@ -273,6 +279,7 @@ export function defaultWindSensorModbus(): WindSensorModbus {
     register: 0,
     registerKind: 'holding',
     unitsPerMs: 10,
+    zeroRaw: 0,
     directionRegister: null,
     directionUnitsPerDeg: 1,
   };
@@ -771,6 +778,7 @@ export function sanitizeWindSensorModbus(raw: unknown): WindSensorModbus {
     register: int(r.register, d.register, 0, 65535),
     registerKind: r.registerKind === 'input' ? 'input' : 'holding',
     unitsPerMs: Number.isFinite(scale) && scale > 0 ? scale : d.unitsPerMs,
+    zeroRaw: int(r.zeroRaw, 0, 0, 65535),
     directionRegister:
       r.directionRegister === null || r.directionRegister === undefined ? null : int(r.directionRegister, 0, 0, 65535),
     directionUnitsPerDeg: Number.isFinite(dirScale) && dirScale > 0 ? dirScale : d.directionUnitsPerDeg,

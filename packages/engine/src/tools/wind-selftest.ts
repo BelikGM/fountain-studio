@@ -782,11 +782,30 @@ async function sensorCheck(): Promise<void> {
     await until(() => engine.windState().speedMs === 4.5);
     check(engine.windState().speedMs === 4.5, `функция 04 (input-регистр): 4,5 м/с (${engine.windState().speedMs})`);
 
+    // Датчик 4–20 мА через модуль: ноль шкалы не равен нулю регистра.
+    engine.setProject(project({ ...sensorCfg, modbus: { ...sensorCfg.modbus, registerKind: 'input', directionRegister: null, zeroRaw: 5 } }, true));
+    await until(() => engine.windState().speedMs === 4);
+    check(engine.windState().speedMs === 4, `«при безветрии» 5: (45 − 5) / 10 = 4 м/с (${engine.windState().speedMs})`);
+    // Обрыв петли 4–20 мА: сигнал падает ниже нуля шкалы — неисправность, а не
+    // штиль. Изображаем самим сигналом, а не сменой настроек (смена настроек —
+    // это другой датчик, и показание сбрасывается честно).
+    input.set(0, 2);
+    await until(() => (engine.windState().sensor?.error ?? '').includes('обрыв'), 5000);
+    check((engine.windState().sensor?.error ?? '').includes('обрыв'), 'сигнал ниже нуля шкалы — «обрыв линии», а не 0 м/с');
+    check(engine.windState().speedMs === 4, `и ветер не сброшен в ноль — держим 4 м/с (${engine.windState().speedMs})`);
+    input.set(0, 45);
+    engine.setProject(project({ ...sensorCfg, modbus: { ...sensorCfg.modbus, registerKind: 'input', directionRegister: null } }, true));
+    await until(() => engine.windState().speedMs === 4.5);
+    events.length = 0;
+
     // Датчик замолчал — показание держится, в журнале авария (одна).
     silent = true;
     await until(() => engine.windState().sensor?.holding === true, 10000);
     const held = engine.windState();
     check(held.sensor?.holding === true && held.speedMs === 4.5, `датчик молчит — держим последние 4,5 м/с (${held.speedMs})`);
+    // Авария пишется на ближайшем опросе после срока — ждём её, а не миг «держим».
+    await until(() => events.some((e) => e.startsWith('warn:') && e.includes('не отвечает')), 3000);
+    await sleep(1500);
     const lostEvents = events.filter((e) => e.startsWith('warn:') && e.includes('не отвечает'));
     check(lostEvents.length === 1, `в журнале одна авария «не отвечает», а не строка в секунду (${lostEvents.length})`);
     silent = false;

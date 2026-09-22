@@ -123,7 +123,14 @@ export class WindSensor {
             : await transport.readHoldingRegister(m.unitId, m.directionRegister);
         dir = ((d / m.directionUnitsPerDeg) % 360 + 360) % 360;
       }
-      const speed = raw / m.unitsPerMs;
+      // «Живой ноль» 4–20 мА: обрыв линии даёт сигнал заметно НИЖЕ нуля шкалы.
+      // Это неисправность датчика, а не штиль — принять за 0 м/с значило бы
+      // поднять струи в ветер, которого мы просто перестали видеть.
+      if (m.zeroRaw > 0 && raw < m.zeroRaw * 0.9) {
+        this.fail('сигнал ниже нуля шкалы — обрыв линии датчика 4–20 мА?');
+        return;
+      }
+      const speed = Math.max(0, (raw - m.zeroRaw) / m.unitsPerMs);
       if (speed > maxPlausible) {
         this.fail(`показание ${speed.toFixed(1)} м/с — больше разумного, проверьте масштаб`);
         return;
