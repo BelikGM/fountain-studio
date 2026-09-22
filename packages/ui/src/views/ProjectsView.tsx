@@ -57,7 +57,7 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
     return (
       <main className="view">
         <section className="panel">
-          <h2>Проекты</h2>
+          <h2>Объекты</h2>
           <p className="dim">Ожидание ответа движка…</p>
         </section>
       </main>
@@ -116,7 +116,7 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
   return (
     <main className="view">
       <section className="panel">
-        <h2>{projects.current ? 'Проекты' : 'С какого объекта начнём?'}</h2>
+        <h2>{projects.current ? 'Объекты' : 'С какого объекта начнём?'}</h2>
         <p className="dim">
           Объект — это папка на диске: в ней схема и адреса, вселенные DMX, музыка шоу, журнал и
           резервные копии. Папку можно унести на флешке или прислать коллеге — у него откроется то же
@@ -131,8 +131,8 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
             {/*
               Действия над ТЕКУЩИМ объектом — отдельно и сразу сверху, а не
               внизу вперемешку с формой создания НОВОГО: это разные объекты
-              разговора, и раньше «Закрыть объект» стояла рядом с «Создать
-              проект», хотя относится к тому, что уже открыто.
+              разговора, и раньше «Закрыть объект» стояла рядом с «Новый
+              объект», хотя относится к тому, что уже открыто.
             */}
             <div className="form-row">
               <button
@@ -148,7 +148,7 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
               </button>
               <button
                 className="btn btn-small"
-                data-hint="Закрыть объект: приборы перестанут получать значения, программа вернётся к выбору проекта."
+                data-hint="Закрыть объект: приборы перестанут получать значения, программа вернётся к выбору объекта."
                 onClick={() => {
                   void (async () => {
                     if (await askIfPlaying('Закрыть объект')) closeProject();
@@ -226,7 +226,7 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
           </table>
         )}
 
-        <h3 style={{ marginTop: 18, marginBottom: 6 }}>Открыть другой проект</h3>
+        <h3 style={{ marginTop: 18, marginBottom: 6 }}>Открыть другой объект</h3>
         <div className="form-row">
           <input
             className="input"
@@ -322,7 +322,7 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
                 setCreating(true);
               }}
             >
-              + Создать проект
+              + Новый объект
             </button>
           </div>
         )}

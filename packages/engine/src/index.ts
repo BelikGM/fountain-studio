@@ -150,7 +150,7 @@ export interface OpenResult {
  */
 function openProject(target: string): OpenResult {
   const dir = path.resolve(resolveProjectDir(target));
-  if (!isProjectDir(dir)) return { ok: false, error: `В папке нет ${path.basename(dir)}\\project.json — это не проект` };
+  if (!isProjectDir(dir)) return { ok: false, error: `В папке «${path.basename(dir)}» нет файла объекта project.json — это не папка объекта` };
   const p = projectPaths(dir);
   const lines = readLines(dir);
   try {
@@ -311,7 +311,7 @@ function firstRunSetup(): void {
   //    работающую программу, а не пустой экран.
   if (settings.recent.length === 0) {
     try {
-      const p = createProject(projectsRoot, 'Демо-проект', sanitizeProject(createDemoProject()));
+      const p = createProject(projectsRoot, 'Демо-фонтан', sanitizeProject(createDemoProject()));
       fs.mkdirSync(p.audioDir, { recursive: true });
       fs.writeFileSync(path.join(p.audioDir, DEMO_AUDIO_FILE), generateDemoWav());
       openProject(p.dir);

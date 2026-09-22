@@ -748,7 +748,7 @@ export class Engine {
         : linkLost
           ? `выход не доставляет кадры приборам дольше ${this.failsafeConfig.timeoutSec} с`
           : calcLost
-            ? 'поток расчёта кадра встал или умер'
+            ? 'отдельный поток расчёта остановился'
             : '',
     );
   }

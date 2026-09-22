@@ -13,7 +13,7 @@ import { DEMO_TRACK_DURATION_MS } from './demoaudio';
 export const DEMO_AUDIO_FILE = 'demo-track.wav';
 
 export function createDemoProject(): Project {
-  const project = emptyProject('Демо-проект');
+  const project = emptyProject('Демо-фонтан');
 
   project.devices = [
     { id: 'demo-pump1', name: 'Насос 1', profileId: 'pump', universe: 1, address: 1 },

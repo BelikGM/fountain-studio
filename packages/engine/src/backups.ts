@@ -169,10 +169,10 @@ export class BackupStore {
   /** Содержимое снимка по имени файла; имя проверяется от выхода за пределы папки бэкапов. */
   read(file: string): unknown {
     if (file.includes('/') || file.includes('\\') || file.includes('..')) {
-      throw new Error('недопустимое имя файла бэкапа');
+      throw new Error('недопустимое имя резервной копии');
     }
     const full = path.join(this.dir, file);
-    if (!fs.existsSync(full)) throw new Error('бэкап не найден');
+    if (!fs.existsSync(full)) throw new Error('резервная копия не найдена');
     return JSON.parse(fs.readFileSync(full, 'utf8'));
   }
 

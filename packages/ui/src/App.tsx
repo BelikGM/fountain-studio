@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import { canEditShows, EXPIRY_WARNING_DAYS, daysUntilExpiry } from '@fountain-studio/shared';
+import { canEditShows, EXPIRY_WARNING_DAYS, daysUntilExpiry,
+  num,
+} from '@fountain-studio/shared';
 import { VENDOR_EMAIL } from './plans';
 import { comboFromEvent, getCombo } from './hotkeys';
 import { registerTabNavigator } from './navigate';
@@ -59,7 +61,7 @@ const TABS: { id: Tab; label: string; full: string }[] = [
   {
     id: 'console',
     label: 'Отладка',
-    full: 'Отладка — ручное управление на пусконаладке и тестах: фейдеры адресов и тест-сигналы DMX',
+    full: 'Отладка — ручное управление на пусконаладке и тестах: ползунок на каждый адрес и тест-сигналы',
   },
   // id остаётся 'patch' — он внутренний (data-tour, сохранённая вкладка,
   // ссылки в коде); меняется только то, что видит пользователь.
@@ -68,10 +70,10 @@ const TABS: { id: Tab; label: string; full: string }[] = [
     label: 'Оборудование',
     full: 'Оборудование — из чего состоит фонтан: насосы, клапаны, светильники и их DMX-адреса',
   },
-  { id: 'layout', label: '3D', full: '3D — схема фонтана и живая визуализация струй/света' },
-  { id: 'scenes', label: 'Сцены', full: 'Сцены — статичные картины по приборам (заготовки для остального)' },
+  { id: 'layout', label: '3D', full: '3D — схема фонтана: где стоят форсунки и прожекторы, и как вода и свет выглядят вживую' },
+  { id: 'scenes', label: 'Сцены', full: 'Сцены — застывшие картины: какое значение у каждого прибора. Из них собираются секвенсоры и шоу' },
   { id: 'sequences', label: 'Секвенсоры', full: 'Секвенсоры — сцены друг за другом по кругу или один раз' },
-  { id: 'show', label: 'Шоу', full: 'Шоу — таймлайн под музыку: одна музыкальная программа' },
+  { id: 'show', label: 'Шоу', full: 'Шоу — один номер под одну песню: сцены и кривые на шкале времени' },
   { id: 'playlists', label: 'Плейлисты', full: 'Плейлисты — несколько шоу подряд: программа целого вечера' },
   { id: 'schedule', label: 'Расписание', full: 'Расписание — автозапуск по времени и дням недели' },
   {
@@ -80,8 +82,8 @@ const TABS: { id: Tab; label: string; full: string }[] = [
     full: 'Поток — что уходит приборам и что приходит обратно: DMX по участкам пути и обмен RDM',
   },
   { id: 'network', label: 'Диагностика', full: 'Диагностика — исправность оборудования: отвечают ли узлы Art-Net и приборы' },
-  { id: 'remote', label: 'Внешние пульты', full: 'Внешние пульты — планшет (OSC/TouchOSC) и умный дом (MQTT)' },
-  { id: 'keys', label: 'Клавиатура', full: 'Клавиатура — запуск сцен/шоу нажатием клавиш компьютера' },
+  { id: 'remote', label: 'Внешние пульты', full: 'Внешние пульты — планшет (OSC), умный дом (MQTT) и сторонний DMX-пульт' },
+  { id: 'keys', label: 'Клавиатура', full: 'Клавиатура — запуск сцен и шоу клавишами компьютера' },
   { id: 'settings', label: 'Настройки', full: 'Настройки — вселенные DMX и такт отправки, звук, уведомления, резервные копии' },
 ];
 
@@ -118,7 +120,7 @@ const TOUR_STEPS: TourStepDef[] = [
     // сейчас вижу»: приложение открывается именно на Отладке, и раньше тур
     // молча уводил с него на «Оборудование», ничего про него не сказав.
     title: 'Отладка',
-    text: 'Вкладка, на которой открывается программа: ручное управление приборами — фейдеры по адресам, тест-сигналы и аварийный СТОП. Нужна на пусконаладке; чтобы собрать шоу, идите дальше.',
+    text: 'Вкладка, на которой открывается программа: ручное управление приборами — ползунок на каждый адрес, тест-сигналы и аварийный СТОП. Нужна на пусконаладке; чтобы собрать шоу, идите дальше.',
   },
   {
     tabId: 'patch',
@@ -133,7 +135,7 @@ const TOUR_STEPS: TourStepDef[] = [
   {
     tabId: 'scenes',
     title: 'Сцены',
-    text: 'Соберите базовые картины: общий максимум, дежурную подсветку, кольцо. Каждую проверяйте кнопкой «Просмотр на выходе».',
+    text: 'Соберите базовые картины: общий максимум, дежурную подсветку, кольцо. Каждую проверяйте кнопкой «Включить на приборах».',
   },
   {
     tabId: 'show',
@@ -415,10 +417,10 @@ export function App() {
         <button
           className={projectsOpen || noProject ? 'btn btn-small active' : 'btn btn-small'}
           style={{ marginLeft: 10 }}
-          data-hint="Объекты: открыть другой фонтан, создать новый или посмотреть, где лежит текущий."
+          data-hint="Объекты: открыть другой фонтан, создать новый или посмотреть, где лежит папка текущего."
           onClick={() => setProjectsOpen(!projectsOpen)}
         >
-          {engine.projects?.current ? `🏛 ${engine.projects.current.name}` : '🏛 Проекты'}
+          {engine.projects?.current ? `🏛 ${engine.projects.current.name}` : '🏛 Объекты'}
         </button>
         {/*
           Объект не открыт — переключать нечего: вкладки вели бы на пустые
@@ -595,15 +597,15 @@ export function App() {
             </span>
             <span
               data-hint={
-                `Ровность ОТПРАВКИ кадров приборам — именно её они и видят. Единицы мс — норма. ` +
-                `Расчёт кадра идёт отдельным тактом: у него avg ${stats.calcAvgJitterMs} мс, max ${stats.calcMaxJitterMs} мс — ` +
-                `если расчёт опоздает, отправщик повторит предыдущий кадр и поток не прервётся.`
+                `Насколько ровно уходят кадры приборам: на сколько такт в среднем отходит от заданных ${stats.intervalMs} мс. Единицы миллисекунд — норма. ` +
+                `Расчёт значений идёт отдельной очередью: у него в среднем ${num(stats.calcAvgJitterMs, 2)} мс, наибольшее ${num(stats.calcMaxJitterMs, 2)} мс — ` +
+                `если расчёт опоздает, в кабель уйдёт прошлый кадр, и поток не прервётся.`
               }
             >
-              джиттер avg {stats.avgJitterMs} мс
+              отклонение {num(stats.avgJitterMs, 2)} мс
             </span>
-            <span data-hint="Максимальное разовое отклонение такта с момента запуска движка">
-              max {stats.maxJitterMs} мс
+            <span data-hint="Наибольшее разовое отклонение такта с момента запуска движка">
+              наиб. {num(stats.maxJitterMs, 2)} мс
             </span>
             <span data-hint="Сколько DMX-кадров движок отправил на оборудование с момента запуска (все вселенные вместе)">
               кадров {stats.framesSent.toLocaleString('ru-RU')}
@@ -628,9 +630,14 @@ export function App() {
         return `шоу не играет · вручную: ${where}, ${manual.what} — ${when}`;
       };
               const text = active
-                ? `воспроизведение: ${playback.running.length} секв.${playback.activeSceneId !== null ? ' + сцена' : ''}${
-                    playback.show !== null ? ` + шоу (${playback.show.playing ? 'играет' : 'пауза'})` : ''
-                  }${playback.playlist !== null ? ` + плейлист №${playback.playlist.itemIndex + 1}` : ''}`
+                ? `играет: ${[
+                    playback.running.length > 0 ? `секвенсоров ${playback.running.length}` : '',
+                    playback.activeSceneId !== null ? 'сцена' : '',
+                    playback.show !== null ? `шоу${playback.show.playing ? '' : ' (на паузе)'}` : '',
+                    playback.playlist !== null ? `плейлист, пункт ${playback.playlist.itemIndex + 1}` : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' + ')}`
                 : manualText();
               // Приоритет перехода — от самого «внешнего» уровня автоматизации к
               // самому конкретному: плейлист уже включает в себя шоу и т.д.
@@ -656,12 +663,12 @@ export function App() {
                   {text}
                 </button>
               ) : (
-                <span data-hint="«Остановлено» — движок ничего не играет, каналы держат ручные значения пульта">{text}</span>
+                <span data-hint="Движок ничего не играет. Приборы держат значения, выставленные вручную на вкладке «Отладка»">{text}</span>
               );
             })()}
           </>
         ) : (
-          <span>ожидание статистики…</span>
+          <span>жду данные от движка…</span>
         )}
       </footer>
     </div>

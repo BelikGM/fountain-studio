@@ -178,7 +178,7 @@ export function ReaddressPanel({
             )}
           </span>
         ))}
-        <button className="btn btn-small" onClick={() => setOrder(DEFAULT_ORDER)} data-hint="Свет, насосы, клапаны">
+        <button className="btn btn-small" onClick={() => setOrder(DEFAULT_ORDER)} data-hint="Вернуть порядок по умолчанию: свет, насосы, клапаны">
           Сбросить
         </button>
       </div>

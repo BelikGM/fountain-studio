@@ -101,7 +101,7 @@ export function verifyLicenseFile(file: LicenseFile): LicenseCheck {
   if (file.payload.expiresAt) {
     const state = expiryState(file.payload.expiresAt);
     if (state.kind === 'expired') {
-      return { valid: false, reason: `Срок лицензии истёк ${file.payload.expiresAt}`, expired: true };
+      return { valid: false, reason: `Срок лицензии истёк ${new Date(file.payload.expiresAt).toLocaleDateString('ru-RU')}`, expired: true };
     }
     if (state.kind === 'grace') {
       return {

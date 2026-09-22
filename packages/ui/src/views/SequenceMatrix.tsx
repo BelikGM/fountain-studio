@@ -180,7 +180,7 @@ export function SequenceMatrix({
   };
 
   if (project.devices.length === 0) {
-    return <p className="dim">Нет приборов в патче — матрице нечего показывать.</p>;
+    return <p className="dim">Приборов пока нет — добавьте их на вкладке «Оборудование».</p>;
   }
   if (sequence.steps.length === 0) {
     return <p className="dim">В секвенсоре нет шагов — добавьте их в списке, затем вернитесь сюда.</p>;
@@ -217,7 +217,7 @@ export function SequenceMatrix({
             setRangeStart(null);
           }}
         >
-          Переход
+          Плавно
         </button>
         {tool !== 'edit' && (
           <span className="dim">{rangeStart ? 'Кликните вторую ячейку…' : 'Кликните первую ячейку диапазона'}</span>
@@ -231,7 +231,7 @@ export function SequenceMatrix({
               {sequence.steps.map((s, i) => (
                 <th key={i} className="matrix-colhead">
                   {i + 1}
-                  <span className="dim"> ({s.holdMs}мс)</span>
+                  <span className="dim"> ({s.holdMs} мс)</span>
                 </th>
               ))}
             </tr>
@@ -251,7 +251,7 @@ export function SequenceMatrix({
                     row.kind === 'color' ? (
                       <div className="matrix-swatch" style={{ background: rgbToHex(raw[0]!, raw[1]!, raw[2]!) }} />
                     ) : row.twoState ? (
-                      <span className={raw[0]! >= 128 ? 'ok-text' : 'dim'}>{raw[0]! >= 128 ? 'ОТКР' : 'ЗАКР'}</span>
+                      <span className={raw[0]! >= 128 ? 'ok-text' : 'dim'}>{raw[0]! >= 128 ? 'Откр' : 'Закр'}</span>
                     ) : (
                       <span>{raw[0]}</span>
                     );
@@ -278,7 +278,7 @@ export function SequenceMatrix({
                           className={raw[0]! >= 128 ? 'btn btn-small toggle-open' : 'btn btn-small toggle-closed'}
                           onClick={() => editCell(row, ci, rowUpdates(row, [raw[0]! >= 128 ? 0 : 255]))}
                         >
-                          {raw[0]! >= 128 ? 'ОТКР' : 'ЗАКР'}
+                          {raw[0]! >= 128 ? 'Откр' : 'Закр'}
                         </button>
                       ) : (
                         <input

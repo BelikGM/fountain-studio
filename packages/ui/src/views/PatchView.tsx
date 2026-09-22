@@ -31,13 +31,15 @@ import {
   type WizardRow,
   universeShort,
   nextUniverse,
+  countOf,
+  num,
 } from '@fountain-studio/shared';
 import { SmartSearch } from '../components/SmartSearch';
 /** Подписи видов оборудования — ими же ищем по типу. */
 const DEVICE_KIND_NAMES: Record<string, string> = {
   pump: 'Насос',
   valve: 'Клапан',
-  lamp: 'Светильник',
+  lamp: 'Свет',
   other: 'Прочее',
 };
 import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
@@ -51,11 +53,11 @@ const KIND_LABEL: Record<DeviceKind, string> = {
   pump: 'Насос',
   valve: 'Клапан',
   lamp: 'Свет',
-  other: 'Другое',
+  other: 'Прочее',
 };
 
 const ROLE_LABEL: Record<ChannelRole, string> = {
-  intensity: 'Яркость/мощность',
+  intensity: 'Уровень (яркость, скорость насоса)',
   red: 'Красный',
   green: 'Зелёный',
   blue: 'Синий',
@@ -72,7 +74,7 @@ export function PatchView({ engine }: { engine: EngineConnection }) {
   // не должно быть просто.
   const [remapOpen, setRemapOpen] = useState(false);
 
-  if (!project) return <main className="view">Ожидание проекта от движка…</main>;
+  if (!project) return <main className="view">Жду данные объекта от движка…</main>;
 
   const remapped = Object.values(project.addressRemap ?? {}).reduce((s, t) => s + Object.keys(t).length, 0);
 
@@ -82,7 +84,7 @@ export function PatchView({ engine }: { engine: EngineConnection }) {
         <h2>Переадресация каналов</h2>
         <p className="dim">
           Если монтаж не совпал со схемой — не правьте схему. Здесь задаётся, откуда каждый адрес DMX
-          берёт значение; проект, сцены и 3D-вид остаются как есть.
+          берёт значение; схема объекта, сцены и 3D-вид остаются как есть.
         </p>
         <div className="form-row">
           <button className="btn btn-small" onClick={() => setRemapOpen(true)}>
@@ -120,7 +122,7 @@ function ProjectHeader({ engine }: { engine: EngineConnection }) {
   const { project, updateProject } = engine;
   return (
     <section className="panel">
-      <h2>Проект</h2>
+      <h2>Объект</h2>
       <label className="field">
         Название:{' '}
         <input
@@ -164,7 +166,7 @@ function AddDevices({ engine }: { engine: EngineConnection }) {
       if (auto) {
         const free = nextFreeAddress(draft, universeId, size, cursor);
         if (free === null) {
-          setError(`Добавлено ${i} из ${count}: во вселенной нет свободного блока из ${size} адрес(ов)`);
+          setError(`Добавлено ${i} из ${count}: во вселенной нет ${size} свободных адресов подряд`);
           break;
         }
         address = free;
@@ -190,14 +192,14 @@ function AddDevices({ engine }: { engine: EngineConnection }) {
 
   return (
     <section className="panel">
-      <h2>Добавить устройства</h2>
+      <h2>Добавить приборы</h2>
       <div className="form-row">
         <label className="field">
           Тип:{' '}
           <select value={profileId} onChange={(e) => setProfileId(e.target.value)}>
             {profiles.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name} ({p.channels.length} адр.)
+                {p.name} — {countOf(p.channels.length, 'адрес', 'адреса', 'адресов')}
               </option>
             ))}
           </select>
@@ -224,7 +226,7 @@ function AddDevices({ engine }: { engine: EngineConnection }) {
           />
         </label>
         <label className="field">
-          <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> авто-адрес
+          <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> адреса подряд с первого свободного
         </label>
         {!auto && (
           <label className="field">
@@ -375,7 +377,7 @@ function DeviceWizard({ engine }: { engine: EngineConnection }) {
       <p className="dim">
         Несколько типов приборов сразу, одной адресацией: каждая следующая строка продолжает с того
         адреса, на котором остановилась предыдущая (в том числе переходя в следующую вселенную), если
-        не задан свой старт.
+        не задан свой начальный адрес.
       </p>
 
       {result ? (
@@ -399,10 +401,10 @@ function DeviceWizard({ engine }: { engine: EngineConnection }) {
           <table className="table">
             <thead>
               <tr>
-                <th>Профиль</th>
+                <th>Тип</th>
                 <th>Кол-во</th>
-                <th>Имя (префикс)</th>
-                <th>Свой старт</th>
+                <th data-hint="К имени добавится номер: «Насос» → «Насос 1», «Насос 2»…">Имя</th>
+                <th data-hint="Начать с заданной вселенной и адреса, а не с первого свободного">С адреса</th>
                 <th></th>
               </tr>
             </thead>
@@ -415,7 +417,7 @@ function DeviceWizard({ engine }: { engine: EngineConnection }) {
                       <select value={r.profileId} onChange={(e) => patchRow(r.key, { profileId: e.target.value })}>
                         {profiles.map((p) => (
                           <option key={p.id} value={p.id}>
-                            {p.name} ({p.channels.length} адр.)
+                            {p.name} — {countOf(p.channels.length, 'адрес', 'адреса', 'адресов')}
                           </option>
                         ))}
                       </select>
@@ -550,7 +552,7 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
       return;
     }
     const m = src.name.match(/^(.*?)(\d+)$/);
-    const name = m ? `${m[1]}${Number(m[2]) + 1}` : `${src.name} коп`;
+    const name = m ? `${m[1]}${Number(m[2]) + 1}` : `${src.name} (копия)`;
     const device: PatchedDevice = { ...src, id: uid(), name, address };
     updateProject({ ...project!, devices: [...project!.devices, device] });
   };
@@ -623,8 +625,8 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
       label: d.name,
       fields: [
         { field: 'Имя', value: d.name },
-        { field: 'Тип', value: DEVICE_KIND_NAMES[p?.kind ?? 'other'] ?? 'Прочее' },
-        { field: 'Профиль', value: p?.name ?? '' },
+        { field: 'Вид', value: DEVICE_KIND_NAMES[p?.kind ?? 'other'] ?? 'Прочее' },
+        { field: 'Тип', value: p?.name ?? '' },
         { field: 'Адрес', value: String(d.address) },
         { field: 'Вселенная', value: String(d.universe) },
       ],
@@ -642,7 +644,7 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
   return (
     <section className="panel">
       <h2 className="panel-head-row">
-        Устройства <span className="dim">({project!.devices.length})</span>
+        Приборы <span className="dim">({project!.devices.length})</span>
         {issues.collisions.size > 0 && (
           <span className="error-text"> ⚠ пересечения адресов: {issues.collisions.size}</span>
         )}
@@ -661,7 +663,7 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
             records={searchRecords}
             value={filter}
             onValue={setFilter}
-            hint="Поиск по всем свойствам прибора: имя, тип, профиль, адрес, вселенная. Находки разложены по тому полю, в котором совпало."
+            hint="Поиск по всем свойствам прибора: имя, вид, тип, адрес, вселенная. Находки разложены по тому полю, в котором совпало."
             onPick={(id) => {
               const d = project!.devices.find((x) => x.id === id);
               if (d) setFilter(d.name);
@@ -670,14 +672,14 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
         </span>
       )}
       {project!.devices.length === 0 ? (
-        <div className="dim">Пока пусто — добавьте устройства выше.</div>
+        <div className="dim">Пока пусто — добавьте приборы выше.</div>
       ) : sorted.length === 0 ? (
         <div className="dim">Ничего не найдено по «{filter}».</div>
       ) : (
         <>
           <div className="form-row">
-            <span className="dim" data-hint="Меняет адреса в самом проекте. Если схема верна, а перепутан монтаж — это не сюда, а в «Переадресацию каналов» выше">
-              Перепутаны или заменены приборы — обменять и сдвинуть адреса в проекте: отметьте устройства →
+            <span className="dim" data-hint="Меняет адреса в самой схеме объекта. Если схема верна, а перепутан монтаж — это не сюда, а в «Переадресацию каналов» выше">
+              Перепутаны или заменены приборы — обменять и сдвинуть адреса в схеме: отметьте приборы →
             </span>
             <button
               className="btn"
@@ -697,7 +699,7 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
               />
             </label>
             <button className="btn" disabled={selectedIds.length === 0 || shiftBy === 0} onClick={() => void doShift()}>
-              Сдвинуть адреса ({selectedIds.length} выбр.)
+              Сдвинуть адреса (выбрано {selectedIds.length})
             </button>
             {selectedIds.length > 0 && (
               <button className="btn btn-small" onClick={() => setSelected(new Set())}>
@@ -715,7 +717,7 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
               <tr>
                 <th></th>
                 <th>Имя</th>
-                <th data-hint="Тип оборудования — он задаёт набор каналов прибора. Раньше колонка называлась «профиль»: слово из мира светового оборудования, здесь оно только путало">
+                <th data-hint="Тип прибора — он задаёт, сколько у прибора каналов и что каждый из них значит">
                   Тип
                 </th>
                 <th>Вселенная</th>
@@ -792,7 +794,7 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                       className={(layoutUses.get(d.id) ?? 0) > 1 ? 'warn' : 'dim'}
                       data-hint={
                         (layoutUses.get(d.id) ?? 0) > 1
-                          ? 'Прибор привязан к нескольким элементам схемы — он звучит сразу во всех'
+                          ? 'Прибор привязан к нескольким элементам схемы — он работает сразу во всех'
                           : (layoutUses.get(d.id) ?? 0) === 0
                             ? 'Прибор не привязан ни к одному элементу 3D-схемы'
                             : 'Прибор привязан к одному элементу схемы'
@@ -800,10 +802,10 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                     >
                       {layoutUses.get(d.id) ?? 0}
                     </td>
-                    <td>
+                    <td className="cell-actions">
                       <button
                         className={d.trim ? 'btn btn-small active' : 'btn btn-small'}
-                        data-hint="Калибровка min/max по каналам"
+                        data-hint="Калибровка: нижняя и верхняя граница каждого канала"
                         onClick={() => setTrimOpenId(trimOpen ? null : d.id)}
                       >
                         ⚙
@@ -811,7 +813,7 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                       {profile?.kind === 'pump' && (
                         <button
                           className={d.modbus ? 'btn btn-small active' : 'btn btn-small'}
-                          data-hint="Прямое управление через Modbus (ПЧ), в обход DMX→аналог"
+                          data-hint="Управлять частотником (ПЧ) насоса напрямую по Modbus, минуя DMX"
                           onClick={() => setModbusOpenId(modbusOpen ? null : d.id)}
                         >
                           ПЧ
@@ -887,11 +889,11 @@ function TrimEditor({
   return (
     <div className="trim-editor">
       <span className="dim">
-        Калибровка «{device.name}»: 0 остаётся 0 (выключено), 1–255 растягиваются в min–max выхода.
+        Калибровка «{device.name}»: 0 так и остаётся нулём (выключено), а 1–255 укладываются между нижней и верхней границей ниже.
       </span>
       {profile.channels.map((c, k) => (
         <label className="field" key={k}>
-          {c.name}: min{' '}
+          {c.name}: от{' '}
           <input
             className="input input-num"
             type="number"
@@ -900,7 +902,7 @@ function TrimEditor({
             value={trim[k]!.min}
             onChange={(e) => set(k, { min: Number(e.target.value) })}
           />{' '}
-          max{' '}
+          до{' '}
           <input
             className="input input-num"
             type="number"
@@ -923,7 +925,7 @@ function TrimEditor({
 /** Дефолты — карта регистров Elhart EMD-PUMP (github.com/BelikGM/Modbus); для другого ПЧ сверить с его картой. */
 function defaultModbusConfig(): ModbusPumpConfig {
   return {
-    connection: { kind: 'tcp', host: '192.168.0.', port: 502 },
+    connection: { kind: 'tcp', host: '', port: 502 },
     unitId: 1,
     freqRegister: 8193,
     freqRegScale: 100,
@@ -982,7 +984,7 @@ function ModbusEditor({
           checked={enabled}
           onChange={(e) => onChange(e.target.checked ? config : undefined)}
         />{' '}
-        Управлять «{device.name}» напрямую по Modbus (ПЧ), в обход DMX→аналог
+        Управлять частотником (ПЧ) «{device.name}» напрямую по Modbus, минуя DMX
       </label>
       {enabled && (
         <>
@@ -1004,9 +1006,9 @@ function ModbusEditor({
               Здоровье насоса:{' '}
               <b className={status.connected ? '' : 'error-text'}>{status.connected ? 'на связи' : 'нет связи'}</b>
               {' · '}уставка {status.lastFreqHz} Гц
-              {status.currentA !== null && ` · ток ${status.currentA.toFixed(1)} А`}
-              {status.speedRpm !== null && ` · выход ${status.speedRpm.toFixed(1)} Гц`}
-              {status.tempC !== null && ` · ${status.tempC.toFixed(1)} °C`}
+              {status.currentA !== null && ` · ток ${num(status.currentA, 1)} А`}
+              {status.speedRpm !== null && ` · ${Math.round(status.speedRpm)} об/мин`}
+              {status.tempC !== null && ` · ${num(status.tempC, 1)} °C`}
               {status.faultCode !== null && status.faultCode !== 0 && (
                 <span className="error-text"> · авария, код {status.faultCode}</span>
               )}
@@ -1017,16 +1019,8 @@ function ModbusEditor({
       )}
       {enabled && (
         <>
-          {status && (
-            <div className={status.faultCode ? 'error-text' : 'dim'}>
-              {status.connected ? '✔ на связи' : '✖ нет связи'} · уставка {status.lastFreqHz.toFixed(1)} Гц
-              {status.currentA !== null ? ` · ${status.currentA.toFixed(2)} А` : ''}
-              {status.speedRpm !== null ? ` · ${Math.round(status.speedRpm)} об/мин` : ''}
-              {status.tempC !== null ? ` · ${status.tempC.toFixed(1)}°C` : ''}
-              {status.faultCode ? ` · АВАРИЯ, код ${status.faultCode}` : ''}
-              {status.lastError ? ` · ${status.lastError}` : ''}
-            </div>
-          )}
+          {/* Строка здоровья насоса — одна, выше, у выбора модели ПЧ. Здесь была
+              её копия, и в одной из двух обороты были подписаны герцами. */}
           <div className="form-row">
             <label className="field">
               Подключение:{' '}
@@ -1036,7 +1030,7 @@ function ModbusEditor({
                   set({
                     connection:
                       e.target.value === 'tcp'
-                        ? { kind: 'tcp', host: '192.168.0.', port: 502 }
+                        ? { kind: 'tcp', host: '', port: 502 }
                         : { kind: 'rtu', serialPort: 'COM5', baudRate: 9600 },
                   })
                 }
@@ -1046,7 +1040,7 @@ function ModbusEditor({
               </select>
             </label>
             <label className="field">
-              Адрес прибора (unitId):{' '}
+              Адрес ПЧ в сети Modbus:{' '}
               <input
                 className="input input-num"
                 type="number"
@@ -1061,7 +1055,7 @@ function ModbusEditor({
             <div className="form-row">
               <label className="field">
                 IP шлюза:{' '}
-                <input className="input" value={config.connection.host} onChange={(e) => setTcp({ host: e.target.value })} />
+                <input className="input" value={config.connection.host} placeholder="192.168.0.10" onChange={(e) => setTcp({ host: e.target.value })} />
               </label>
               <label className="field">
                 Порт:{' '}
@@ -1085,7 +1079,7 @@ function ModbusEditor({
                 />
               </label>
               <label className="field">
-                Скорость:{' '}
+                Скорость порта, бод:{' '}
                 <input
                   className="input input-num"
                   type="number"
@@ -1117,7 +1111,7 @@ function ModbusEditor({
               />
             </label>
             <label className="field">
-              Единиц регистра/Гц:{' '}
+              Единиц регистра на 1 Гц:{' '}
               <input
                 className="input input-num"
                 type="number"
@@ -1135,7 +1129,8 @@ function ModbusEditor({
                 type="number"
                 min={0}
                 value={config.cmdRegister ?? ''}
-                placeholder="не задан — без команды"
+                placeholder="—"
+                data-hint="Пусто — пуск и стоп не посылаются, насос управляется только уставкой частоты"
                 onChange={(e) => set({ cmdRegister: e.target.value === '' ? undefined : Number(e.target.value) })}
               />
             </label>
@@ -1146,14 +1141,15 @@ function ModbusEditor({
                 type="number"
                 min={0}
                 value={config.faultRegister ?? ''}
-                placeholder="не задан — без опроса"
+                placeholder="—"
+                data-hint="Пусто — код аварии не опрашивается"
                 onChange={(e) => set({ faultRegister: e.target.value === '' ? undefined : Number(e.target.value) })}
               />
             </label>
           </div>
           <p className="dim" style={{ marginTop: 4 }}>
-            Телеметрия (§27 доработки, §4 п.2) — панель здоровья насоса; поле пустое — регистр не опрашивается.
-            Опрашивается тем же циклом, что и авария (раз в 3 с).
+            Телеметрия — что показывать в строке «Здоровье насоса». Пустое поле — этот регистр не опрашивается.
+            Опрос раз в 3 с, вместе с кодом аварии.
           </p>
           <div className="form-row">
             <label className="field">
@@ -1163,12 +1159,13 @@ function ModbusEditor({
                 type="number"
                 min={0}
                 value={config.currentRegister ?? ''}
-                placeholder="не задан"
+                placeholder="—"
+                data-hint="Пусто — этот регистр не опрашивается"
                 onChange={(e) => set({ currentRegister: e.target.value === '' ? undefined : Number(e.target.value) })}
               />
             </label>
             <label className="field">
-              Единиц регистра/А:{' '}
+              Единиц регистра на 1 А:{' '}
               <input
                 className="input input-num"
                 type="number"
@@ -1187,12 +1184,13 @@ function ModbusEditor({
                 type="number"
                 min={0}
                 value={config.speedRegister ?? ''}
-                placeholder="не задан"
+                placeholder="—"
+                data-hint="Пусто — этот регистр не опрашивается"
                 onChange={(e) => set({ speedRegister: e.target.value === '' ? undefined : Number(e.target.value) })}
               />
             </label>
             <label className="field">
-              Единиц регистра/об·мин:{' '}
+              Единиц регистра на 1 об/мин:{' '}
               <input
                 className="input input-num"
                 type="number"
@@ -1211,12 +1209,13 @@ function ModbusEditor({
                 type="number"
                 min={0}
                 value={config.tempRegister ?? ''}
-                placeholder="не задан"
+                placeholder="—"
+                data-hint="Пусто — этот регистр не опрашивается"
                 onChange={(e) => set({ tempRegister: e.target.value === '' ? undefined : Number(e.target.value) })}
               />
             </label>
             <label className="field">
-              Единиц регистра/°C:{' '}
+              Единиц регистра на 1 °C:{' '}
               <input
                 className="input input-num"
                 type="number"
@@ -1228,7 +1227,7 @@ function ModbusEditor({
             </label>
           </div>
           <span className="dim">
-            Дефолты полей — карта регистров Elhart EMD-PUMP: 8193 = уставка частоты (сотые Гц), 8192 = команда
+            Значения по умолчанию — карта регистров Elhart EMD-PUMP: 8193 = уставка частоты (сотые Гц), 8192 = команда
             (2=пуск, 1=стоп), 10 = код последней аварии. Для другой модели ПЧ (и телеметрии) сверьте с её картой
             регистров.
           </span>
@@ -1277,7 +1276,7 @@ function Profiles({
 
   return (
     <section className="panel">
-      <h2>Профили устройств</h2>
+      <h2>Типы приборов</h2>
       <table className="table">
         <thead>
           <tr>
@@ -1294,7 +1293,7 @@ function Profiles({
               <tr key={p.id}>
                 <td>
                   {p.name} {p.builtin && <span className="badge">встроенный</span>}
-                  {p.twoState && <span className="badge">2-позиц.</span>}
+                  {p.twoState && <span className="badge" data-hint="Только два положения: 0 или 255 — как у клапана">2 положения</span>}
                 </td>
                 <td>{KIND_LABEL[p.kind]}</td>
                 <td className="dim">{p.channels.map((c) => c.name).join(', ')}</td>
@@ -1303,7 +1302,7 @@ function Profiles({
                     <button
                       className="btn btn-small"
                       disabled={used}
-                      data-hint={used ? 'Профиль используется устройствами' : 'Удалить'}
+                      data-hint={used ? 'Этот тип стоит у приборов — сначала смените им тип' : 'Удалить'}
                       onClick={() => removeProfile(p.id)}
                     >
                       ✕
@@ -1316,7 +1315,7 @@ function Profiles({
         </tbody>
       </table>
 
-      <h3>Новый профиль</h3>
+      <h3>Новый тип прибора</h3>
       <div className="form-row">
         <label className="field">
           Название:{' '}
@@ -1334,7 +1333,7 @@ function Profiles({
         </label>
         <label className="field">
           <input type="checkbox" checked={twoState} onChange={(e) => setTwoState(e.target.checked)} />{' '}
-          двухпозиционный (0/255)
+          только два положения: 0 или 255 (как клапан)
         </label>
       </div>
       <div className="channels-editor">
@@ -1377,7 +1376,7 @@ function Profiles({
             + канал
           </button>
           <button className="btn active" onClick={createProfile} disabled={name.trim() === ''}>
-            Создать профиль
+            Создать тип
           </button>
         </div>
       </div>

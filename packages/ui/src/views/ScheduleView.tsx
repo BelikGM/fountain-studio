@@ -19,7 +19,7 @@ const DAYS: { d: number; label: string }[] = [
  */
 export function ScheduleView({ engine }: { engine: EngineConnection }) {
   const { project, updateProject } = engine;
-  if (!project) return <main className="view">Ожидание проекта от движка…</main>;
+  if (!project) return <main className="view">Жду данные объекта от движка…</main>;
 
   const schedule = project.schedule;
 
@@ -81,8 +81,8 @@ export function ScheduleView({ engine }: { engine: EngineConnection }) {
         <h2>Расписание фонтана</h2>
         <p className="dim">
           Действия запускаются по системным часам этого ПК, пока работает движок. Дни не отмечены —
-          каждый день. Время можно с секундами. Для работы без открытого редактора и автозапуска
-          после перезагрузки настройте службу (README, раздел «Автозапуск»).
+          каждый день. Время можно с секундами. Движок играет расписание и с закрытым редактором; чтобы
+          он сам поднимался после перезагрузки компьютера, включите «Автозапуск» в «Настройках».
         </p>
 
         <table className="table">
@@ -111,7 +111,7 @@ export function ScheduleView({ engine }: { engine: EngineConnection }) {
                   <input
                     className="input"
                     style={{ width: 140 }}
-                    placeholder="например, Вечерний запуск"
+                    placeholder="Вечерний запуск"
                     value={e.name}
                     onChange={(ev) => patch(e.id, { name: ev.target.value })}
                   />

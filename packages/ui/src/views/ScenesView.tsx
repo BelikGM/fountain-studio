@@ -21,6 +21,8 @@ import {
   type Sequence,
   type WaveSceneOptions,
   universeShort,
+  countOf,
+  num,
 } from '@fountain-studio/shared';
 import { ListFilter } from '../components/ListFilter';
 import { PencilIcon, PlayIcon, StopIcon, TrashIcon } from '../components/Icons';
@@ -59,7 +61,7 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
     }
   }, [scenes, selectedId]);
 
-  if (!project) return <main className="view">Ожидание проекта от движка…</main>;
+  if (!project) return <main className="view">Жду данные объекта от движка…</main>;
 
   const addScene = (): void => {
     const scene: Scene = { id: uid(), name: `Сцена ${project.scenes.length + 1}`, values: {} };
@@ -206,7 +208,7 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
                 ) : (
                   <span className="list-item-name">{s.name}</span>
                 )}
-                {playback.activeSceneId === s.id && <span className="badge badge-live">в эфире</span>}
+                {playback.activeSceneId === s.id && <span className="badge badge-live">играет</span>}
               </span>
               <span className="list-item-actions">
                 <button
@@ -251,15 +253,15 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
                 onClick={() => send({ type: 'setScene', sceneId: previewActive ? null : selected.id })}
               >
                 {previewActive ? <StopIcon /> : <PlayIcon />}
-                {previewActive ? 'Снять с выхода' : 'Просмотр на выходе'}
+                {previewActive ? 'Выключить на приборах' : 'Включить на приборах'}
               </button>
-              <button className="btn" onClick={captureFromConsole} data-hint="Записать в сцену текущие значения консоли">
-                Снять значения с пульта
+              <button className="btn" onClick={captureFromConsole} data-hint="Записать в сцену то, что сейчас выставлено вручную на вкладке «Отладка»">
+                Взять значения с «Отладки»
               </button>
               <button
                 className={showGenerator ? 'btn btn-small active' : 'btn btn-small'}
                 onClick={() => setShowGenerator(!showGenerator)}
-                data-hint="Генерация сцен от геометрии схемы: инверсия, зеркало, волна по кольцу"
+                data-hint="Создать сцены по расстановке на 3D-схеме: наоборот, зеркало, волна по кольцу"
               >
                 ⚡ Генератор
               </button>
@@ -268,7 +270,7 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
                 className={mode === 'devices' ? 'btn btn-small active' : 'btn btn-small'}
                 onClick={() => setMode('devices')}
               >
-                Устройства
+                Приборы
               </button>
               <button
                 className={mode === 'addresses' ? 'btn btn-small active' : 'btn btn-small'}
@@ -287,7 +289,7 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
               />
             )}
             {project.devices.length === 0 ? (
-              <div className="dim">В патче нет устройств — добавьте их на вкладке «Оборудование».</div>
+              <div className="dim">Приборов пока нет — добавьте их на вкладке «Оборудование».</div>
             ) : mode === 'addresses' ? (
               <AddressPages engine={engine} project={project} scene={selected} onChange={updateScene} />
             ) : (
@@ -376,7 +378,7 @@ function GeneratorPanel({
     const scenes = radialWaveSequenceScenes(actors, project.devices, profiles, steps, { cycles, min, max, mode: waveMode });
     const sequence: Sequence = {
       id: uid(),
-      name: `Волна (${steps} шаг.)`,
+      name: `Волна (${countOf(steps, 'шаг', 'шага', 'шагов')})`,
       mode: 'loop',
       steps: scenes.map((s) => ({ sceneId: s.id, holdMs, fadeMs })),
     };
@@ -393,7 +395,7 @@ function GeneratorPanel({
     if (scenes.length === 0) return;
     const sequence: Sequence = {
       id: uid(),
-      name: `${name} (${scenes.length} шаг.)`,
+      name: `${name} (${countOf(scenes.length, 'шаг', 'шага', 'шагов')})`,
       mode: 'loop',
       steps: scenes.map((s) => ({ sceneId: s.id, holdMs, fadeMs })),
     };
@@ -418,7 +420,7 @@ function GeneratorPanel({
     const snap = await engine.requestDmxCapture(captureUniverse);
     if (!snap) {
       setCaptureStatus(
-        'Захвата нет: внешний источник должен слать Art-Net на этот ПК (порт 6454 занят движком — мониторинг сети активен?).',
+        'Ничего не пришло: сторонний пульт должен слать Art-Net на этот компьютер. Проверьте, что он включён и в нём указан адрес этого ПК.',
       );
       return;
     }
@@ -432,14 +434,14 @@ function GeneratorPanel({
       devicesCovered++;
     }
     if (devicesCovered === 0) {
-      setCaptureStatus('В патче нет устройств этой вселенной — значения снимать некуда.');
+      setCaptureStatus('На этой вселенной нет приборов — значения снимать некуда.');
       return;
     }
     const scene: Scene = { id: uid(), name: `Со входа Art-Net (вселенная ${captureUniverse})`, values };
     updateProject({ ...project, scenes: [...project.scenes, scene] });
     setSelectedId(scene.id);
     setCaptureStatus(
-      `Снята сцена со входа Art-Net: ${devicesCovered} устройств, источник ${snap.fromIp}, кадру ${Math.round(snap.ageMs / 1000)} с (записано кадров: ${snap.frames}).`,
+      `Снята сцена со входа Art-Net: приборов ${devicesCovered}, источник ${snap.fromIp}, кадр получен ${Math.round(snap.ageMs / 1000)} с назад (всего кадров: ${snap.frames}).`,
     );
   };
 
@@ -449,13 +451,13 @@ function GeneratorPanel({
     if (m.periodMs === null) {
       setCaptureStatus(
         m.analyzedMs < 2000
-          ? `Мало данных для измерения (записано ${(m.analyzedMs / 1000).toFixed(1)} с) — дайте источнику повещать подольше.`
-          : `Период не найден (запись ${(m.analyzedMs / 1000).toFixed(1)} с): поток не повторяется или цикл длиннее половины записи.`,
+          ? `Мало данных для измерения (записано ${num(m.analyzedMs / 1000, 1)} с) — пусть сторонний пульт поработает подольше.`
+          : `Период не найден (запись ${num(m.analyzedMs / 1000, 1)} с): поток не повторяется или цикл длиннее половины записи.`,
       );
       return;
     }
     setCaptureStatus(
-      `Период цикла T ≈ ${(m.periodMs / 1000).toFixed(1)} с (уверенность ${(m.confidence * 100).toFixed(0)}%, запись ${(m.analyzedMs / 1000).toFixed(0)} с).`,
+      `Период цикла ≈ ${num(m.periodMs / 1000, 1)} с (уверенность ${(m.confidence * 100).toFixed(0)}%, запись ${(m.analyzedMs / 1000).toFixed(0)} с).`,
     );
   };
 
@@ -463,7 +465,7 @@ function GeneratorPanel({
     <div className="trim-editor">
       <div className="form-row">
         <label className="field">
-          Геометрия по роли:{' '}
+          Брать из схемы:{' '}
           <select value={role} onChange={(e) => setRole(e.target.value as ActorRole)}>
             {(Object.keys(ROLE_LABEL) as ActorRole[]).map((r) => (
               <option key={r} value={r}>
@@ -474,8 +476,8 @@ function GeneratorPanel({
         </label>
         <span className="dim">
           {actors.length === 0
-            ? 'нет устройств с координатами — расставьте их на вкладке «3D»'
-            : `${actors.length} устройств с координатами в схеме`}
+            ? 'на схеме нет таких элементов — расставьте их на вкладке «3D»'
+            : `на схеме: ${actors.length}`}
         </span>
       </div>
 
@@ -493,7 +495,7 @@ function GeneratorPanel({
       </div>
 
       <div className="form-row">
-        <span className="dim">Волна по фигуре (только насосы/клапаны/диммеры — одноканальные):</span>
+        <span className="dim">Волна по фигуре — для одноканальных приборов (насосы, клапаны, одноканальный свет):</span>
         <label className="field">
           Раскладка:{' '}
           <select value={waveMode} onChange={(e) => setWaveMode(e.target.value as typeof waveMode)}>
@@ -514,7 +516,7 @@ function GeneratorPanel({
           />
         </label>
         <label className="field">
-          Мин:{' '}
+          От:{' '}
           <input
             className="input input-num"
             type="number"
@@ -525,7 +527,7 @@ function GeneratorPanel({
           />
         </label>
         <label className="field">
-          Макс:{' '}
+          До:{' '}
           <input
             className="input input-num"
             type="number"
@@ -541,7 +543,7 @@ function GeneratorPanel({
       </div>
 
       <div className="form-row">
-        <span className="dim">Бегущая волна/погоня — секвенсор из шагов со сдвигом фазы:</span>
+        <span className="dim">Бегущая волна — секвенсор, в котором волна по шагам обходит фигуру:</span>
         <label className="field">
           Шагов:{' '}
           <input
@@ -564,7 +566,7 @@ function GeneratorPanel({
           />
         </label>
         <label className="field">
-          Фейд, мс:{' '}
+          Переход, мс:{' '}
           <input
             className="input input-num"
             type="number"
@@ -580,18 +582,18 @@ function GeneratorPanel({
 
       <div className="form-row">
         <span className="dim">
-          Библиотека эффектов — те же «Шагов/Держать/Фейд» выше, секвенсор «по кругу»:
+          Готовые эффекты — берут «Шагов», «Держать» и «Переход» выше и создают секвенсор по кругу:
         </span>
-        <button className="btn" disabled={actors.length === 0} onClick={doRainbow} data-hint="Только светильники RGB/RGBW — оттенок по фазе фигуры, вращается по шагам">
+        <button className="btn" disabled={actors.length === 0} onClick={doRainbow} data-hint="Только светильники RGB и RGBW — цвет меняется по кругу фигуры и вращается по шагам">
           🌈 Радуга
         </button>
-        <button className="btn" disabled={actors.length === 0} onClick={doBreathing} data-hint="Одноканальные устройства — все разом плавно вдох-выдох">
+        <button className="btn" disabled={actors.length === 0} onClick={doBreathing} data-hint="Одноканальные приборы — все разом плавно разгораются и гаснут">
           🫁 Дыхание
         </button>
-        <button className="btn" disabled={actors.length === 0} onClick={doCascade} data-hint="Одноканальные устройства — узкая бегущая полоса вдоль фигуры">
+        <button className="btn" disabled={actors.length === 0} onClick={doCascade} data-hint="Одноканальные приборы — узкая полоса бежит вдоль фигуры">
           🌊 Каскад
         </button>
-        <button className="btn" disabled={actors.length === 0} onClick={doSalute} data-hint="Одноканальные устройства — случайные вспышки">
+        <button className="btn" disabled={actors.length === 0} onClick={doSalute} data-hint="Одноканальные приборы — случайные вспышки">
           🎆 Салют
         </button>
         <label className="field">
@@ -624,7 +626,7 @@ function GeneratorPanel({
         <button className="btn" onClick={() => void doCaptureScene()}>
           Снять сцену со входа
         </button>
-        <button className="btn" onClick={() => void doMeasureCycle()} data-hint="Период повторения T захваченного потока">
+        <button className="btn" onClick={() => void doMeasureCycle()} data-hint="Через сколько секунд повторяется программа, которую шлёт сторонний пульт">
           Измерить период цикла
         </button>
       </div>
@@ -780,8 +782,9 @@ function DeviceCard({
     <div className="device-card">
       <div className="device-card-head">
         <span className="device-name">{device.name}</span>
+        {/* «U1:5» было записью для своих: пишем словами, вселенную — если не первая. */}
         <span className="dim">
-          U{device.universe}:{device.address}
+          {device.universe !== 1 ? `вселенная ${device.universe}, ` : ''}адрес {device.address}
         </span>
       </div>
 
@@ -792,7 +795,7 @@ function DeviceCard({
             className={val(i) >= 128 ? 'btn toggle-open' : 'btn toggle-closed'}
             onClick={() => setVal(i, val(i) >= 128 ? 0 : 255)}
           >
-            {c.name}: {val(i) >= 128 ? 'ОТКРЫТ' : 'ЗАКРЫТ'}
+            {c.name}: {val(i) >= 128 ? 'открыт' : 'закрыт'}
           </button>
         ))
       ) : (

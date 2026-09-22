@@ -59,11 +59,18 @@ export class PumpModbusManager {
 
   private readonly transports = new Map<string, { transport: ModbusTransport; refCount: number }>();
   private readonly pumps = new Map<string, PumpEntry>();
+  /**
+   * Имена приборов для журнала. Раньше в журнал и в Telegram шло «насос
+   * «k3j2h4»» — внутренний код прибора вместо имени, которое видит человек.
+   */
+  private readonly names = new Map<string, string>();
   private faultTimer: NodeJS.Timeout | null = null;
 
   setDevices(devices: PatchedDevice[]): void {
     const wanted = new Map<string, ModbusPumpConfig>();
     for (const d of devices) if (d.modbus) wanted.set(d.id, d.modbus);
+    this.names.clear();
+    for (const d of devices) this.names.set(d.id, d.name);
 
     for (const [id, entry] of this.pumps) {
       const cfg = wanted.get(id);
@@ -185,10 +192,10 @@ export class PumpModbusManager {
             entry.lastError = null;
             if (changed) {
               if (code !== 0) {
-                eventLog.log('modbus', `насос «${deviceId}»: код аварии ${code}`, 'error');
+                eventLog.log('modbus', `насос «${this.names.get(deviceId) ?? deviceId}»: код аварии ${code}`, 'error');
                 this.onAlarm?.(deviceId, code);
               } else if (prevCode) {
-                eventLog.log('modbus', `насос «${deviceId}»: авария снята (было ${prevCode})`, 'info', 'recovery');
+                eventLog.log('modbus', `насос «${this.names.get(deviceId) ?? deviceId}»: авария снята (было ${prevCode})`, 'info', 'recovery');
               }
               this.onChange?.();
             }

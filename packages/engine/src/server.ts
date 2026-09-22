@@ -360,27 +360,27 @@ export function startServer(
           if (msg.discard) store.discard();
 
           if (msg.type === 'openProject') {
-            const r = projects?.open(msg.dir) ?? { ok: false, error: 'управление проектами недоступно' };
+            const r = projects?.open(msg.dir) ?? { ok: false, error: 'управление объектами недоступно' };
             ws.send(
               JSON.stringify({
                 type: 'projectResult',
                 ok: r.ok,
-                message: r.ok ? 'Проект открыт' : (r.error ?? 'Не удалось открыть проект'),
+                message: r.ok ? 'Объект открыт' : (r.error ?? 'Не удалось открыть объект'),
               } satisfies ServerMessage),
             );
             if (r.ok) broadcastProjectSwitched();
           } else if (msg.type === 'createProject') {
-            const r = projects?.create(msg.name, msg.parentDir) ?? { ok: false, error: 'управление проектами недоступно' };
+            const r = projects?.create(msg.name, msg.parentDir) ?? { ok: false, error: 'управление объектами недоступно' };
             ws.send(
               JSON.stringify({
                 type: 'projectResult',
                 ok: r.ok,
-                message: r.ok ? `Создан проект «${msg.name}»` : (r.error ?? 'Не удалось создать проект'),
+                message: r.ok ? `Создан объект «${msg.name}»` : (r.error ?? 'Не удалось создать объект'),
               } satisfies ServerMessage),
             );
             if (r.ok) broadcastProjectSwitched();
           } else if (msg.type === 'copyProject') {
-            const r = projects?.copy(msg.name, msg.parentDir) ?? { ok: false, error: 'управление проектами недоступно' };
+            const r = projects?.copy(msg.name, msg.parentDir) ?? { ok: false, error: 'управление объектами недоступно' };
             ws.send(
               JSON.stringify({
                 type: 'projectResult',
@@ -577,7 +577,7 @@ export function startServer(
           try {
             const entries = readZip(Buffer.from(msg.dataBase64, 'base64'));
             const projectEntry = entries.find((e) => e.name === 'project.json');
-            if (!projectEntry) throw new Error('в архиве нет project.json — это не экспорт проекта Fountain Studio');
+            if (!projectEntry) throw new Error('в архиве нет project.json — это не файл объекта Fountain Studio');
             const project = sanitizeProject(JSON.parse(projectEntry.data.toString('utf8')));
             for (const e of entries) {
               if (!e.name.startsWith('audio/')) continue;
@@ -631,7 +631,7 @@ export function startServer(
               JSON.stringify({
                 type: 'importResult',
                 ok: true,
-                message: `Импортирован проект «${project.name}»`
+                message: `Загружен объект «${project.name}»`
                   + (linesApplied > 0 ? `, вселенных DMX: ${linesApplied}` : ''),
               } satisfies ServerMessage),
             );
@@ -671,7 +671,7 @@ export function startServer(
         case 'setReferenceBackup':
           if (!backups) break;
           backups.setReference();
-          eventLog.log('server', 'эталонный снимок проекта обновлён');
+          eventLog.log('server', 'эталонная резервная копия объекта обновлена');
           broadcast(backupListMessage());
           break;
         case 'updateTelegram': {
@@ -718,9 +718,9 @@ export function startServer(
             engine.setProject(project);
             broadcast({ type: 'project', project });
             broadcastPlayback();
-            eventLog.log('server', `проект восстановлен из бэкапа ${msg.file}`);
+            eventLog.log('server', `объект восстановлен из резервной копии ${msg.file}`);
           } catch (err) {
-            eventLog.log('server', `не удалось восстановить бэкап: ${err instanceof Error ? err.message : String(err)}`, 'error');
+            eventLog.log('server', `не удалось восстановить резервную копию: ${err instanceof Error ? err.message : String(err)}`, 'error');
           }
           break;
         }

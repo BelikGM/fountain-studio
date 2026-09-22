@@ -53,7 +53,7 @@ fs.mkdirSync(appData, { recursive: true });
 {
   check('имя чистится от запрещённых символов', safeFolderName('Саки: пруд/фонтан?') === 'Саки пруд фонтан');
   check('дефис в имени сохраняется', safeFolderName('Демо-проект') === 'Демо-проект', safeFolderName('Демо-проект'));
-  check('пустое имя не ломает', safeFolderName('   ') === 'Новый проект');
+  check('пустое имя не ломает', safeFolderName('   ') === 'Новый объект');
   check('точка в конце убирается (Windows)', !safeFolderName('Объект.').endsWith('.'));
 }
 

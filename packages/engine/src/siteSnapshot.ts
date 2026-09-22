@@ -17,7 +17,7 @@ function mmss(ms: number): string {
 }
 
 function nameOf(list: { id: string; name: string }[], id: string): string {
-  return list.find((x) => x.id === id)?.name ?? 'удалено из проекта';
+  return list.find((x) => x.id === id)?.name ?? 'удалено из объекта';
 }
 
 /** Что делает запись расписания — словами, с именами из проекта. */
@@ -33,7 +33,7 @@ function actionText(p: Project, e: ScheduleEntry): string {
     case 'sequenceGroup':
       return `группа секвенсоров «${nameOf(p.sequenceGroups, a.refId)}»`;
     case 'scene':
-      return `картина «${nameOf(p.scenes, a.refId)}»`;
+      return `сцена «${nameOf(p.scenes, a.refId)}»`;
     case 'stopAll':
       return 'полная остановка';
   }
@@ -107,7 +107,7 @@ export function buildSiteSnapshot(deps: {
         ? `секвенсор «${nameOf(p.sequences, pb.running[0]!.sequenceId)}»`
         : `секвенсоров: ${pb.running.length}`;
   }
-  if (!playNow && pb.activeSceneId) playNow = `картина «${nameOf(p.scenes, pb.activeSceneId)}»`;
+  if (!playNow && pb.activeSceneId) playNow = `сцена «${nameOf(p.scenes, pb.activeSceneId)}»`;
 
   const stats = deps.engine.stats();
   const net = deps.net();

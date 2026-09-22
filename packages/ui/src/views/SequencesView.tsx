@@ -7,6 +7,7 @@ import {
   type SequenceGroup,
   type SequenceStep,
   SMOOTHNESS_DEFAULT,
+  num,
 } from '@fountain-studio/shared';
 import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
 import { ListFilter } from '../components/ListFilter';
@@ -37,7 +38,7 @@ export function SequencesView({ engine }: { engine: EngineConnection }) {
     }
   }, [sequences, selectedId]);
 
-  if (!project) return <main className="view">Ожидание проекта от движка…</main>;
+  if (!project) return <main className="view">Жду данные объекта от движка…</main>;
 
   const addSequence = (): void => {
     const seq: Sequence = { id: uid(), name: `Секвенсор ${project.sequences.length + 1}`, mode: 'loop', steps: [] };
@@ -85,7 +86,7 @@ export function SequencesView({ engine }: { engine: EngineConnection }) {
           </button>
           <button
             className={groupsOpen ? 'btn btn-small active' : 'btn btn-small'}
-            data-hint="Группы секвенсоров — синхронный/параллельный запуск нескольких вместе"
+            data-hint="Группы секвенсоров — запуск нескольких секвенсоров одним нажатием"
             onClick={() => setGroupsOpen(!groupsOpen)}
           >
             Группы{project.sequenceGroups.length > 0 ? ` (${project.sequenceGroups.length})` : ''}
@@ -110,7 +111,11 @@ export function SequencesView({ engine }: { engine: EngineConnection }) {
           })}
         </ul>
         {playback.running.length > 0 && (
-          <button className="btn btn-icon btn-danger" onClick={() => send({ type: 'stopAllPlayback' })}>
+          <button
+            className="btn btn-icon btn-danger"
+            data-hint="Остановить всё воспроизведение: секвенсоры, а также сцену, шоу и плейлист, если они играют"
+            onClick={() => send({ type: 'stopAllPlayback' })}
+          >
             <StopIcon />
             Стоп всё
           </button>
@@ -194,7 +199,7 @@ function SequenceGroupsPanel({ engine }: { engine: EngineConnection }) {
     <div className="panel">
       <div className="panel-title">Группы секвенсоров</div>
       <p className="dim">
-        Секвенсоры одной группы запускаются/останавливаются вместе — например, вода и свет одним нажатием, вместо
+        Секвенсоры одной группы запускаются и останавливаются вместе — например, вода и свет одним нажатием, вместо
         нескольких клавиш подряд.
       </p>
       {sequences.length === 0 ? (
@@ -361,7 +366,7 @@ function SequenceEditor({
           <option value="loop">По кругу</option>
           <option value="once">Один раз</option>
         </select>
-        <span className="dim">длительность цикла: {(totalMs / 1000).toFixed(1)} с</span>
+        <span className="dim">длительность цикла: {num(totalMs / 1000, 1)} с</span>
         <span className="spacer" />
         <button
           className={!matrixOpen ? 'btn btn-small active' : 'btn btn-small'}
@@ -379,7 +384,7 @@ function SequenceEditor({
       </div>
 
       <div className="form-row">
-        <span className="dim" data-hint="Смягчает резкие перепады на всём выходе секвенсора. Отдельно от «Фейд, мс» шага: тот — один переход между двумя шагами, а это — постоянный фильтр">
+        <span className="dim" data-hint="Смягчает резкие перепады на всём выходе секвенсора. Отдельно от «Переход, мс» у шага: тот — один переход между двумя шагами, а это — постоянный фильтр">
           Эффект плавности:
         </span>
         <select
@@ -448,7 +453,7 @@ function SequenceEditor({
                 <th></th>
                 <th>#</th>
                 <th>Сцена</th>
-                <th>Фейд, мс</th>
+                <th data-hint="Сколько длится плавный переход к этому шагу">Переход, мс</th>
                 <th>Длительность, мс</th>
                 <th></th>
               </tr>

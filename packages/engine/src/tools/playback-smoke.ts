@@ -1748,7 +1748,7 @@ async function main(): Promise<void> {
     5000,
   );
   check(
-    networkState!.log.some((e) => e.text.includes('ПОТЕРЯНА')),
+    networkState!.log.some((e) => e.text.includes('ПОТЕРЯН')),
     'умолкшая нода помечена потерянной, событие в журнале',
   );
 
@@ -2330,7 +2330,7 @@ async function main(): Promise<void> {
       'eventLog: команда MQTT попала в журнал',
     );
     check(
-      logEvents.some((e) => e.source === 'net' && e.level === 'warn' && e.message.includes('ПОТЕРЯНА')),
+      logEvents.some((e) => e.source === 'net' && e.level === 'warn' && e.message.includes('ПОТЕРЯН')),
       'eventLog: потеря ноды помечена уровнем warn',
     );
     check(
@@ -2359,7 +2359,7 @@ async function main(): Promise<void> {
     check(
       mqttAlarms.some((m) => {
         const p = JSON.parse(m.payload) as { source: string; level: string; message: string };
-        return p.source === 'net' && p.level === 'warn' && p.message.includes('ПОТЕРЯНА');
+        return p.source === 'net' && p.level === 'warn' && p.message.includes('ПОТЕРЯН');
       }),
       'уведомления об авариях: потеря ноды опубликована в MQTT test/alarms',
     );

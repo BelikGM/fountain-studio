@@ -84,7 +84,7 @@ function queued(): { kind: string; html: string }[] {
   const names = namesForRdm([
     { id: 'd1', name: 'Прожектор левый борт 3', profileId: 'p', universe: 1, address: 10, rdmUid: '4950:00001234' },
   ]);
-  const text = substituteRdmNames('RDM-прибор 4950:00001234 ПРОПАЛ С ЛИНИИ (вселенная 1)', names);
+  const text = substituteRdmNames('RDM-прибор 4950:00001234 ПРОПАЛ (вселенная 1)', names);
   check('UID заменён на имя прибора', text.includes('Прожектор левый борт 3 (4950:00001234)'), text);
   check('непривязанный UID остаётся как есть', substituteRdmNames('RDM-прибор 4950:0000ffff ПРОПАЛ', names).includes('4950:0000ffff'));
   check('без привязок текст не меняется', substituteRdmNames('RDM-прибор 4950:00001234 ПРОПАЛ', new Map()) === 'RDM-прибор 4950:00001234 ПРОПАЛ');

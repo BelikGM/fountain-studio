@@ -40,7 +40,12 @@ import { extractVideoFrameSamples } from '../videoFrames';
 import { ShowVideoRender } from './ShowVideoRender';
 import { PauseIcon, PlayIcon, StopIcon } from '../components/Icons';
 
-const HEAD_W = 216;
+/**
+ * Ширина шапки дорожки. Та же цифра стоит в .tl-head в styles.css — по ней
+ * отсчитывается курсор времени. 252, а не 216: в строку должны влезть поле
+ * «мс» с подписью, «Выкл», 🎚, ↑, ↓ и ✕; при 216 крестик уезжал под шкалу.
+ */
+const HEAD_W = 252;
 const RULER_H = 28;
 const AUDIO_H = 84;
 /*
@@ -100,7 +105,7 @@ export function ShowView({ engine, readOnly = false }: { engine: EngineConnectio
     }
   }, [shows, selectedId]);
 
-  if (!project) return <main className="view">Ожидание проекта от движка…</main>;
+  if (!project) return <main className="view">Жду данные объекта от движка…</main>;
 
   const addShow = (): void => {
     const show: Show = {
@@ -802,7 +807,7 @@ function ShowEditor({
       profiles.get(d.profileId)?.channels.some((c) => c.role === 'intensity'),
     );
     if (intensityDevices.length === 0) {
-      setAutoStatus('Нет устройств с каналом «яркость/мощность» — добавьте насос или диммер в патч.');
+      setAutoStatus('Нет приборов с каналом уровня (насос или одноканальный свет) — добавьте их на вкладке «Оборудование».');
       return;
     }
 
@@ -872,7 +877,7 @@ function ShowEditor({
     }
 
     onChange({ ...show, tracks: [...show.tracks, ...newTracks] });
-    const bpmText = tempo.bpm > 0 ? `темп ≈ ${tempo.bpm} BPM` : 'темп не определён';
+    const bpmText = tempo.bpm > 0 ? `темп ≈ ${tempo.bpm} уд/мин` : 'темп не определён';
     setAutoStatus(`Черновик: ${summary.join(', ')}, ${bpmText}. Правьте на таймлайне.`);
   };
 
@@ -959,7 +964,7 @@ function ShowEditor({
       }
 
       if (newTracks.length === 0) {
-        setVideoStatus('Нет подходящих устройств (нужен насос/диммер и/или RGB-светильник в патче) — черновик не создан.');
+        setVideoStatus('Нет подходящих приборов: нужен насос или одноканальный свет и (или) светильник RGB — черновик не создан.');
         return;
       }
       onChange({ ...show, tracks: [...show.tracks, ...newTracks] });
@@ -1204,7 +1209,7 @@ function ShowEditor({
         </label>
         )}
         {audioStatus === 'loading' && <span className="dim">загрузка аудио…</span>}
-        {audioStatus === 'missing' && <span className="warn">аудиофайл не найден в хранилище движка</span>}
+        {audioStatus === 'missing' && <span className="warn">аудиофайл не найден в папке объекта — загрузите его заново</span>}
         {!readOnly && !show.audioFile && (
           <label className="dim">
             длительность, с:{' '}
@@ -1263,17 +1268,17 @@ function ShowEditor({
           className="btn"
           onClick={autoStage}
           disabled={!buffer}
-          data-hint="Аудиоанализ трека: черновая огибающая громкости на насос/диммер + оценка темпа (§17)"
+          data-hint="Черновик шоу по музыке: громкость — на насос, высокие частоты — на второй прибор, всплески — залпами сцены. Дальше правится руками"
         >
           ⚡ Автопостановка
         </button>
         {bpm > 0 && (
           <label className="field" data-hint="Темп определён автоматически по аудиодорожке (та же оценка, что у «Автопостановки»)">
             <input type="checkbox" checked={snapToBeat} onChange={(e) => setSnapToBeat(e.target.checked)} /> прилипание к
-            долям ({bpm} BPM)
+            долям ({bpm} уд/мин)
           </label>
         )}
-        <label className={videoBusy ? 'btn' : 'btn'} data-hint="Извлечь яркость/цвет из видеоролика → черновые дорожки (§4). Не ИИ — эвристика по кадрам.">
+        <label className={videoBusy ? 'btn' : 'btn'} data-hint="Черновик шоу по видеоролику: яркость и цвет кадров — на дорожки, монтажные склейки — вспышками. Дальше правится руками">
           {videoBusy ? '🎬 Читаю…' : '🎬 Из видео'}
           <input
             type="file"
@@ -1296,7 +1301,7 @@ function ShowEditor({
           disabled={durMs <= 0}
           data-hint="Записать 3D-сцену на время шоу в видеофайл — показать заказчику программу до выезда на объект"
         >
-          🎥 Рендер в видео
+          🎥 Видеоролик шоу
         </button>
         <span className="spacer" />
         {blocksTracks.length > 0 && (
@@ -1318,7 +1323,7 @@ function ShowEditor({
           className={recording ? 'btn btn-danger active' : 'btn'}
           onClick={toggleRecording}
           disabled={blocksTracks.length === 0}
-          data-hint="Живая запись: клавиши из «Клавиши» (сцена/секвенсор) пишутся в выбранную дорожку блоков, вооружённые огибающие — тяните ползунок"
+          data-hint="Живая запись: клавиши с вкладки «Клавиатура» (сцены и секвенсоры) пишутся в выбранную дорожку блоков; у огибающих с включённой записью — тяните ползунок"
         >
           {recording ? '⏺ Идёт запись' : '⏺ Запись'}
         </button>
@@ -1327,9 +1332,9 @@ function ShowEditor({
       {videoStatus && <div className="dim" style={{ padding: '4px 12px' }}>{videoStatus}</div>}
       {recording && (
         <div className="dim" style={{ padding: '4px 12px' }}>
-          Идёт запись в «{blocksTracks.find((t) => t.id === recordTrackId)?.name ?? '?'}»: жмите клавиши сцен/
-          секвенсоров (вкладка «Клавиши») — длительность нажатия пишется как длина блока. Для огибающих — кнопка
-          «●» у дорожки вооружает запись, тяните появившийся ползунок.
+          Идёт запись в «{blocksTracks.find((t) => t.id === recordTrackId)?.name ?? '?'}»: жмите клавиши сцен и
+          секвенсоров (вкладка «Клавиатура») — длительность нажатия пишется как длина блока. Для огибающих — кнопка
+          «●» у дорожки включает запись, тяните появившийся ползунок.
         </div>
       )}
 
@@ -1430,7 +1435,7 @@ function ShowEditor({
                       <>
                         <button
                           className={envRecordArmed.has(track.id) ? 'btn btn-small btn-danger' : 'btn btn-small'}
-                          data-hint="Вооружить запись огибающей: тяните ползунок во время воспроизведения"
+                          data-hint="Включить запись этой огибающей: во время воспроизведения тяните появившийся ползунок"
                           onClick={() =>
                             setEnvRecordArmed((prev) => {
                               const next = new Set(prev);
@@ -1457,7 +1462,7 @@ function ShowEditor({
                   </div>
                 )}
                 <div className="tl-head-controls">
-                  <label className="dim" data-hint="Опережение дорожки, мс: вода читается раньше света">
+                  <label className="dim" data-hint="Опережение дорожки, мс: команды воде можно посылать раньше, чем свету, — вода инертна">
                     <input
                       className="input input-mini input-offset"
                       type="number"
@@ -1469,10 +1474,14 @@ function ShowEditor({
                   </label>
                   <button
                     className={track.muted ? 'btn btn-small btn-danger' : 'btn btn-small'}
-                    data-hint="Приглушить дорожку"
+                    data-hint={
+                      track.muted
+                        ? 'Дорожка выключена: её блоки и кривые не играют. Нажмите, чтобы включить'
+                        : 'Выключить дорожку: её блоки и кривые перестанут играть, остальные дорожки — как были'
+                    }
                     onClick={() => updateTrack({ ...track, muted: !track.muted })}
                   >
-                    M
+                    Выкл
                   </button>
                   {track.kind === 'blocks' && (
                     <button
@@ -1598,7 +1607,7 @@ function ShowEditor({
           <div className="panel">
             <div className="panel-title">Выделение аудио</div>
             <label>
-              с, с:{' '}
+              начало, с:{' '}
               <input
                 className="input input-num"
                 type="number"
@@ -1609,7 +1618,7 @@ function ShowEditor({
               />
             </label>
             <label>
-              по, с:{' '}
+              конец, с:{' '}
               <input
                 className="input input-num"
                 type="number"
@@ -2103,7 +2112,7 @@ function BlockPanel({
         ))}
       </select>
       <label>
-        старт, с:{' '}
+        начало, с:{' '}
         <input
           className="input input-num"
           type="number"
@@ -2114,7 +2123,7 @@ function BlockPanel({
         />
       </label>
       <label>
-        длит., с:{' '}
+        длительность, с:{' '}
         <input
           className="input input-num"
           type="number"
@@ -2125,7 +2134,7 @@ function BlockPanel({
         />
       </label>
       <label>
-        фейд-ввод, мс:{' '}
+        нарастание, мс:{' '}
         <input
           className="input input-num"
           type="number"
@@ -2136,7 +2145,7 @@ function BlockPanel({
         />
       </label>
       <label>
-        фейд-вывод, мс:{' '}
+        затухание, мс:{' '}
         <input
           className="input input-num"
           type="number"
@@ -2253,7 +2262,7 @@ function EnvelopeSmoothPanel({
       <p className="dim">Убирает дрожь и лишние точки живой записи. Точки по времени не двигаются.</p>
       <div className="form-row">
         <label>
-          плавность, мс:{' '}
+          окно сглаживания, мс:{' '}
           <input
             type="range"
             min={0}
@@ -2267,7 +2276,7 @@ function EnvelopeSmoothPanel({
       </div>
       <div className="form-row">
         <label>
-          допуск прореживания:{' '}
+          сколько точек убрать:{' '}
           <input
             type="range"
             min={0}

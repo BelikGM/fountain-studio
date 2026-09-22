@@ -58,7 +58,7 @@ export function remapReport(
       .map(([d, s]) => [Number(d), Number(s)] as const)
       .sort((a, b) => a[0] - b[0]);
     if (entries.length === 0) continue;
-    lines.push(`Вселенная ${universe}: переадресовано ${entries.length} адр.`);
+    lines.push(`Вселенная ${universe}: переадресовано: ${entries.length}`);
     const bySource = new Map<number, number[]>();
     for (const [dst, src] of entries) {
       const who = per.get(dst);
@@ -139,7 +139,7 @@ export function RemapDialog({
         <h2>Переадресация каналов</h2>
         <p className="dim">
           Слева — адрес, на который прибор <b>настроен на объекте</b>. Справа — адрес, <b>откуда</b> он берёт
-          значение. По умолчанию каждый берёт своё. Схему проекта это не меняет: сцены, шоу и 3D-вид
+          значение. По умолчанию каждый берёт своё. Схему объекта это не меняет: сцены, шоу и 3D-вид
           продолжают работать с правильными адресами, подменяется только то, что уходит в кабель.
         </p>
 

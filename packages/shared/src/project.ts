@@ -426,7 +426,7 @@ export function sanitizeAddressRemap(raw: unknown, size = 512): AddressRemap {
 export const BUILTIN_PROFILES: DeviceProfile[] = [
   {
     id: 'pump',
-    name: 'Насос (аналог 0–255)',
+    name: 'Насос (плавно 0–255)',
     kind: 'pump',
     // «Скорость», а не «Мощность»: канал задаёт уставку оборотов (через ПЧ —
     // частоту), а не потребляемую мощность в киловаттах. Мощность насос
@@ -438,7 +438,7 @@ export const BUILTIN_PROFILES: DeviceProfile[] = [
   },
   {
     id: 'valve',
-    name: 'Клапан (откр/закр)',
+    name: 'Клапан (открыт/закрыт)',
     kind: 'valve',
     // «Положение» — имя КАНАЛА, а его значения уже «Открыт»/«Закрыт». Раньше
     // канал назывался «Открыт», и в подписях выходило «Клапан 1 · Открыт» —
@@ -461,9 +461,10 @@ export const BUILTIN_PROFILES: DeviceProfile[] = [
     name: 'Светильник RGB',
     kind: 'lamp',
     channels: [
-      { name: 'R', role: 'red' },
-      { name: 'G', role: 'green' },
-      { name: 'B', role: 'blue' },
+      // Имена каналов по-русски: «Свет 1 · R» на ползунке читается как шифр.
+      { name: 'Красный', role: 'red' },
+      { name: 'Зелёный', role: 'green' },
+      { name: 'Синий', role: 'blue' },
     ],
     builtin: true,
   },
@@ -472,16 +473,16 @@ export const BUILTIN_PROFILES: DeviceProfile[] = [
     name: 'Светильник RGBW',
     kind: 'lamp',
     channels: [
-      { name: 'R', role: 'red' },
-      { name: 'G', role: 'green' },
-      { name: 'B', role: 'blue' },
-      { name: 'W', role: 'white' },
+      { name: 'Красный', role: 'red' },
+      { name: 'Зелёный', role: 'green' },
+      { name: 'Синий', role: 'blue' },
+      { name: 'Белый', role: 'white' },
     ],
     builtin: true,
   },
 ];
 
-export function emptyProject(name = 'Новый проект'): Project {
+export function emptyProject(name = 'Новый объект'): Project {
   return {
     formatVersion: 1,
     name,
@@ -605,7 +606,7 @@ export function sanitizeProject(raw: unknown): Project {
   const r = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
   const project: Project = {
     formatVersion: 1,
-    name: typeof r.name === 'string' && r.name.trim() !== '' ? r.name : 'Новый проект',
+    name: typeof r.name === 'string' && r.name.trim() !== '' ? r.name : 'Новый объект',
     profiles: [],
     devices: [],
     scenes: [],

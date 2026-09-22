@@ -241,7 +241,7 @@ export class NetworkMonitor {
       }
       const device = this.rdm.get(targetUid);
       if (!device) {
-        reject(new Error(`RDM-прибор ${targetUid} сейчас не значится в TOD`));
+        reject(new Error(`RDM-прибор ${targetUid} сейчас не найден среди приборов, о которых сообщил узел`));
         return;
       }
       const txNum = (this.rdmTransactionCounter = (this.rdmTransactionCounter + 1) & 0xff);
@@ -294,8 +294,8 @@ export class NetworkMonitor {
       lost: false,
     };
     this.nodes.set(fromIp, rec);
-    if (!prev) this.event(`Нода «${rec.shortName}» (${fromIp}) на связи, выходов: ${outputUniverses.length}`);
-    else if (prev.lost) this.event(`Нода «${rec.shortName}» (${fromIp}) снова на связи`);
+    if (!prev) this.event(`Узел Art-Net «${rec.shortName}» (${fromIp}) на связи, вселенных: ${outputUniverses.length}`);
+    else if (prev.lost) this.event(`Узел Art-Net «${rec.shortName}» (${fromIp}) снова на связи`);
   }
 
   private parseTodData(msg: Buffer, fromIp: string): void {
@@ -313,7 +313,7 @@ export class NetworkMonitor {
       const uid = `${man}:${dev}`;
       const prev = this.rdm.get(uid);
       this.rdm.set(uid, { uid, nodeIp: fromIp, universe, lastSeen: now, lost: false });
-      if (!prev) this.event(`RDM-прибор ${uid} обнаружен (вселенная ${universe}, нода ${fromIp})`);
+      if (!prev) this.event(`RDM-прибор ${uid} обнаружен (вселенная ${universe}, узел Art-Net ${fromIp})`);
       else if (prev.lost) this.event(`RDM-прибор ${uid} снова на связи`);
     }
   }
@@ -323,13 +323,13 @@ export class NetworkMonitor {
     for (const n of this.nodes.values()) {
       if (!n.lost && now - n.lastSeen > this.opts.nodeTimeoutMs) {
         n.lost = true;
-        this.event(`Нода «${n.shortName}» (${n.ip}) ПОТЕРЯНА — нет ответа ${Math.round((now - n.lastSeen) / 1000)} с`);
+        this.event(`Узел Art-Net «${n.shortName}» (${n.ip}) ПОТЕРЯН — нет ответа ${Math.round((now - n.lastSeen) / 1000)} с`);
       }
     }
     for (const d of this.rdm.values()) {
       if (!d.lost && now - d.lastSeen > this.opts.rdmTimeoutMs) {
         d.lost = true;
-        this.event(`RDM-прибор ${d.uid} ПРОПАЛ С ЛИНИИ (вселенная ${d.universe})`);
+        this.event(`RDM-прибор ${d.uid} ПРОПАЛ (вселенная ${d.universe})`);
       }
     }
   }
@@ -337,7 +337,7 @@ export class NetworkMonitor {
   private event(text: string): void {
     this.log.push({ atMs: Date.now(), text });
     if (this.log.length > 100) this.log.splice(0, this.log.length - 100);
-    const lost = text.includes('ПОТЕРЯНА') || text.includes('ПРОПАЛ');
+    const lost = text.includes('ПОТЕРЯН') || text.includes('ПРОПАЛ');
     // «Снова на связи» помечаем явно — по этой пометке уведомления шлют
     // «✅ Восстановлено» (см. shared LogEvent.kind).
     const back = text.includes('снова на связи');

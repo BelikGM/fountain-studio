@@ -34,8 +34,8 @@ export function OperatorScreen({ engine, onUnlock }: { engine: EngineConnection;
     if (playback.running.length > 0) running.push(`секвенсоры (${playback.running.length})`);
     if (running.length > 0) {
       const ok = await askConfirm('Погасить фонтан?', {
-        detail: `Сейчас идёт воспроизведение: ${running.join(', ')}. BLACKOUT остановит его и погасит все каналы.`,
-        okLabel: 'BLACKOUT',
+        detail: `Сейчас идёт воспроизведение: ${running.join(', ')}. Кнопка остановит его и погасит все приборы.`,
+        okLabel: 'Погасить',
       });
       if (!ok) return;
     }
@@ -76,7 +76,7 @@ export function OperatorScreen({ engine, onUnlock }: { engine: EngineConnection;
       </header>
 
       {!project ? (
-        <p className="dim">Ожидание проекта от движка…</p>
+        <p className="dim">Жду данные объекта от движка…</p>
       ) : (
         <>
           <section className="operator-transport">
@@ -101,7 +101,7 @@ export function OperatorScreen({ engine, onUnlock }: { engine: EngineConnection;
               Стоп всё
             </button>
             <button className="btn btn-big btn-danger" onClick={() => void doBlackout()}>
-              ⚠ BLACKOUT
+              ⚠ Погасить всё
             </button>
           </section>
 

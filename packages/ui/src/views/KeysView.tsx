@@ -9,7 +9,7 @@ const ACTION_LABEL: Record<KeyAction['type'], string> = {
   show: 'Шоу (пуск/стоп)',
   playlist: 'Плейлист (пуск/стоп)',
   stopAll: 'Стоп всё',
-  blackout: 'BLACKOUT',
+  blackout: 'Погасить всё',
   pauseAll: 'Пауза всего (вкл/выкл)',
 };
 
@@ -44,7 +44,7 @@ export function KeysView({ engine }: { engine: EngineConnection }) {
     return () => window.removeEventListener('keydown', onKey, { capture: true });
   }, [captureId, project, updateProject]);
 
-  if (!project) return <main className="view">Ожидание проекта от движка…</main>;
+  if (!project) return <main className="view">Жду данные объекта от движка…</main>;
 
   const update = (keys: KeyBinding[]): void => updateProject({ ...project, keys });
 
@@ -87,8 +87,8 @@ export function KeysView({ engine }: { engine: EngineConnection }) {
       <div className="panel">
         <h2>Клавиатурные привязки</h2>
         <p className="dim">
-          Работают из любой вкладки редактора (когда фокус не в поле ввода). Действия-переключатели:
-          повторное нажатие останавливает. Привязка — к физической клавише (не зависит от раскладки).
+          Работают на любой вкладке редактора, если курсор не стоит в поле ввода. Повторное нажатие той же
+          клавиши останавливает то, что она запустила. Привязка — к физической клавише (не зависит от раскладки).
         </p>
         <table className="table">
           <thead>

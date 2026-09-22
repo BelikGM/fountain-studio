@@ -22,6 +22,8 @@ import {
   clampVolumeDb,
   VOLUME_DB_MAX,
   VOLUME_DB_MIN,
+  num,
+  countOf,
 } from '@fountain-studio/shared';
 import { askConfirm } from '../components/ConfirmDialog';
 import { TOUR_STORAGE_KEY } from '../tour';
@@ -122,7 +124,7 @@ function HotkeysPanel() {
       <h2>Горячие клавиши</h2>
       <p className="dim">
         Команды самого редактора — не путать с «Клавиатурой» (та привязывает клавиши к сценам и
-        шоу конкретного проекта). Хранится на этом компьютере, с проектом не переносится.
+        шоу конкретного объекта). Хранится на этом компьютере, с объектом не переносится.
       </p>
       <table className="table">
         <thead>
@@ -198,9 +200,9 @@ function OperatorPanel() {
     <section className="panel">
       <h2>Режим оператора</h2>
       <p className="dim">
-        Упрощённый экран для дежурного персонала/планшета: только запуск плейлистов и сцен, стоп,
-        пауза, BLACKOUT — без доступа к редактированию. Пароль хранится на этом компьютере (не в
-        проекте). Блокировка переживает перезапуск приложения и снимается только паролем — храните
+        Упрощённый экран для дежурного или планшета: только запуск плейлистов и сцен, стоп, пауза и
+        полное гашение — без доступа к редактированию. Пароль хранится на этом компьютере (не в
+        объекте). Блокировка переживает перезапуск приложения и снимается только паролем — храните
         его в надёжном месте, сброса «забыли пароль» нет.
       </p>
 
@@ -286,7 +288,7 @@ function fmtBackupTime(atMs: number): string {
 }
 
 function fmtSize(bytes: number): string {
-  return bytes < 1024 ? `${bytes} Б` : `${(bytes / 1024).toFixed(1)} КБ`;
+  return bytes < 1024 ? `${bytes} Б` : `${num(bytes / 1024, 1)} КБ`;
 }
 
 /**
@@ -319,7 +321,7 @@ function ExportImportPanel({ engine }: { engine: EngineConnection }) {
   };
 
   const doImport = async (file: File): Promise<void> => {
-    const ok = await askConfirm('Заменить весь проект содержимым файла?', {
+    const ok = await askConfirm('Заменить весь объект содержимым файла?', {
       detail:
         'Импорт перезапишет приборы, сцены, шоу, расписание — всё. Текущие несохранённые правки будут потеряны.',
       okLabel: 'Импортировать',
@@ -340,9 +342,9 @@ function ExportImportPanel({ engine }: { engine: EngineConnection }) {
 
   return (
     <section className="panel">
-      <h2>Экспорт / импорт проекта</h2>
+      <h2>Перенос объекта одним файлом</h2>
       <p className="dim">
-        Один файл — весь проект (приборы, сцены, шоу, расписание) вместе с аудио шоу. Удобно для переноса между ПК
+        Один файл — весь объект (приборы, сцены, шоу, расписание) вместе с музыкой шоу. Удобно для переноса между ПК
         или передачи заказчику.
       </p>
       <div className="form-row">
@@ -390,16 +392,16 @@ function BackupPanel({ engine }: { engine: EngineConnection }) {
   if (!backupConfig) {
     return (
       <section className="panel">
-        <h2>Авто-бэкапы</h2>
-        <p className="dim">Ожидание настройки от движка…</p>
+        <h2>Резервные копии</h2>
+        <p className="dim">Жду данные от движка…</p>
       </section>
     );
   }
 
   const restore = async (b: BackupInfo): Promise<void> => {
-    const ok = await askConfirm(`Восстановить снимок от ${fmtBackupTime(b.atMs)}?`, {
+    const ok = await askConfirm(`Восстановить копию от ${fmtBackupTime(b.atMs)}?`, {
       detail:
-        'Снимок заменит текущий проект целиком — всё, что сделано после него, будет потеряно.',
+        'Копия заменит текущий объект целиком — всё, что сделано после неё, будет потеряно.',
       okLabel: 'Восстановить',
     });
     if (!ok) return;
@@ -422,11 +424,10 @@ function BackupPanel({ engine }: { engine: EngineConnection }) {
 
   return (
     <section className="panel">
-      <h2>Авто-бэкапы</h2>
+      <h2>Резервные копии</h2>
       <p className="dim">
-        Именованные снимки проекта по расписанию — защита от «сам всё сломал в редакторе», отдельно
-        от постоянного автосохранения (оно и так всегда включено, беречь есть что). Хранятся
-        последние 20 штук.
+        Копии объекта по расписанию — на случай, если в редакторе что-то испортили. Это отдельно от
+        автосохранения: оно работает всегда.
       </p>
       <div className="form-row">
         <label className="field">
@@ -453,7 +454,7 @@ function BackupPanel({ engine }: { engine: EngineConnection }) {
           />
         </label>
         <button className="btn btn-small" onClick={() => send({ type: 'takeBackupNow' })}>
-          Сделать снимок сейчас
+          Сделать копию сейчас
         </button>
         <button
           className="btn btn-small"
@@ -464,13 +465,13 @@ function BackupPanel({ engine }: { engine: EngineConnection }) {
         </button>
       </div>
       <p className="dim">
-        Снимок делается, только если проект изменился. Хранятся: за последние 6 часов — по одному на
+        Копия делается, только если в объекте что-то изменилось. Хранятся: за последние 6 часов — по одному на
         каждые 10 минут, за два месяца — по одному на день, дальше — по одному на месяц. Поэтому
         полчаса правок не вытесняют рабочую версию месячной давности.
       </p>
 
       {backups.length === 0 ? (
-        <p className="dim">Снимков ещё нет.</p>
+        <p className="dim">Копий ещё нет.</p>
       ) : (
         <table className="table">
           <thead>
@@ -520,7 +521,7 @@ function AutostartPanel({ engine }: { engine: EngineConnection }) {
       {!autostart ? (
         <p className="dim">Ожидание состояния от движка…</p>
       ) : !autostart.supported ? (
-        <p className="dim">{autostart.error ?? 'Поддержано только на Windows (планировщик задач).'}</p>
+        <p className="dim">{autostart.error ?? 'Работает только на Windows.'}</p>
       ) : (
         <>
           <p className="dim">
@@ -639,7 +640,7 @@ function TelegramPanel({ engine }: { engine: EngineConnection }) {
         </label>
       </div>
       <div className="form-row">
-        <label className="field" data-hint="Токен от @BotFather. Сохраняется в fountain.secrets.json рядом с проектом — этот файл не попадает ни в репозиторий, ни в экспорт.">
+        <label className="field" data-hint="Токен от @BotFather. Хранится в настройках программы на этом компьютере (fountain.secrets.json) и в перенос объекта не попадает.">
           Токен бота:{' '}
           <input
             className="input"
@@ -1028,9 +1029,9 @@ function FrameModePanel({ engine }: { engine: EngineConnection }) {
       )}
       {active !== chosen && (
         <p className="error-text">
-          Выбрано «{frameModeLabel(chosen)}», но работает «{frameModeLabel(active)}»: отдельный счёт
-          не запустился, и программа перешла на запасной путь. Причина — в журнале событий на вкладке
-          «Поток». Фонтан при этом работает как работал.
+          Выбрано «{frameModeLabel(chosen)}», но работает «{frameModeLabel(active)}»: отдельный поток
+          расчёта не запустился, и программа считает одним потоком. Причина — в журнале событий на
+          вкладке «Диагностика». Фонтан при этом работает как работал.
         </p>
       )}
     </section>
@@ -1072,8 +1073,8 @@ function WindLimitPanel({ engine }: { engine: EngineConnection }) {
       <p className="dim">
         Ветер выше порога — мощность насосов (высота струй) снижается; свет не трогается. Предел считается
         по ТЕКУЩЕЙ высоте струи и по расстоянию до борта чаши, поэтому приглушённую струю коррекция не
-        трогает, а форсунку у борта режет сильнее центральной. Показание вводится вручную в строке
-        состояния, пока не подключён анемометр.
+        трогает, а форсунку у борта режет сильнее центральной. Пока датчик ветра не подключён, скорость
+        вводится вручную на вкладке «Отладка» (поле появляется, когда здесь включено).
       </p>
       <div className="form-row">
         <label className="field">
@@ -1175,7 +1176,7 @@ function WindLimitPanel({ engine }: { engine: EngineConnection }) {
           />
         </label>
         <label className="field">
-          Мин. мощность, %:{' '}
+          Насосы не ниже, %:{' '}
           <input
             className="input input-num"
             type="number"
@@ -1250,10 +1251,10 @@ function IdleScenePanel({ engine }: { engine: EngineConnection }) {
   if (!project) return null;
   return (
     <section className="panel">
-      <h2>Холостая сцена</h2>
+      <h2>Сцена, когда ничего не играет</h2>
       <p className="dim">
-        Держится на выходе, когда ничего не играет (нет активной сцены/секвенсора/шоу) — вместо чёрного. Пауза между
-        песнями плейлиста — исключение, там всегда чёрное намеренно.
+        Горит, когда не играет ни сцена, ни секвенсор, ни шоу, — вместо полной темноты. В паузах между песнями
+        плейлиста не включается: там темнота нужна.
       </p>
       <div className="form-row">
         <label className="field">
@@ -1262,7 +1263,7 @@ function IdleScenePanel({ engine }: { engine: EngineConnection }) {
             value={project.idleSceneId ?? ''}
             onChange={(e) => updateProject({ ...project, idleSceneId: e.target.value || null })}
           >
-            <option value="">— нет (чёрное) —</option>
+            <option value="">— нет (всё погашено) —</option>
             {project.scenes.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
@@ -1294,15 +1295,15 @@ function UtilityLightPanel({ engine }: { engine: EngineConnection }) {
     <section className="panel">
       <h2>Служебное освещение</h2>
       <p className="dim">
-        Простое вкл/выкл по времени суток для выбранных приборов (например, периметральная подсветка) —
-        независимо от расписания шоу/плейлистов. Перекрывает сцены/шоу на этих каналах, пока включено.
+        Включает и выключает выбранные приборы по времени суток (например, подсветку периметра) —
+        независимо от расписания шоу и плейлистов. Пока включено, перекрывает сцены и шоу на этих приборах.
       </p>
       <div className="form-row">
         <label className="field">
           <input type="checkbox" checked={cfg.enabled} onChange={(e) => update({ enabled: e.target.checked })} />{' '}
           Включено
         </label>
-        <label className="field" data-hint="Ручной оверрайд — не доверять расписанию, держать включённым всегда">
+        <label className="field" data-hint="Держать включённым всегда, не глядя на время">
           <input
             type="checkbox"
             checked={cfg.always}
@@ -1312,7 +1313,7 @@ function UtilityLightPanel({ engine }: { engine: EngineConnection }) {
           Всегда включено
         </label>
         <label className="field">
-          Вкл:{' '}
+          Включать в:{' '}
           <input
             className="input"
             type="time"
@@ -1322,7 +1323,7 @@ function UtilityLightPanel({ engine }: { engine: EngineConnection }) {
           />
         </label>
         <label className="field">
-          Выкл:{' '}
+          Выключать в:{' '}
           <input
             className="input"
             type="time"
@@ -1333,7 +1334,7 @@ function UtilityLightPanel({ engine }: { engine: EngineConnection }) {
         </label>
       </div>
       {project.devices.length === 0 ? (
-        <p className="dim">Нет приборов в патче.</p>
+        <p className="dim">Приборов пока нет — добавьте их на вкладке «Оборудование».</p>
       ) : (
         <div className="utility-device-list">
           {project.devices.map((d) => (
@@ -1418,7 +1419,7 @@ function UsbDmxStatus({ scan, universes }: { scan: UsbDmxScan | null; universes:
         <span className="usb-status-name">Драйвер FTDI</span>
         {d2.ok ? (
           <span className="ok-text" data-hint={d2.dll}>
-            ✔ ftd2xx {d2.version}
+            ✔ установлен{d2.version ? `, версия ${d2.version}` : ''}
           </span>
         ) : (
           <span className={d2.problem === 'no-device' ? 'warn' : 'error-text'} data-hint={d2.error}>
@@ -1449,7 +1450,7 @@ function UsbDmxStatus({ scan, universes }: { scan: UsbDmxScan | null; universes:
               {universeTitle(universe)} → выход {out.musidoraOut ?? 1}
             </span>
             {!link ? (
-              <span className="warn">не запущено — нажмите «Применить и сохранить»</span>
+              <span className="warn">не запущено — нажмите «Применить» под таблицей вселенных</span>
             ) : fresh ? (
               <span className="ok-text">
                 ✔ кадры уходят в интерфейс{link.serial ? ` № ${link.serial}` : link.description ? ` ${link.description}` : ''} · {link.framesOk}
@@ -1565,7 +1566,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
       <main className="view">
         <section className="panel">
           <h2>Настройки</h2>
-          <p className="dim">Ожидание конфигурации от движка…</p>
+          <p className="dim">Жду данные от движка…</p>
         </section>
       </main>
     );
@@ -1653,7 +1654,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
                       value={out?.type ?? 'artnet'}
                       data-hint={
                         'Все варианты USB-DMX используют один и тот же USB-переходник FTDI и один драйвер FTDI — разница только в том, ЧТО программа шлёт в кабель.\n' +
-                        'Art-Net и sACN — по сети, через ноду: самый надёжный вариант для постоянного объекта (длинные кабели, развязка, много вселенных).\n' +
+                        'Art-Net и sACN — по сети, через узел Art-Net: самый надёжный вариант для постоянного объекта (длинные кабели, развязка, много вселенных).\n' +
                         'USB-DMX (ENTTEC PRO) — адаптер с контроллером ENTTEC DMX USB PRO: тайминг сигнала DMX держит сам адаптер, программа шлёт кадр в его обёртке.\n' +
                         'USB-DMX (Open DMX) — простой адаптер без контроллера (ENTTEC Open DMX USB и клоны): весь сигнал DMX по микросекундам строит компьютер, под нагрузкой возможны рывки.\n' +
                         'USB-DMX (FountanPlay) — тот самый интерфейс из комплекта программы FontanPlay (USB1DMX/USB2DMX/USB3DMX): у него свой контроллер, программа шлёт кадр в его обёртке. На время работы закройте FontanPlay — интерфейс открывает только одна программа.'
@@ -1708,7 +1709,12 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
                         onChange={(e) => patchOutput(u.id, { path: e.target.value })}
                       />
                     ) : (
-                      <span className="dim">multicast</span>
+                      <span
+                        className="dim"
+                        data-hint="sACN рассылает значения всей сети сразу, на групповой адрес. Он получается из номера вселенной сам — вписывать ничего не нужно."
+                      >
+                        вся сеть
+                      </span>
                     )}
                   </td>
                   <td>
@@ -1745,7 +1751,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
                   <td>
                     {u.outputs.length > 1 && (
                       <span className="badge" data-hint="У вселенной несколько выходов; здесь редактируется первый, остальные сохраняются как есть">
-                        +{u.outputs.length - 1} вых.
+                        ещё {countOf(u.outputs.length - 1, 'выход', 'выхода', 'выходов')}
                       </span>
                     )}{' '}
                     <button
@@ -1852,7 +1858,7 @@ function ViewControlsPanel() {
           value={prefs[key]}
           onChange={(e) => apply({ [key]: Number(e.target.value) })}
         />
-        <span className="dim">×{prefs[key].toFixed(2)}</span>
+        <span className="dim">×{num(prefs[key], 2)}</span>
       </label>
     );
   };
@@ -1860,8 +1866,8 @@ function ViewControlsPanel() {
     <section className="panel">
       <h2>Управление камерой в 3D</h2>
       <p className="dim">Насколько быстро вид отзывается на мышь на вкладке «3D».</p>
-      {row('Вращение (ЛКМ по пустому месту)', 'Поворот камеры вокруг сцены', 'rotateSpeed')}
-      {row('Панорама (ПКМ)', 'Сдвиг сцены без поворота', 'panSpeed')}
+      {row('Вращение', 'Поворот камеры вокруг схемы — левой кнопкой мыши по пустому месту', 'rotateSpeed')}
+      {row('Сдвиг вида', 'Сдвиг схемы без поворота — правой кнопкой мыши', 'panSpeed')}
       <button
         className="btn btn-small"
         onClick={() => apply({ ...VIEW_PREF_DEFAULTS })}

@@ -29,9 +29,9 @@ export interface HotkeyDef {
 }
 
 export const HOTKEY_DEFS: HotkeyDef[] = [
-  { id: 'undo', label: 'Отменить', hint: 'глобально', default: 'Ctrl+KeyZ' },
-  { id: 'redo', label: 'Повторить', hint: 'глобально', default: 'Ctrl+KeyY' },
-  { id: 'save', label: 'Сохранить сейчас', hint: 'глобально', default: 'Ctrl+KeyS' },
+  { id: 'undo', label: 'Отменить', hint: 'везде', default: 'Ctrl+KeyZ' },
+  { id: 'redo', label: 'Повторить', hint: 'везде', default: 'Ctrl+KeyY' },
+  { id: 'save', label: 'Сохранить сейчас', hint: 'везде', default: 'Ctrl+KeyS' },
   { id: 'copy', label: 'Копировать выбранное', hint: '3D, Шоу', default: 'Ctrl+KeyC' },
   { id: 'paste', label: 'Вставить', hint: '3D, Шоу', default: 'Ctrl+KeyV' },
   { id: 'duplicate', label: 'Дублировать выбранное', hint: '3D', default: 'Ctrl+KeyD' },
@@ -105,7 +105,11 @@ export function comboLabel(combo: string): string {
   return combo
     .replace(/Key([A-Z])/, '$1')
     .replace(/Digit(\d)/, '$1')
-    .replace('Arrow', '')
+    // Стрелки — значками: «Up/Down» на английском читались как слова.
+    .replace('ArrowUp', '↑')
+    .replace('ArrowDown', '↓')
+    .replace('ArrowLeft', '←')
+    .replace('ArrowRight', '→')
     .replace('Escape', 'Esc')
     .replace('Delete', 'Del');
 }

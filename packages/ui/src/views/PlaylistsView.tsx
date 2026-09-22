@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import { playlistDependents, uid, type Playlist, type PlaylistItem } from '@fountain-studio/shared';
+import { playlistDependents, uid, type Playlist, type PlaylistItem,
+  durationRu,
+} from '@fountain-studio/shared';
 import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
 import { ListFilter } from '../components/ListFilter';
 import { confirmDelete } from '../confirmDelete';
@@ -28,7 +30,7 @@ export function PlaylistsView({ engine, readOnly = false }: { engine: EngineConn
     }
   }, [playlists, selectedId]);
 
-  if (!project) return <main className="view">Ожидание проекта от движка…</main>;
+  if (!project) return <main className="view">Жду данные объекта от движка…</main>;
 
   const addPlaylist = (): void => {
     const p: Playlist = {
@@ -96,8 +98,8 @@ export function PlaylistsView({ engine, readOnly = false }: { engine: EngineConn
         {selected === null ? (
           <div className="dim">
             Создайте плейлист: последовательность шоу для вечерней программы. Движок играет его сам —
-            редактор можно закрыть. Звук на ПК движка (нужен ffplay из бесплатного ffmpeg; без него —
-            вода и свет без музыки).
+            редактор можно закрыть. Музыку при этом играет сам движок: громкость и есть ли чем играть — в
+            «Настройках», «Звук вечерней программы».
           </div>
         ) : (
           <PlaylistEditor playlist={selected} engine={engine} onChange={updatePlaylist} readOnly={readOnly} />
@@ -178,10 +180,10 @@ function PlaylistEditor({
           data-hint="Поведение при запуске: с начала или с места прошлой остановки"
           onChange={(e) => onChange({ ...playlist, onStart: e.target.value as Playlist['onStart'] })}
         >
-          <option value="restart">Старт: сначала</option>
-          <option value="resume">Старт: с места остановки</option>
+          <option value="restart">Запуск: с начала</option>
+          <option value="resume">Запуск: с места остановки</option>
         </select>
-        <span className="dim">общая длительность: {(totalMs / 60000).toFixed(1)} мин</span>
+        <span className="dim">общая длительность: {durationRu(totalMs)}</span>
       </div>
 
       <div className="form-row transport">
@@ -196,13 +198,21 @@ function PlaylistEditor({
           </button>
         ) : (
           <>
-            <button className="btn btn-icon" onClick={() => send({ type: 'skipPlaylist', dir: -1 })}>
+            <button
+              className="btn btn-icon"
+              data-hint="Предыдущее шоу плейлиста"
+              onClick={() => send({ type: 'skipPlaylist', dir: -1 })}
+            >
               <PrevIcon />
-              Пред.
+              Назад
             </button>
-            <button className="btn btn-icon" onClick={() => send({ type: 'skipPlaylist', dir: 1 })}>
+            <button
+              className="btn btn-icon"
+              data-hint="Следующее шоу плейлиста"
+              onClick={() => send({ type: 'skipPlaylist', dir: 1 })}
+            >
               <NextIcon />
-              След.
+              Дальше
             </button>
             <button className="btn btn-icon" onClick={() => send({ type: 'stopPlaylist' })}>
               <StopIcon />

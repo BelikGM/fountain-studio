@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { DMX_UNIVERSE_SIZE, type ClientMessage, type NetworkState, type RdmAction, type RdmSensorReading,
   universeTitle,
+  num,
 } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
 
@@ -39,10 +40,10 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
     return (
       <main className="view">
         <section className="panel">
-          <h2>Сеть</h2>
+          <h2>Узлы Art-Net</h2>
           <p className="dim">
-            Мониторинг не активен: в конфиге движка нет Art-Net-выходов, либо движок ещё не
-            прислал состояние.
+            Опрос сети выключен: у объекта нет вселенных на Art-Net (интерфейсу FountanPlay он не нужен) —
+            или движок ещё не прислал данные.
           </p>
         </section>
         <DmxStreamPanel engine={engine} hasInputCapture={false} />
@@ -56,16 +57,15 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
     <main className="view">
       <section className="panel">
         <h2>
-          Art-Net ноды ({network.nodes.length}){' '}
+          Узлы Art-Net ({network.nodes.length}){' '}
           <button className="btn btn-small" onClick={() => send({ type: 'refreshNetwork' })}>
             Обновить сейчас
           </button>
         </h2>
         {network.nodes.length === 0 ? (
           <p className="dim">
-            Нод не найдено. Нода отвечает на ArtPoll по адресам выходов из fountain.config.json —
-            проверьте, что она включена и адрес верный. Виртуальной проверкой служит
-            «npm run monitor» — он ноду не заменяет (не отвечает на опрос), но показывает поток DMX.
+            Узлов не найдено. Программа опрашивает адреса, указанные у вселенных в «Настройках», —
+            проверьте, что узел включён, подключён к той же сети и адрес вписан верно.
           </p>
         ) : (
           <table className="table">
@@ -74,7 +74,7 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
                 <th>Статус</th>
                 <th>Имя</th>
                 <th>IP</th>
-                <th>Выходные вселенные</th>
+                <th>Вселенные узла</th>
                 <th>Последний ответ</th>
               </tr>
             </thead>
@@ -97,8 +97,8 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
         <h2>RDM-приборы ({network.rdmDevices.length})</h2>
         {network.rdmDevices.length === 0 ? (
           <p className="dim">
-            Приборы не обнаружены. Нужна нода с RDM (список приборов приходит из её TOD);
-            дешёвые ноды без RDM этот раздел не заполняют — DMX-выход при этом работает.
+            Приборы не обнаружены. Нужен узел Art-Net с поддержкой RDM; узлы без RDM этот раздел не
+            заполняют — вывод DMX при этом работает.
           </p>
         ) : (
           <table className="table">
@@ -107,10 +107,10 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
                 <th>Статус</th>
                 <th>UID</th>
                 <th data-hint="Какой прибор из «Оборудования» это на самом деле. Нужно только для понятных уведомлений: в сообщениях и отчётах вместо UID встанет имя прибора.">
-                  Прибор в патче
+                  Прибор
                 </th>
                 <th>Вселенная</th>
-                <th>Нода</th>
+                <th>Узел</th>
                 <th>Последний ответ</th>
                 <th></th>
               </tr>
@@ -221,7 +221,7 @@ function DmxStreamPanel({ engine, hasInputCapture }: { engine: EngineConnection;
 
   return (
     <section className="panel">
-      <h2>Сырой DMX-поток</h2>
+      <h2>Значения DMX по адресам</h2>
       <div className="form-row">
         <div className="group">
           <button className={mode === 'out' ? 'btn active' : 'btn'} onClick={() => setMode('out')}>
@@ -231,7 +231,7 @@ function DmxStreamPanel({ engine, hasInputCapture }: { engine: EngineConnection;
             className={mode === 'in' ? 'btn active' : 'btn'}
             onClick={() => setMode('in')}
             disabled={!hasInputCapture}
-            data-hint={hasInputCapture ? 'Что приходит на этот компьютер по Art-Net от стороннего пульта или программы' : 'Нужен хотя бы один настроенный Art-Net-выход'}
+            data-hint={hasInputCapture ? 'Что приходит на этот компьютер по Art-Net от стороннего пульта или программы' : 'Вход доступен, когда у объекта есть хотя бы одна вселенная на Art-Net'}
           >
             Вход
           </button>
@@ -290,7 +290,7 @@ function JitterPanel({ engine }: { engine: EngineConnection }) {
   const stats = engine.stats;
   return (
     <section className="panel">
-      <h2>Джиттер тика {stats && <span className="dim">(тик {stats.intervalMs} мс)</span>}</h2>
+      <h2>Ровность такта {stats && <span className="dim">(такт {stats.intervalMs} мс)</span>}</h2>
       {samples.length < 2 ? (
         <p className="dim">Собираю историю — обновляется раз в секунду, подождите немного.</p>
       ) : (
@@ -319,8 +319,8 @@ function JitterSparkline({ samples }: { samples: { tsMs: number; jitterMs: numbe
         <circle cx={xOf(samples.length - 1)} cy={yOf(last.jitterMs)} r={2.5} className="jitter-dot" />
       </svg>
       <div className="dim">
-        сейчас {last.jitterMs.toFixed(2)} мс · среднее за окно {avg.toFixed(2)} мс · пик {max.toFixed(2)} мс · окно ~
-        {spanMin < 1 ? `${Math.round(spanMin * 60)} с` : `${spanMin.toFixed(1)} мин`}
+        отклонение сейчас {num(last.jitterMs, 2)} мс · в среднем {num(avg, 2)} мс · наибольшее {num(max, 2)} мс · за последние{' '}
+        {spanMin < 1 ? `${Math.round(spanMin * 60)} с` : `${num(spanMin, 1)} мин`}
       </div>
     </div>
   );
@@ -332,6 +332,26 @@ function JitterSparkline({ samples }: { samples: { tsMs: number; jitterMs: numbe
  * видно только в консоли процесса движка. Источник и уровень (инфо/предупреждение/
  * ошибка) — из общего eventLog движка, см. packages/engine/src/eventlog.ts.
  */
+/**
+ * Как источник события называется на экране. Ключи — внутренние (по ним
+ * фильтруют Telegram и проверки), поэтому переводим только показ: в журнале
+ * рядом стояли «[engine]» и «[проект]».
+ */
+const SOURCE_LABEL: Record<string, string> = {
+  engine: 'движок',
+  server: 'редактор',
+  telegram: 'Telegram',
+  osc: 'OSC',
+  mqtt: 'MQTT',
+  modbus: 'Modbus',
+  проект: 'объект',
+  wind: 'ветер',
+  schedule: 'расписание',
+  net: 'сеть',
+  'dmx-in': 'вход DMX',
+};
+const sourceLabel = (s: string): string => SOURCE_LABEL[s] ?? s;
+
 function EventLogPanel({ engine }: { engine: EngineConnection }) {
   const [sourceFilter, setSourceFilter] = useState('');
   const events = engine.logEvents;
@@ -355,7 +375,7 @@ function EventLogPanel({ engine }: { engine: EngineConnection }) {
             <option value="">все источники</option>
             {sources.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {sourceLabel(s)}
               </option>
             ))}
           </select>
@@ -369,7 +389,7 @@ function EventLogPanel({ engine }: { engine: EngineConnection }) {
             <li key={e.id} className={`list-item log-level-${e.level}`}>
               <span className="list-item-label">
                 <span className="dim">{new Date(e.tsMs).toLocaleTimeString('ru-RU')}</span>
-                <span className="log-source">[{e.source}]</span>
+                <span className="log-source">[{sourceLabel(e.source)}]</span>
                 <span>{e.message}</span>
               </span>
             </li>
@@ -442,26 +462,26 @@ function RdmDetailPanel({ engine, uid }: { engine: EngineConnection; uid: string
   return (
     <div className="trim-editor">
       <div className="form-row">
-        <span className="dim">Прибор {uid} — параметры, одинаковые по спеке E1.20 для любой марки:</span>
+        <span className="dim">Прибор {uid} — сведения, которые по стандарту RDM отдаёт прибор любой марки:</span>
         <button
           className="btn btn-small"
           disabled={busy}
-          data-hint="Опрос датчиков прибора по стандарту E1.20: температура, напряжение, наработка — сколько их, прибор сообщает сам. Работает с любой маркой: чего прибор не поддерживает, то он честно отклоняет, а остальное отдаёт."
+          data-hint="Опрос датчиков прибора по стандарту RDM: температура, напряжение, наработка — сколько их, прибор сообщает сам. Работает с любой маркой: чего прибор не поддерживает, то он честно отклоняет, а остальное отдаёт."
           onClick={() => void run('sensors')}
         >
           Датчики
         </button>
         <button className="btn btn-small" disabled={busy} onClick={() => void run('deviceInfo')}>
-          DEVICE_INFO
+          Сведения
         </button>
         <button className="btn btn-small" disabled={busy} onClick={() => void run('labels')}>
-          Ярлыки
+          Марка и модель
         </button>
         <button className="btn btn-small" disabled={busy} onClick={() => void run('getIdentify')}>
-          Опросить IDENTIFY
+          Мигает ли сейчас
         </button>
         <button className="btn btn-small" disabled={busy} onClick={() => void run('getAddress')}>
-          Опросить адрес
+          Какой адрес на приборе
         </button>
       </div>
       {error && <div className="error-text">Ошибка: {error}</div>}
@@ -508,8 +528,8 @@ function RdmDetailPanel({ engine, uid }: { engine: EngineConnection; uid: string
         ))}
       {deviceInfo && (
         <div className="dim">
-          Протокол RDM {deviceInfo.protocolVersion} · DMX-футпринт {deviceInfo.dmxFootprint} кан. · адрес по
-          прибору {deviceInfo.dmxStartAddress} · саб-устройств {deviceInfo.subDeviceCount} · сенсоров{' '}
+          Версия RDM {deviceInfo.protocolVersion} · занимает каналов DMX: {deviceInfo.dmxFootprint} · адрес на
+          приборе: {deviceInfo.dmxStartAddress} · вложенных устройств: {deviceInfo.subDeviceCount} · датчиков:{' '}
           {deviceInfo.sensorCount}
         </div>
       )}
@@ -519,7 +539,7 @@ function RdmDetailPanel({ engine, uid }: { engine: EngineConnection; uid: string
           disabled={busy}
           onClick={() => void run('setIdentify', { on: !identify })}
         >
-          {identify ? '✦ IDENTIFY включён — выключить' : 'Мигнуть (IDENTIFY)'}
+          {identify ? '✦ Прибор мигает — остановить' : 'Мигнуть, чтобы найти прибор'}
         </button>
         <label className="field">
           DMX-адрес:{' '}

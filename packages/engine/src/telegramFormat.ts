@@ -146,7 +146,7 @@ function equipmentLines(s: SiteSnapshot): Line[] {
   const jitterBad = s.dmx.maxJitterMs > 20;
   out.push({
     mark: jitterBad ? '⚠️' : '✅',
-    text: `DMX: ${s.dmx.universes} ${plural(s.dmx.universes, 'вселенная', 'вселенные', 'вселенных')}, задержка кадра в среднем ${fmt(s.dmx.avgJitterMs)} мс, максимум ${fmt(s.dmx.maxJitterMs)} мс${jitterBad ? ' — компьютер не успевает, возможны рывки' : ''}`,
+    text: `DMX: ${s.dmx.universes} ${plural(s.dmx.universes, 'вселенная', 'вселенные', 'вселенных')}, отклонение такта в среднем ${fmt(s.dmx.avgJitterMs)} мс, наибольшее ${fmt(s.dmx.maxJitterMs)} мс${jitterBad ? ' — компьютер не успевает, возможны рывки' : ''}`,
   });
   if (s.artnet) {
     out.push(
@@ -198,10 +198,10 @@ function serviceLines(s: SiteSnapshot): Line[] {
   return [
     { mark: '•', text: `Работает без перезапуска ${duration(s.uptimeSec)}` },
     s.lastBackupAgoMin === null
-      ? { mark: '⚠️', text: 'Резервных копий проекта ещё нет' }
+      ? { mark: '⚠️', text: 'Резервных копий объекта ещё нет' }
       : {
           mark: s.lastBackupAgoMin > 48 * 60 ? '⚠️' : '✅',
-          text: `Резервная копия проекта: ${ago(s.lastBackupAgoMin)}`,
+          text: `Резервная копия объекта: ${ago(s.lastBackupAgoMin)}`,
         },
   ];
 }
@@ -297,7 +297,7 @@ const SOURCE_NAME: Record<string, string> = {
   net: 'Сеть DMX / Art-Net',
   schedule: 'Расписание',
   engine: 'Движок',
-  server: 'Сервер',
+  server: 'Редактор',
   wind: 'Ветер',
   osc: 'OSC-пульт',
   mqtt: 'MQTT',
@@ -309,7 +309,7 @@ const SOURCE_NAME: Record<string, string> = {
 export function formatQuietOver(site: string, missed: number): string {
   const tail =
     missed > 0
-      ? `За это время смолчали аварий: ${missed}. Что именно было — в журнале событий на вкладке «Поток».`
+      ? `За это время смолчали аварий: ${missed}. Что именно было — в журнале событий на вкладке «Диагностика».`
       : 'Аварий за это время не было.';
   return [
     `🔔 <b>Тихий режим окончен</b> · <b>${esc(site)}</b>\n<i>${when(Date.now())}</i>`,

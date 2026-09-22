@@ -22,7 +22,7 @@ export async function extractVideoFrameSamples(
     video.src = url;
     await new Promise<void>((resolve, reject) => {
       video.onloadedmetadata = () => resolve();
-      video.onerror = () => reject(new Error('не удалось открыть видео (формат не поддержан браузером?)'));
+      video.onerror = () => reject(new Error('не удалось открыть видео — возможно, такой формат не поддерживается; попробуйте mp4'));
     });
     const duration = video.duration;
     if (!Number.isFinite(duration) || duration <= 0) throw new Error('не удалось определить длительность видео');
@@ -35,7 +35,7 @@ export async function extractVideoFrameSamples(
     canvas.width = 64;
     canvas.height = 36;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) throw new Error('canvas 2d недоступен');
+    if (!ctx) throw new Error('не удалось подготовить кадры видео для разбора');
 
     const samples: VideoFrameSample[] = [];
     for (let t = 0; t < duration; t += step) {

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { keptSegments, type Show } from '@fountain-studio/shared';
+import { keptSegments, type Show,
+  num,
+} from '@fountain-studio/shared';
 import { FountainScene } from '../three/FountainScene';
 import { buildDeviceIndex, createLiveHooks, type DeviceIndexEntry } from '../three/liveHooks';
 import type { EngineConnection } from '../useEngine';
@@ -138,7 +140,7 @@ export function ShowVideoRender({
     if (!canvas) return;
     const mime = pickMimeType(!!buffer);
     if (!mime) {
-      setErrorMsg('Браузер не поддерживает запись видео (MediaRecorder недоступен)');
+      setErrorMsg('Запись видео на этом компьютере недоступна');
       setStatus('error');
       return;
     }
@@ -215,7 +217,7 @@ export function ShowVideoRender({
   return (
     <div className="modal-overlay">
       <div className="modal video-render-modal">
-        <div className="panel-title">Рендер «{show.name}» в видео</div>
+        <div className="panel-title">Видеоролик шоу «{show.name}»</div>
         <p className="dim">
           Записывается окно предпросмотра ниже — покрутите камеру мышью (как на вкладке «3D»), чтобы выбрать ракурс,
           затем нажмите «Начать запись».
@@ -231,7 +233,7 @@ export function ShowVideoRender({
             <>
               <span className="badge badge-live">⏺ идёт запись</span>
               <span className="dim">
-                {(elapsedMs / 1000).toFixed(1)} / {(show.durationMs / 1000).toFixed(1)} с
+                {num(elapsedMs / 1000, 1)} / {num(show.durationMs / 1000, 1)} с
               </span>
               <button className="btn btn-icon btn-danger" onClick={stop}>
                 <StopIcon />
@@ -255,7 +257,7 @@ export function ShowVideoRender({
         </div>
         {status === 'done' && fileExt === 'webm' && (
           <p className="dim">
-            Браузер не поддержал запись сразу в mp4 на этом устройстве — файл в .webm (открывается в большинстве
+            На этом компьютере не получилось записать сразу в mp4 — файл в .webm (открывается в большинстве
             плееров и браузеров; при необходимости именно .mp4 файл можно перекодировать сторонним конвертером).
           </p>
         )}

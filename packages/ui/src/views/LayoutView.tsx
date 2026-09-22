@@ -37,6 +37,8 @@ import {
   type LayoutShape,
   type NozzleKind,
   type Project,
+  countOf,
+  num,
 } from '@fountain-studio/shared';
 import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
 import { SmartSearch } from '../components/SmartSearch';
@@ -217,7 +219,7 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
    *
    * Раньше это был обычный эффект с пустыми зависимостями — он срабатывал один
    * раз при монтировании. Но пока движок не прислал проект, вместо схемы
-   * рисуется «Ожидание проекта от движка…», контейнера ещё нет, эффект уходит
+   * рисуется «Жду данные объекта от движка…», контейнера ещё нет, эффект уходит
    * ни с чем и больше не повторяется. Пока вкладка не запоминалась, это не
    * всплывало: на «3D» переходили руками, уже с проектом на руках. Стоило
    * приложению открываться сразу на «3D» — и вкладка оставалась пустой.
@@ -310,19 +312,19 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
       if (clipboardHasKind('nozzle')) {
         const n = pasteFromClipboard<Nozzle>('nozzle');
         if (!n) return;
-        const copy: Nozzle = { ...n, id: uid(), name: `${n.name} коп`, x: n.x + 0.5 };
+        const copy: Nozzle = { ...n, id: uid(), name: `${n.name} (копия)`, x: n.x + 0.5 };
         updateProject({ ...project, layout: { ...layout, nozzles: [...layout.nozzles, copy] } });
         setSelected({ type: 'nozzle', id: copy.id });
       } else if (clipboardHasKind('light')) {
         const l = pasteFromClipboard<LayoutLight>('light');
         if (!l) return;
-        const copy: LayoutLight = { ...l, id: uid(), name: `${l.name} коп`, x: l.x + 0.5 };
+        const copy: LayoutLight = { ...l, id: uid(), name: `${l.name} (копия)`, x: l.x + 0.5 };
         updateProject({ ...project, layout: { ...layout, lights: [...layout.lights, copy] } });
         setSelected({ type: 'light', id: copy.id });
       } else if (clipboardHasKind('bowl')) {
         const b = pasteFromClipboard<Bowl>('bowl');
         if (!b) return;
-        const copy: Bowl = { ...b, id: uid(), name: `${b.name} коп`, x: b.x + 0.5 };
+        const copy: Bowl = { ...b, id: uid(), name: `${b.name} (копия)`, x: b.x + 0.5 };
         updateProject({ ...project, layout: { ...layout, bowls: [...layout.bowls, copy] } });
         setSelected({ type: 'bowl', id: copy.id });
       }
@@ -355,19 +357,19 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
       if (selected.type === 'nozzle') {
         const n = layout.nozzles.find((x) => x.id === selected.id);
         if (!n) return;
-        const copy: Nozzle = { ...n, id: uid(), name: `${n.name} коп`, x: n.x + 0.5 };
+        const copy: Nozzle = { ...n, id: uid(), name: `${n.name} (копия)`, x: n.x + 0.5 };
         updateProject({ ...project, layout: { ...layout, nozzles: [...layout.nozzles, copy] } });
         setSelected({ type: 'nozzle', id: copy.id });
       } else if (selected.type === 'light') {
         const l = layout.lights.find((x) => x.id === selected.id);
         if (!l) return;
-        const copy: LayoutLight = { ...l, id: uid(), name: `${l.name} коп`, x: l.x + 0.5 };
+        const copy: LayoutLight = { ...l, id: uid(), name: `${l.name} (копия)`, x: l.x + 0.5 };
         updateProject({ ...project, layout: { ...layout, lights: [...layout.lights, copy] } });
         setSelected({ type: 'light', id: copy.id });
       } else {
         const b = layout.bowls.find((x) => x.id === selected.id);
         if (!b) return;
-        const copy: Bowl = { ...b, id: uid(), name: `${b.name} коп`, x: b.x + 0.5 };
+        const copy: Bowl = { ...b, id: uid(), name: `${b.name} (копия)`, x: b.x + 0.5 };
         updateProject({ ...project, layout: { ...layout, bowls: [...layout.bowls, copy] } });
         setSelected({ type: 'bowl', id: copy.id });
       }
@@ -429,7 +431,7 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [project, selected, updateProject]);
 
-  if (!project) return <main className="view">Ожидание проекта от движка…</main>;
+  if (!project) return <main className="view">Жду данные объекта от движка…</main>;
   const layout = project.layout;
   const setLayout = (next: FountainLayout): void => updateProject({ ...project, layout: next });
 
@@ -474,14 +476,14 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
             windOpen
               ? undefined
               : windSpeed > 0
-                ? `Ветер ${windSpeed.toFixed(1)} м/с, дует с ${windDir}° — поэтому струи сносит. Наведите, чтобы изменить.`
-                : 'Ветер в 3D: посмотреть, как сложит струи и куда понесёт воду. В проект не сохраняется и на выход DMX не влияет.'
+                ? `Ветер ${num(windSpeed, 1)} м/с, дует с ${windDir}° — поэтому струи сносит. Наведите, чтобы изменить.`
+                : 'Ветер в 3D: посмотреть, как сложит струи и куда понесёт воду. В объект не сохраняется и на приборы не влияет.'
           }
         >
           <span className="canvas3d-wind-icon">
             <WindIcon />
           </span>
-          {!windOpen && windSpeed > 0 && <b className="canvas3d-wind-now">{windSpeed.toFixed(1)} м/с</b>}
+          {!windOpen && windSpeed > 0 && <b className="canvas3d-wind-now">{num(windSpeed, 1)} м/с</b>}
           <div className="canvas3d-wind-body" aria-hidden={!windOpen}>
             <input
               type="range"
@@ -493,7 +495,7 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
               onChange={(e) => setWindSpeed(Number(e.target.value))}
               data-hint="Скорость ветра, м/с"
             />
-            <b className="canvas3d-wind-val">{windSpeed.toFixed(1)} м/с</b>
+            <b className="canvas3d-wind-val">{num(windSpeed, 1)} м/с</b>
             <input
               type="range"
               min={0}
@@ -518,9 +520,10 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
           </div>
         </div>
         <div className="canvas3d-hint dim">
-          ЛКМ — выбрать и тащить по горизонтали · наведи на выбранный прибор — над ним синяя стрелка, ею тащат
-          по высоте · Ctrl+ЛКМ — отметить · Shift по пустому — рамка · колесо — зум · ПКМ — панорама ·{' '}
-          <span className="canvas3d-dist">камера: {camDist.toFixed(1)} м от центра</span>
+          Щелчок — выбрать, тянуть — двигать по земле · у выбранного сверху синяя стрелка — ею поднимают и
+          опускают · Ctrl+щелчок — отметить несколько · Shift и тянуть по пустому — рамка · колесо — ближе и дальше ·
+          правая кнопка — сдвинуть вид ·{' '}
+          <span className="canvas3d-dist">камера: {num(camDist, 1)} м от центра</span>
         </div>
       </div>
       <aside className="sidebar sidebar-props">
@@ -1106,7 +1109,7 @@ function BindTools({ project, setLayout }: { project: Project; setLayout: (l: Fo
           data-hint={'Каждой форсунке без подсветки — свободный светильник.\n\n' + AUTOBIND_HINT}
           onClick={() => bind('lightDeviceId', 'lamp')}
         >
-          Подсветку
+          Свет
         </button>
         <button
           className="btn btn-small"
@@ -1274,7 +1277,9 @@ function DxfImport({ project, setLayout }: { project: Project; setLayout: (l: Fo
     if (!state) return '';
     const pts = state.drawing.points.filter((p) => p.layer === layer).length;
     const pls = state.drawing.polylines.filter((p) => p.layer === layer).length;
-    return [pts > 0 ? `${pts} тчк` : '', pls > 0 ? `${pls} конт` : ''].filter(Boolean).join(', ');
+    return [pts > 0 ? countOf(pts, 'точка', 'точки', 'точек') : '', pls > 0 ? countOf(pls, 'контур', 'контура', 'контуров') : '']
+      .filter(Boolean)
+      .join(', ');
   };
 
   return (
@@ -1321,7 +1326,7 @@ function DxfImport({ project, setLayout }: { project: Project; setLayout: (l: Fo
             </label>
           ))}
           <label className="field">
-            Масштаб (ед. чертежа → м):{' '}
+            Одна единица чертежа, м:{' '}
             <input
               className="input input-num"
               type="number"
@@ -1521,7 +1526,7 @@ function ExtraBindings({
         <DeviceSelect project={project} kind={kind} value={value} onChange={onValue} />
         <button
           className="icon-btn"
-          data-hint={`Добавить ещё одно устройство роли «${label.toLowerCase()}» для этой форсунки`}
+          data-hint={`Добавить этой форсунке ещё один прибор того же назначения («${label.toLowerCase()}»)`}
           onClick={() => onChange([...list, ''])}
         >
           +
@@ -1674,10 +1679,9 @@ function ActiveWrap({
   if (!grouped) return <>{children}</>;
   return (
     <details className="panel props-active">
-      <summary>
+      <summary data-hint="Правки здесь — только этому элементу. Общие для всего набора — в панели выше.">
         Свойства активного: <b>{label}</b>
       </summary>
-      <p className="dim">Правки здесь — только этому элементу. Общие для всего набора — в панели выше.</p>
       {children}
     </details>
   );
@@ -1766,9 +1770,8 @@ function MultiProps({
         </p>
       ) : (
         <p className="dim">
-          Отмечено в разных разделах: {kinds.map((k) => `${KIND_NAMES[k][1]} ${multi.ids[k].length}`).join(', ')}.
-          Общих числовых свойств у разных видов нет — доступно удаление разом. Снимите лишние разделы, чтобы
-          править свойства.
+          Отмечены элементы разных видов ({kinds.map((k) => `${KIND_NAMES[k][1]} ${multi.ids[k].length}`).join(', ')}) — общих
+          свойств у них нет, можно только удалить разом. Чтобы править свойства, оставьте отмеченным один вид.
         </p>
       )}
       <div className="field-grid">
@@ -1817,7 +1820,7 @@ function MultiProps({
           pumps={pumpFaders(markedNozzles)}
           valveIds={[...new Set(markedNozzles.flatMap(nozzleValveIds))]}
           lightIds={[...new Set(markedNozzles.flatMap(nozzleLightIds))]}
-          hint="У отмеченных форсунок нет привязанных устройств."
+          hint="У отмеченных форсунок нет привязанных приборов."
         />
       )}
       <div className="sidebar-actions">
@@ -1902,10 +1905,9 @@ function MultiNumField({
 const MODEL_HINT =
   'Вместо встроенной модели можно поставить свою — файл .glb или .gltf. ' +
   'В установленном приложении кладите файлы в «Документы\\Fountain Studio\\models» — ' +
-  'там же, где лежат настройки и проект; обновление программы эту папку не трогает. ' +
+  'обновление программы эту папку не трогает. ' +
   'В файле index.json рядом добавьте строчку с именем файла и тем, для чего он ' +
-  '(форсунка, прожектор или чаша) — и модель появится в этом списке. ' +
-  'В исходниках поставочная папка — packages/ui/public/models, там же README со ссылками.';
+  '(форсунка, прожектор или чаша) — и модель появится в этом списке.';
 
 /** Вариант «без своей модели» — то, что программа рисует сама. */
 const BUILT_IN_LABEL = 'Стандартная';
@@ -1973,12 +1975,12 @@ function pumpFaders(nozzles: Nozzle[]): { id: string; label: string }[] {
   const feed = [...new Set(nozzles.flatMap(nozzlePumpIds))];
   const expand = [...new Set(nozzles.filter((n) => n.kind === 'variable').flatMap(nozzlePump2Ids))];
   const one = nozzles.length === 1;
-  const feedName = one && expand.length === 0 ? 'Насос' : 'Насос подачи';
+  const feedName = one && expand.length === 0 ? 'Насос' : 'Насос прямой струи';
   return [
     ...feed.map((id, i) => ({ id, label: feed.length > 1 ? `${feedName} ${i + 1}` : feedName })),
     ...expand.map((id, i) => ({
       id,
-      label: expand.length > 1 ? `Насос раскрытия ${i + 1}` : 'Насос раскрытия',
+      label: expand.length > 1 ? `Насос раскрытия конуса ${i + 1}` : 'Насос раскрытия конуса',
     })),
   ];
 }
@@ -2065,7 +2067,7 @@ function LiveDebug({
     <div className="nozzle-live">
       <h3>Отладка</h3>
       {nothing ? (
-        <p className="dim">{hint ?? 'Привяжите устройство выше — здесь появится управление им.'}</p>
+        <p className="dim">{hint ?? 'Привяжите прибор выше — здесь появится управление им.'}</p>
       ) : (
         <>
           {/* Ползунок на каждый привязанный насос. У обычной форсунки он ОДИН и
@@ -2144,7 +2146,7 @@ function NozzleProps({
   const patch = (p: Partial<Nozzle>): void =>
     setLayout({ ...layout, nozzles: layout.nozzles.map((n) => (n.id === nozzle.id ? { ...n, ...p } : n)) });
   const duplicate = (): void => {
-    const copy: Nozzle = { ...nozzle, id: uid(), name: `${nozzle.name} коп`, x: nozzle.x + 0.5 };
+    const copy: Nozzle = { ...nozzle, id: uid(), name: `${nozzle.name} (копия)`, x: nozzle.x + 0.5 };
     setLayout({ ...layout, nozzles: [...layout.nozzles, copy] });
     onSelect({ type: 'nozzle', id: copy.id });
   };
@@ -2310,7 +2312,7 @@ function NozzleProps({
         {nozzle.kind === 'variable' &&
           nozzlePumpIds(nozzle).some((id) => nozzlePump2Ids(nozzle).includes(id)) && (
             <p className="warn">
-              Один и тот же насос назначен и на подачу, и на раскрытие конуса. Это два независимых
+              Один и тот же насос назначен и на прямую струю, и на раскрытие конуса. Это два независимых
               насоса: пока они привязаны к одному прибору, раскрытие будет меняться вместе с
               напором, и вариативная форсунка ведёт себя как обычная.
             </p>
@@ -2318,7 +2320,7 @@ function NozzleProps({
         {nozzle.kind === 'variable' && (
           <ExtraBindings
             project={project}
-            label="Насос распыляющий"
+            label="Насос раскрытия конуса"
             hint={H.bindPump2}
             kind="pump"
             value={nozzle.pump2DeviceId}
@@ -2452,7 +2454,7 @@ function LightProps({
           onScale={(v) => patch({ modelScale: v })}
         />
         <label className="field">
-          <FieldName label="Устройство" hint={H.lightDevice} />{' '}
+          <FieldName label="Прибор" hint={H.lightDevice} />{' '}
           <DeviceSelect project={project} kind="lamp" value={light.deviceId} onChange={(id) => patch({ deviceId: id })} />
         </label>
       </div>
@@ -2461,13 +2463,13 @@ function LightProps({
         frames={frames}
         send={send}
         lightIds={light.deviceId ? [light.deviceId] : []}
-        hint="Привяжите устройство выше — отсюда можно будет зажечь его и убедиться, что это тот самый светильник."
+        hint="Привяжите прибор выше — отсюда можно будет зажечь его и убедиться, что это тот самый светильник."
       />
       <div className="element-actions">
         <button
           className="btn btn-small"
           onClick={() => {
-            const copy: LayoutLight = { ...light, id: uid(), name: `${light.name} коп`, x: light.x + 0.5 };
+            const copy: LayoutLight = { ...light, id: uid(), name: `${light.name} (копия)`, x: light.x + 0.5 };
             setLayout({ ...layout, lights: [...layout.lights, copy] });
             onSelect({ type: 'light', id: copy.id });
           }}
@@ -2595,7 +2597,7 @@ function BowlProps({
         <button
           className="btn btn-small"
           onClick={() => {
-            const copy: Bowl = { ...bowl, id: uid(), name: `${bowl.name} коп`, x: bowl.x + 0.5 };
+            const copy: Bowl = { ...bowl, id: uid(), name: `${bowl.name} (копия)`, x: bowl.x + 0.5 };
             setLayout({ ...layout, bowls: [...layout.bowls, copy] });
             onSelect({ type: 'bowl', id: copy.id });
           }}
@@ -2749,7 +2751,7 @@ function GroupProps({
         </label>
         <span className="dim">
           В контуре: форсунок {group.nozzleIds.length}, прожекторов {group.lightIds.length}; центр:{' '}
-          {centroid.x.toFixed(2)}, {centroid.y.toFixed(2)} м
+          {num(centroid.x, 2)}; {num(centroid.y, 2)} м
         </span>
       </div>
 
@@ -2844,7 +2846,7 @@ function GroupProps({
         pumps={pumpFaders(memberNozzles)}
         valveIds={[...new Set(memberNozzles.flatMap(nozzleValveIds))]}
         lightIds={[...new Set(memberNozzles.flatMap(nozzleLightIds))]}
-        hint="У форсунок контура нет привязанных устройств."
+        hint="У форсунок контура нет привязанных приборов."
       />
       <div className="sidebar-actions">
         <button

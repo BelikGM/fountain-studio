@@ -102,6 +102,7 @@ export function Fader({ channel, value, owner, roleClass, twoState, onChange }: 
         <div className="fader-value">{isOpen ? 'Откр' : 'Закр'}</div>
         <button type="button" className="fader-track fader-toggle" onClick={toggle}>
           <div className="fader-fill" style={{ height: isOpen ? '100%' : '0%' }} />
+          {owner && <span className="fader-name">{owner}</span>}
         </button>
         <div className="fader-channel">{channel}</div>
       </div>
@@ -124,6 +125,12 @@ export function Fader({ channel, value, owner, roleClass, twoState, onChange }: 
         onPointerUp={() => setDragValue(null)}
       >
         <div className="fader-fill" style={{ height: `${(shown / DMX_MAX_VALUE) * 100}%` }} />
+        {/*
+          Имя прибора — прямо на шкале, снизу вверх. Раньше под ползунком был
+          только номер адреса, а чей он — только в подсказке: чтобы найти
+          «Насос 3», приходилось водить мышью по всем подряд.
+        */}
+        {owner && <span className="fader-name">{owner}</span>}
       </div>
       <div className="fader-channel">{channel}</div>
     </div>

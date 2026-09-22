@@ -323,7 +323,7 @@ export function createPlaybackSource(
   try {
     return make.worker(tickMs, spinMs, universeIds);
   } catch (err) {
-    make.log(`не удалось поднять поток расчёта (${String(err)}) — считаю в главном потоке`, 'warn');
+    make.log(`не удалось поднять поток расчёта (${String(err)}) — считаю одним потоком`, 'warn');
     return make.inline(universeIds);
   }
 }

@@ -616,6 +616,29 @@ select {
   transition: height 0.1s linear;
 }
 .fader-dragging .fader-fill { transition: height 0.03s linear; }
+/* Кнопки действий в строке таблицы — всегда в одну линию: когда под строкой
+   раскрыта панель (калибровка, Modbus), столбец сжимался и кнопки вставали
+   столбиком во всех строках. */
+.cell-actions { white-space: nowrap; }
+/* Значение ручки тембра — постоянной ширины, чтобы «−12 дБ» и «0 дБ» не двигали строку. */
+.tone-value { display: inline-block; min-width: 48px; font-variant-numeric: tabular-nums; }
+/* Имя прибора на шкале, снизу вверх; поверх заливки, поэтому с тенью. */
+.fader-name {
+  position: absolute;
+  left: 50%;
+  bottom: 6px;
+  transform: translateX(-50%) rotate(180deg);
+  writing-mode: vertical-rl;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  max-height: calc(100% - 12px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg);
+  text-shadow: 0 0 3px var(--bg-panel), 0 0 2px var(--bg-panel);
+  pointer-events: none;
+}
 
 /* Двухпозиционный канал (клапан): дорожка — кнопка-тумблер, а не ползунок.
    Промежуточных значений у клапана не бывает, поэтому и тянуть нечего —
@@ -1345,15 +1368,16 @@ h2.panel-head-search {
   flex: 1 1 60px;
   min-width: 0;
 }
+/* Подпись привязки — отдельной строкой НАД списком. В одну строку с ней
+   списку оставалось ~145 px, и «Клапан 1 (адрес 2)» обрезался, а подпись
+   «Насос раскрытия конуса» не влезала в свои 120 px. */
+.bind-row { flex-wrap: wrap; }
 .bind-label {
-  flex: 0 0 auto;
-  width: 120px;
+  flex: 0 0 100%;
   color: var(--fg-dim);
   font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
+.bind-row-extra .bind-label { display: none; }
 
 /* Живое управление форсункой прямо на 3D — отбивка от свойств выше. */
 .nozzle-live {
@@ -1685,8 +1709,9 @@ h2.panel-head-search {
   position: sticky;
   left: 0;
   z-index: 3;
-  width: 216px;
-  min-width: 216px;
+  /* = HEAD_W в ShowView.tsx — менять вместе. */
+  width: 252px;
+  min-width: 252px;
   background: var(--bg-panel);
   border-right: 1px solid var(--border);
   padding: 3px 6px;
@@ -1711,6 +1736,8 @@ h2.panel-head-search {
 .tl-head-top .tl-track-name { flex: 1; min-width: 0; }
 /* «🎚 1» не переносится на вторую строку внутри узкой кнопки. */
 .tl-head-controls .btn { white-space: nowrap; }
+/* «мс» остаётся рядом с полем, а не падает под него. */
+.tl-head-controls label { white-space: nowrap; }
 .tl-track-name {
   font-size: 12px;
   width: 100%;

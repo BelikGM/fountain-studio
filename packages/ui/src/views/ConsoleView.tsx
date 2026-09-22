@@ -11,6 +11,7 @@ import {
   type TestPatternMode,
   type TestPatternScope,
   universeTitle,
+  num,
 } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
 import { Fader } from '../components/Fader';
@@ -23,8 +24,8 @@ import { hexToRgb } from '../colorPresets';
 const PAGE_SIZES = [16, 32, 64, 128, 256, DMX_UNIVERSE_SIZE];
 
 const PATTERNS: { mode: TestPatternMode; label: string }[] = [
-  { mode: 'off', label: 'Выкл' },
-  { mode: 'sine', label: 'Синус' },
+  { mode: 'off', label: 'Выключен' },
+  { mode: 'sine', label: 'Волна' },
   { mode: 'chase', label: 'Бегущая' },
   { mode: 'ramp', label: 'Подъём' },
   { mode: 'strobe', label: 'Строб' },
@@ -42,11 +43,11 @@ const SCOPES: { scope: TestPatternScope; label: string }[] = [
 ];
 
 const PATTERN_HINT: Record<TestPatternMode, string> = {
-  off: 'Выключить тест-генератор: приборы возвращаются к обычному управлению (сцены и ручные фейдеры продолжают работать)',
-  sine: 'Плавная волна яркости со сдвигом фазы по приборам. Период — поле справа',
+  off: 'Выключить тест-генератор: приборы возвращаются к обычному управлению (сцены и ручные ползунки продолжают работать)',
+  sine: 'Волна: значение плавно растёт и падает, у каждого следующего прибора — чуть позже, и волна бежит по фонтану. Период — поле справа',
   chase: 'Бегущий огонёк: группа из 8 приборов подряд пробегает по кругу — проверка порядка адресов. Шаг — поле справа',
-  ramp: 'Подъём: все приборы одновременно плавно растут 0→255 за период и сбрасываются. Видно, при каком значении насос трогается с места — это и есть min для калибровки. Клапаны открыты всё время, иначе нижней половины хода не увидеть',
-  strobe: 'Строб: все каналы разом мигают 0/255 — проверка синхронности отклика. Период — поле справа',
+  ramp: 'Подъём: все приборы одновременно плавно растут 0→255 за период и сбрасываются. Видно, при каком значении насос трогается с места — это и есть нижняя граница для калибровки (⚙ на вкладке «Оборудование»). Клапаны открыты всё время, иначе нижней половины хода не увидеть',
+  strobe: 'Строб: все приборы разом мигают — полностью включены и выключены. Проверка, все ли откликаются одновременно. Период — поле справа',
   stairs:
     'Статичная лестница: первый прибор 0, последний 255, значение растёт строго по адресу — порядок адресации виден целиком и сразу. Картина неподвижна, темп ей не нужен. Клапаны открыты всё время',
   oddeven:
@@ -203,7 +204,7 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
   const unit =
     pattern === 'chase'
       ? { label: 'мс', factor: 1000, min: 10, step: 10 }
-      : { label: 'сек', factor: 1, min: 0.1, step: 0.5 };
+      : { label: 'с', factor: 1, min: 0.1, step: 0.5 };
   const pageCount = Math.ceil(DMX_UNIVERSE_SIZE / pageSize);
 
   const changePageSize = (size: number): void => {
@@ -230,7 +231,7 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
         </div>
 
         <div className="group">
-          <label className="field" data-hint="Показывать только адреса, занятые приборами из патча — без пустых">
+          <label className="field" data-hint="Показывать только адреса, на которых стоят приборы, — без пустых">
             <input
               type="checkbox"
               checked={onlyUsed}
@@ -243,7 +244,7 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
             className={filterActive ? 'dim' : undefined}
             data-hint={filterActive ? 'Не влияет, пока включён фильтр «только занятые» — настройка сохраняется' : undefined}
           >
-            По:{' '}
+            На странице:{' '}
             <select disabled={filterActive} value={pageSize} onChange={(e) => changePageSize(Number(e.target.value))}>
               {PAGE_SIZES.map((s) => (
                 <option key={s} value={s}>
@@ -270,10 +271,10 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
         </div>
 
         <div className="group">
-          <span className="group-label">Генератор:</span>
+          <span className="group-label">Тест-генератор:</span>
           <select
             value={scope}
-            data-hint="К чему применять генератор. «Всё» подменяет собой весь кадр вселенной; остальные варианты трогают только приборы выбранного вида, а прочие продолжают играть сцену или шоу"
+            data-hint="К каким приборам применять тест. «Всё» — ко всем приборам вселенной; «Насосы», «Клапаны», «Свет» — только к ним, а остальные продолжают играть сцену или шоу"
             onChange={(e) => {
               const next = e.target.value as TestPatternScope;
               setScope(next);
@@ -310,7 +311,7 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
             data-hint={
               STEP_PATTERNS.includes(pattern)
                 ? `Время одного шага: сколько держится каждый прибор перед переходом к следующему (${unit.label})`
-                : `Длительность полного цикла генератора (${unit.label})`
+                : `Длительность полного цикла теста (${unit.label})`
             }
           >
             {STEP_PATTERNS.includes(pattern) ? 'шаг' : 'период'}
@@ -368,7 +369,7 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
             {windState.limitPercent < 100 && (
               <span className="warn">
                 ⚠ струи ограничены до {windState.limitPercent}%
-                {windState.calcSpeedMs !== null ? ` (расчётные ${windState.calcSpeedMs.toFixed(1)} м/с)` : ''}
+                {windState.calcSpeedMs !== null ? ` (расчётные ${num(windState.calcSpeedMs, 1)} м/с)` : ''}
               </span>
             )}
             {!windState.correcting &&
@@ -390,7 +391,7 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
             data-hint={
               playback.pausedAll
                 ? 'Продолжить: снять паузу и вернуть воспроизведение с той же точки'
-                : 'Пауза: заморозить текущую картину света и воды как есть, без гашения в 0. Таймеры шоу/секвенсоров останавливаются до повторного нажатия'
+                : 'Пауза: заморозить текущую картину света и воды как есть, без гашения в 0. Шоу и секвенсоры замирают до повторного нажатия'
             }
             onClick={togglePause}
           >
@@ -418,8 +419,8 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
       </div>
 
       <div className="quick-controls">
-        <div className="quick-controls-title" data-hint="Пишет сразу во все приборы этого вида из патча — для пусконаладки">
-          Все приборы по типу
+        <div className="quick-controls-title" data-hint="Одно значение сразу всем приборам этого вида — для пусконаладки">
+          Сразу все приборы одного вида
         </div>
 
         <div className="quick-row">
@@ -472,11 +473,11 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
         <hr className="quick-divider" />
 
         <div className="quick-row">
-          <span className="quick-row-label">Клапана:</span>
+          <span className="quick-row-label">Клапаны:</span>
           <button
             className={valveNextOpen ? 'btn toggle-open' : 'btn toggle-closed'}
             disabled={!hasValves}
-            data-hint="Команда всем клапанам патча разом. Подпись — что произойдёт по нажатию; текущее положение видно на фейдерах"
+            data-hint="Команда сразу всем клапанам. На кнопке — что произойдёт по нажатию; текущее положение каждого видно на его ползунке"
             onClick={() => {
               setAllOfKind('valve', { open: valveNextOpen ? DMX_MAX_VALUE : 0 });
               setValveNextOpen(!valveNextOpen);

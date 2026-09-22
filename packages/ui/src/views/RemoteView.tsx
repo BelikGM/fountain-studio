@@ -7,7 +7,7 @@ const ACTION_LABEL: Record<RemoteAction['type'], string> = {
   show: 'Запустить шоу',
   playlist: 'Запустить плейлист',
   stopAll: 'Стоп всё',
-  blackout: 'BLACKOUT',
+  blackout: 'Погасить всё',
 };
 
 /**
@@ -18,7 +18,7 @@ const ACTION_LABEL: Record<RemoteAction['type'], string> = {
  */
 export function RemoteView({ engine }: { engine: EngineConnection }) {
   const { project, remote, universes, updateProject } = engine;
-  if (!project) return <main className="view">Ожидание проекта от движка…</main>;
+  if (!project) return <main className="view">Жду данные объекта от движка…</main>;
 
   const refOptions = (type: RemoteAction['type']): { id: string; name: string }[] => {
     switch (type) {
@@ -43,16 +43,16 @@ export function RemoteView({ engine }: { engine: EngineConnection }) {
       <section className="panel">
         <h2>Статус</h2>
         {!remote ? (
-          <p className="dim">Ожидание состояния от движка…</p>
+          <p className="dim">Жду данные от движка…</p>
         ) : (
           <ul className="list">
             <li className="list-item">
-              OSC: {remote.osc.enabled ? '✔ включён (порт — в fountain.config.json)' : '— выключен (osc.enabled в конфиге)'}
+              OSC: {remote.osc.enabled ? '✔ включён' : 'выключен — включает наладчик в файле настроек программы (app-config.json)'}
             </li>
             <li className="list-item">
               MQTT:{' '}
               {!remote.mqtt.enabled
-                ? '— выключен (mqtt.enabled в конфиге)'
+                ? 'выключен — включает наладчик в файле настроек программы (app-config.json)'
                 : remote.mqtt.connected
                   ? '✔ подключён к брокеру'
                   : '✖ включён, но нет связи с брокером'}
@@ -207,14 +207,14 @@ function MqttPanel({
     <section className="panel">
       <h2>MQTT-привязки</h2>
       <p className="dim">
-        Полный топик команды — «&lt;topicPrefix&gt;/cmd/&lt;суффикс&gt;» (префикс задан в конфиге движка,
-        по умолчанию «fountain-studio»); здесь указывается только суффикс. Статус публикуется в
-        «&lt;topicPrefix&gt;/status» раз в 5 с.
+        Полный топик команды — «&lt;префикс&gt;/cmd/&lt;окончание&gt;» (префикс задан в настройках программы,
+        по умолчанию «fountain-studio»); здесь пишется только окончание. Состояние фонтана уходит в
+        «&lt;префикс&gt;/status» раз в 5 с.
       </p>
       <table className="table">
         <thead>
           <tr>
-            <th>Суффикс топика</th>
+            <th data-hint="Только последняя часть топика — то, что идёт после «/cmd/»">Топик</th>
             <th>Действие</th>
             <th>Цель</th>
             <th></th>
@@ -283,11 +283,10 @@ function DmxTriggerPanel({
 
   return (
     <section className="panel">
-      <h2>DMX-in триггеры</h2>
+      <h2>Команды со стороннего DMX-пульта</h2>
       <p className="dim">
-        Внешний DMX-пульт/консоль, направленный Art-Net-ом на этот ПК: значение канала в диапазоне запускает
-        действие. Срабатывает один раз при входе в диапазон — держащееся значение (фейдер/кнопка) не повторяет
-        действие непрерывно.
+        Сторонний DMX-пульт шлёт Art-Net на этот компьютер: когда значение канала входит в диапазон, запускается
+        действие. Срабатывает один раз при входе в диапазон — если значение держится, действие не повторяется.
       </p>
       <table className="table">
         <thead>
@@ -397,7 +396,7 @@ function DmxTriggerPanel({
           }
           disabled={universes.length === 0}
         >
-          + Триггер DMX-in
+          + Команда по каналу
         </button>
       </div>
     </section>
