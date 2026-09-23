@@ -48,7 +48,8 @@ import { SmartSearch } from '../components/SmartSearch';
 import { noteManual } from '../manualActivity';
 import { hexToRgb } from '../colorPresets';
 import { askConfirm, type ConfirmOptions } from '../components/ConfirmDialog';
-import { PencilIcon, TrashIcon, WindIcon } from '../components/Icons';
+import { EyeIcon, PencilIcon, TrashIcon, WindIcon } from '../components/Icons';
+import { loadHidden, saveHidden } from '../three/hiddenElements';
 import { H } from '../propHints';
 import { comboFromEvent, getCombo } from '../hotkeys';
 import type { EngineConnection } from '../useEngine';
@@ -91,6 +92,25 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
   const { project, frames, send, updateProject, windState } = engine;
   const [selected, setSelected] = useState<Selected>(null);
   const [multi, setMulti] = useState<MultiSel>(EMPTY_MULTI);
+  /** Скрытые в 3D элементы — «глазик» в списке (см. three/hiddenElements.ts). */
+  const [hidden, setHidden] = useState<Set<string>>(loadHidden);
+  const hiddenRef = useRef(hidden);
+  hiddenRef.current = hidden;
+  useEffect(() => {
+    sceneRef.current?.setHidden(hidden);
+    saveHidden(hidden);
+  }, [hidden]);
+  /** Спрятать или показать сразу несколько элементов (строка, раздел, контур). */
+  const toggleHidden = useCallback((keys: string[], hide: boolean) => {
+    setHidden((prev) => {
+      const next = new Set(prev);
+      for (const k of keys) {
+        if (hide) next.add(k);
+        else next.delete(k);
+      }
+      return next;
+    });
+  }, []);
   const multiRef = useRef(multi);
   multiRef.current = multi;
   // Расстояние камеры до центра — опрашиваем, а не подписываемся: OrbitControls
@@ -283,6 +303,7 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
     // Эффекты синхронизации уже отработали к этому моменту и сами не
     // повторятся — отдаём сцене текущее состояние сразу.
     const p = projectRef.current;
+    scene.setHidden(hiddenRef.current);
     if (p) scene.syncLayout(p.layout);
     const sel = selectedRef.current;
     if (sel && sel.type !== 'group') scene.setSelected({ type: sel.type, id: sel.id });
@@ -486,6 +507,8 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
       <aside className="sidebar">
         <ElementList
           layout={layout}
+          hidden={hidden}
+          onToggleHidden={toggleHidden}
           selected={selected}
           onSelect={setSelected}
           setLayout={setLayout}
@@ -662,6 +685,8 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
 
 function ElementList({
   layout,
+  hidden,
+  onToggleHidden,
   selected,
   onSelect,
   setLayout,
@@ -670,6 +695,8 @@ function ElementList({
   ask,
 }: {
   layout: FountainLayout;
+  hidden: Set<string>;
+  onToggleHidden: (keys: string[], hide: boolean) => void;
   selected: Selected;
   onSelect: (s: Selected) => void;
   setLayout: (l: FountainLayout) => void;
@@ -739,11 +766,48 @@ function ElementList({
     onSelect({ type, id });
   };
 
-  const item = (type: ElKind, id: string, label: string) => (
-    <li key={id} className={rowClass(type, id)} onClick={(e) => click(type, id, e)}>
-      {label}
-    </li>
-  );
+  /**
+   * Что прячет глаз строки. У контура своего тела в сцене нет — он прячет
+   * свои форсунки и прожекторы.
+   */
+  const hideKeys = (type: ElKind, id: string): string[] => {
+    if (type !== 'group') return [type + ':' + id];
+    const g = layout.nozzleGroups.find((x) => x.id === id);
+    return g ? [...g.nozzleIds.map((n) => 'nozzle:' + n), ...g.lightIds.map((l) => 'light:' + l)] : [];
+  };
+  const isHidden = (keys: string[]): boolean => keys.length > 0 && keys.every((k) => hidden.has(k));
+  const eye = (keys: string[], what: string) => {
+    const off = isHidden(keys);
+    return (
+      <button
+        type="button"
+        className={off ? 'eye-btn eye-off' : 'eye-btn'}
+        disabled={keys.length === 0}
+        data-hint={off ? `${what} скрыто в 3D — нажмите, чтобы показать` : `Скрыть ${what} в 3D. На объект и шоу не влияет — только на то, что видно здесь`}
+        onClick={(e) => {
+          // Щелчок по глазу не выбирает строку.
+          e.stopPropagation();
+          onToggleHidden(keys, !off);
+        }}
+      >
+        <EyeIcon off={off} />
+      </button>
+    );
+  };
+
+  const item = (type: ElKind, id: string, label: string) => {
+    const keys = hideKeys(type, id);
+    return (
+      <li
+        key={id}
+        className={rowClass(type, id) + (isHidden(keys) ? ' list-item-hidden' : '')}
+        onClick={(e) => click(type, id, e)}
+      >
+        {eye(keys, type === 'group' ? 'форсунки контура' : 'элемент')}
+        <span className="list-item-label">{label}</span>
+      </li>
+    );
+  };
 
   /**
    * Заголовок раздела с кнопкой «все» — переключателем: первое нажатие отмечает
@@ -753,8 +817,10 @@ function ElementList({
   const head = (type: ElKind, title: string, count: number) => {
     const all = idsOf(type);
     const allMarked = count > 0 && all.every((id) => multi.ids[type].includes(id));
+    const sectionKeys = type === 'group' ? all.flatMap((id) => hideKeys('group', id)) : all.map((id) => type + ':' + id);
     return (
       <h3 className="list-head">
+        {count > 0 && eye(sectionKeys, `весь раздел «${title}»`)}
         {title} ({count})
         {count > 0 && (
           <button

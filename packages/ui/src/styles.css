@@ -2233,3 +2233,24 @@ input[type='range']:disabled { opacity: 0.4; cursor: default; }
    нет — жёлтый треугольник (в подсказке написано, что проверять). */
 .rdm-ok { color: var(--ok, #4caf50); font-weight: 600; }
 .rdm-bad { color: #e0a53a; font-weight: 600; }
+
+/* «Глазик» в списке 3D: скрыть элемент на схеме. Неприметный, пока элемент
+   виден; перечёркнутый и заметный, когда скрыт — чтобы спрятанное не
+   забылось. */
+.eye-btn {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  opacity: 0.55;
+}
+.eye-btn:hover { opacity: 1; color: var(--fg); }
+.eye-btn.eye-off { opacity: 1; color: var(--warn); }
+.eye-btn:disabled { visibility: hidden; }
+.list-item > .eye-btn + .list-item-label { flex: 1; }
+.list-item-hidden .list-item-label { opacity: 0.45; }
+.list-head .eye-btn { margin-right: 4px; vertical-align: -2px; }

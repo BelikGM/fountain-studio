@@ -108,3 +108,17 @@ export function NextIcon() {
     </svg>
   );
 }
+
+/**
+ * Глаз — «показывать в 3D». Перечёркнутый — элемент скрыт. Так же, как в
+ * слоях Photoshop, Blender и MADRIX: значок читается без подписи.
+ */
+export function EyeIcon({ off = false }: { off?: boolean }) {
+  return (
+    <svg {...ICON_PROPS} aria-hidden="true">
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
+      <circle cx="12" cy="12" r="3" />
+      {off && <path d="M3 3l18 18" />}
+    </svg>
+  );
+}

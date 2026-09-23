@@ -612,6 +612,13 @@ export class FountainScene {
   /** Сглаженное значение струи и накопитель эмиссии по id форсунки. */
   private smoothed = new Map<string, number>();
   private emitAcc = new Map<string, number>();
+  /**
+   * Скрытые элементы («глазик» в списке 3D): ключи «тип:id». Скрытая форсунка
+   * не рисует ни корпуса, ни воды; скрытая чаша не гасит капли своим зеркалом.
+   */
+  private hidden = new Set<string>();
+  /** По номеру форсунки: скрыта ли — чтобы мгновенно прятать уже летящие капли. */
+  private hiddenNoz = new Uint8Array(0);
   /** Накопитель капель «шнура» моторной насадки (см. ORBIT_CORD_PER_SEC). */
   private cordAcc = new Map<string, number>();
   /**
@@ -925,7 +932,7 @@ export class FountainScene {
   syncLayout(layout: FountainLayout): void {
     this.layout = layout;
     this.waterSurfaces = layout.bowls
-      .filter((b) => b.showWater !== false)
+      .filter((b) => b.showWater !== false && !this.hidden.has('bowl:' + b.id))
       .map((b) => ({
         x: b.x,
         y: b.y,
@@ -1247,10 +1254,50 @@ export class FountainScene {
       const bh = (l.headingDeg * Math.PI) / 180;
       if (bt > 0) beamDir.applyAxisAngle(new THREE.Vector3(-Math.sin(bh), Math.cos(bh), 0), bt);
       beamHolder.position.set(l.x, l.y, l.z).addScaledVector(beamDir, size * 0.85);
+      // Метка владельца — чтобы «глазик» прятал луч вместе с прожектором.
+      beamHolder.userData = { type: 'light', id: l.id, beam: true };
       this.staticGroup.add(beamHolder);
       this.lightBeams.set(l.id, beam);
     }
+    this.applyHidden();
     this.applySelection();
+  }
+
+  /**
+   * Что скрыть — список ключей «тип:id» («глазик» в списке слева).
+   * Схему не пересобираем: прячем готовое и пересчитываем зеркала воды.
+   */
+  setHidden(keys: Iterable<string>): void {
+    this.hidden = new Set(keys);
+    this.waterSurfaces = this.layout.bowls
+      .filter((b) => b.showWater !== false && !this.hidden.has('bowl:' + b.id))
+      .map((b) => ({
+        x: b.x,
+        y: b.y,
+        circle: b.shape === 'circle',
+        r: b.radius,
+        hw: b.width / 2,
+        hl: b.length / 2,
+        z: (b.elevationM ?? 0) + Math.min(b.height, b.waterDepthM ?? 0.25),
+      }));
+    this.applyHidden();
+  }
+
+  private applyHidden(): void {
+    for (const obj of this.staticGroup.children) {
+      const ud = obj.userData as { type?: string; id?: string };
+      if (ud.type && ud.id) obj.visible = !this.hidden.has(ud.type + ':' + ud.id);
+    }
+    this.hiddenNoz = new Uint8Array(this.layout.nozzles.length);
+    this.layout.nozzles.forEach((n, k) => {
+      if (!this.hidden.has('nozzle:' + n.id)) return;
+      this.hiddenNoz[k] = 1;
+      for (let j = 0; j < Math.max(1, n.jetCount ?? 1); j++) {
+        const core = this.jetCores.get(`${n.id}#${j}`);
+        if (core) core.visible = false;
+      }
+      for (const sl of this.slugs) if (sl.nozzleId === n.id) sl.dead = true;
+    });
   }
 
   /**
@@ -3033,6 +3080,8 @@ export class FountainScene {
     if (this.tSec - this.bodiesAtSec > 1) this.refreshBodies();
     // Эмиссия новых частиц по каждой форсунке.
     for (const n of this.layout.nozzles) {
+      // Скрытая «глазиком» — ни воды, ни трубы (спрятаны в applyHidden).
+      if (this.hidden.has('nozzle:' + n.id)) continue;
       const phys = KIND_PHYSICS[n.kind];
       const { flow, cut } = this.hooks.live.nozzleFlow(n);
       const prev = this.smoothed.get(n.id) ?? 0;
@@ -3557,7 +3606,9 @@ export class FountainScene {
       // Сопло бывает утоплено — торчит только срез. Вода под зеркалом не видна:
       // капля появляется, когда выходит из воды.
       const under = this.pz[j]! < this.surfaceZAt(this.px[j]!, this.py[j]!);
-      siz[j] = under ? 0 : this.psize[j]! * fade;
+      const own = this.pnoz[j]!;
+      const hid = own >= 0 && own < this.hiddenNoz.length && this.hiddenNoz[own] === 1;
+      siz[j] = under || hid ? 0 : this.psize[j]! * fade;
     }
     this.posAttr.needsUpdate = true;
     this.colAttr.needsUpdate = true;
