@@ -4,6 +4,7 @@ import { namesForRdm, sanitizeProject, sanitizeRemoteSettings, type ConfigUniver
 import { AudioStore } from './audio';
 import { AudioPlayer } from './audioplayer';
 import { BackupStore } from './backups';
+import { MailNotifier } from './mailnotify';
 import { TelegramNotifier } from './telegram';
 import { buildSiteSnapshot } from './siteSnapshot';
 import { loadAppConfig } from './config';
@@ -78,6 +79,12 @@ const store = new ProjectStore(idle.projectFile);
 const audio = new AudioStore(idle.audioDir);
 const player = new AudioPlayer(config.audio, idle.audioDir);
 const backups = new BackupStore(idle.projectFile, () => JSON.stringify(store.project, null, 2), config.backup);
+/**
+ * Почта — второй канал уведомлений рядом с ботом. Настройки и пароль лежат
+ * там же, где токен бота: в данных ПРОГРАММЫ, а не объекта.
+ */
+const mail = new MailNotifier(path.join(appDataDir, 'fountain.secrets.json'));
+
 const telegram = new TelegramNotifier(
   {
     // Токен — в папке ПРОГРАММЫ: папку объекта отдают коллеге, и свой токен
@@ -89,6 +96,11 @@ const telegram = new TelegramNotifier(
   () => buildSiteSnapshot({ engine, project: () => store.project, net: () => net?.state(), backups }),
   () => namesForRdm(store.project.devices),
 );
+/*
+ * Всё, что уходит боту, уходит и на почту — одним обработчиком, чтобы правила
+ * «что считать аварией» и тихий режим не пришлось повторять во втором месте.
+ */
+telegram.onOutgoing = (kind, html, site) => mail.notify(kind, html, site);
 
 /**
  * Команды из чата → действие на объекте. Отправщик уведомлений намеренно не
@@ -290,7 +302,7 @@ const projects: ProjectsApi = {
   forget: (dir: string) => forgetRecent(appDataDir, dir),
 };
 
-startServer(engine, store, audio, backups, net, capture, remote, telegram, projects, player);
+startServer(engine, store, audio, backups, net, capture, remote, telegram, projects, player, mail);
 
 const scheduler = new Scheduler(engine, () => store.project.schedules);
 scheduler.start();
@@ -405,6 +417,7 @@ function shutdown(): void {
   void remote.stop();
   backups.stop();
   telegram.stop();
+  mail.stop();
   store.flush();
   void eventLog.flush();
   engine.stop();

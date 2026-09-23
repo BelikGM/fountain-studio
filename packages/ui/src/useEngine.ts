@@ -8,6 +8,7 @@ import type {
   FailsafeState,
   LicenseStatus,
   LogEvent,
+  MailStatus,
   ModbusState,
   NetworkState,
   TelegramStatus,
@@ -153,6 +154,10 @@ export interface EngineConnection {
   /** Экспорт/импорт проекта одним файлом (§27 доработки) — project.json + audio/ в .zip. */
   requestExportProject: () => Promise<{ filename: string; dataBase64: string }>;
   importProjectArchive: (dataBase64: string) => Promise<{ ok: boolean; message: string }>;
+  /** Уведомления на почту — БЕЗ пароля. */
+  mail: MailStatus | null;
+  /** Ответ на проверку почты; null — не проверяли. */
+  mailTest: { ok: boolean; error?: string } | null;
   /** Кто ещё открыл этот движок редактором — чтобы сказать «объект правят вдвоём». */
   editors: { id: string; ip: string; sinceMs: number }[];
   /** Наш номер в движке («р1»): по нему отличаем свой отклик от чужой правки. */
@@ -258,6 +263,8 @@ export function useEngine(): EngineConnection {
   const exportWaitersRef = useRef<((data: { filename: string; dataBase64: string }) => void)[]>([]);
   const importWaitersRef = useRef<((r: { ok: boolean; message: string }) => void)[]>([]);
   const appExportWaitersRef = useRef<((data: { filename: string; dataBase64: string }) => void)[]>([]);
+  const [mail, setMail] = useState<MailStatus | null>(null);
+  const [mailTest, setMailTest] = useState<{ ok: boolean; error?: string } | null>(null);
   const [editors, setEditors] = useState<{ id: string; ip: string; sinceMs: number }[]>([]);
   const [clientId, setClientId] = useState('');
   const clientIdRef = useRef('');
@@ -368,6 +375,12 @@ export function useEngine(): EngineConnection {
             break;
           case 'telegram':
             setTelegram(msg.state);
+            break;
+          case 'mail':
+            setMail(msg.state);
+            break;
+          case 'mailTest':
+            setMailTest({ ok: msg.ok, error: msg.error });
             break;
           case 'telegramTest':
             setTelegramTest({ ok: msg.ok, ...(msg.error ? { error: msg.error } : {}) });
@@ -737,6 +750,8 @@ export function useEngine(): EngineConnection {
     importProjectArchive,
     requestExportAppSettings,
     importAppSettingsArchive,
+    mail,
+    mailTest,
     editors,
     clientId,
     editConflict,

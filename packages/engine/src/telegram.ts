@@ -348,7 +348,13 @@ export class TelegramNotifier {
     if (this.timer) clearInterval(this.timer);
     this.unsubscribe?.();
     this.unsubscribe = null;
-    if (!this.cfg.enabled || this.cfg.token.trim() === '') return;
+    /*
+     * Без бота уведомления всё равно нужны: почта включается отдельно, и
+     * наблюдение за журналом должно работать и в этом случае. Поэтому выходим
+     * только если выключено ВСЁ сразу.
+     */
+    const botOn = this.cfg.enabled && this.cfg.token.trim() !== '';
+    if (!botOn && !this.onOutgoing) return;
     // Аварии подхватываем из общего журнала: то же, что видно в интерфейсе.
     if (this.cfg.alarms) {
       this.unsubscribe = eventLog.subscribe((e: LogEvent) => this.onEvent(e));
@@ -579,7 +585,18 @@ export class TelegramNotifier {
     }
   }
 
+  /**
+   * Зеркало уведомлений наружу — сейчас это почта (см. mailer.ts).
+   *
+   * Ставится ОДНИМ обработчиком здесь, а не отдельной подпиской на журнал:
+   * иначе пришлось бы во втором месте повторять всю логику «что считать
+   * аварией, что глушит тихий режим, когда слать отчёт» — и она неизбежно
+   * разошлась бы с этой.
+   */
+  onOutgoing: ((kind: TelegramKind, html: string, site: string) => void) | null = null;
+
   enqueue(kind: TelegramKind, html: string, site = this.getSiteName(), keyboard?: TgKeyboard): void {
+    this.onOutgoing?.(kind, html, site);
     this.queue.push({ kind, html, site, atMs: Date.now(), keyboard });
     if (this.queue.length > MAX_QUEUE) this.queue = this.queue.slice(-MAX_QUEUE);
     this.saveQueue();
@@ -610,6 +627,17 @@ export class TelegramNotifier {
       const was = this.botTopics;
       await this.whoAmI();
       if (was !== this.botTopics) this.onStatusChange?.();
+    }
+    /*
+     * Бот не настроен — очередь копить незачем: уведомления уже ушли зеркалом
+     * (на почту). Иначе на объекте без Telegram файл очереди рос бы вечно.
+     */
+    if (this.cfg.token.trim() === '' || !this.cfg.enabled) {
+      if (this.queue.length > 0) {
+        this.queue = [];
+        this.saveQueue();
+      }
+      return;
     }
     if (this.queue.length === 0) return;
     this.sending = true;

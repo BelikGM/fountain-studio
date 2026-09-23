@@ -20,6 +20,7 @@ import type { AudioStore } from './audio';
 import { saveAppConfigPatch } from './config';
 import { isAutostartEnabled, isAutostartSupported, setAutostart, unsupportedReason } from './autostart';
 import type { BackupStore } from './backups';
+import type { MailNotifier } from './mailnotify';
 import type { TelegramNotifier } from './telegram';
 import type { DmxCapture } from './dmxcapture';
 import { eventLog } from './eventlog';
@@ -85,6 +86,7 @@ export function startServer(
   telegram?: TelegramNotifier,
   projects?: ProjectsApi,
   player?: AudioPlayer,
+  mail?: MailNotifier,
 ): WebSocketServer {
   const port = engine.config.server.port;
   const wss = new WebSocketServer({ port });
@@ -127,6 +129,7 @@ export function startServer(
   // Уведомления сами узнают, что у бота включили темы или нашёлся получатель, —
   // сразу показываем это в Настройках.
   if (telegram) telegram.onStatusChange = () => broadcast({ type: 'telegram', state: telegram.status() });
+  if (mail) mail.onStatusChange = () => broadcast({ type: 'mail', state: mail.status() });
   const configMessage = (): Extract<ServerMessage, { type: 'config' }> => ({
     type: 'config',
     tickMs: engine.config.timing.tickMs,
@@ -269,6 +272,7 @@ export function startServer(
     ws.send(JSON.stringify({ type: 'playback', state: engine.playbackState() } satisfies ServerMessage));
     if (net) ws.send(JSON.stringify({ type: 'network', state: net.state() } satisfies ServerMessage));
     if (telegram) ws.send(JSON.stringify({ type: 'telegram', state: telegram.status() } satisfies ServerMessage));
+    if (mail) ws.send(JSON.stringify({ type: 'mail', state: mail.status() } satisfies ServerMessage));
     ws.send(JSON.stringify({ type: 'modbus', state: engine.modbusState() } satisfies ServerMessage));
     ws.send(JSON.stringify({ type: 'failsafe', state: engine.failsafeState() } satisfies ServerMessage));
     ws.send(JSON.stringify(projectsMessage()));
@@ -896,6 +900,34 @@ export function startServer(
           telegram?.setQuiet(msg.hours);
           if (telegram) broadcast({ type: 'telegram', state: telegram.status() });
           break;
+        case 'updateMail': {
+          if (!mail) break;
+          const patch: Record<string, unknown> = {};
+          for (const k of ['enabled', 'alarms', 'reports', 'state'] as const) {
+            if (typeof msg[k] === 'boolean') patch[k] = msg[k];
+          }
+          for (const k of ['host', 'user', 'from', 'to'] as const) {
+            if (typeof msg[k] === 'string') patch[k] = msg[k].trim();
+          }
+          if (typeof msg.port === 'number' && msg.port > 0 && msg.port < 65536) patch.port = Math.round(msg.port);
+          if (msg.security === 'none' || msg.security === 'starttls' || msg.security === 'tls') patch.security = msg.security;
+          // Пароль приходит только при смене: пустая строка НЕ стирает старый —
+          // иначе любое сохранение других полей обнуляло бы его.
+          if (typeof msg.password === 'string' && msg.password !== '') patch.password = msg.password;
+          mail.setConfig(patch);
+          // В журнал — только факт настройки: пароль туда попасть не должен.
+          eventLog.log('server', 'настройки уведомлений на почту обновлены');
+          broadcast({ type: 'mail', state: mail.status() });
+          break;
+        }
+        case 'testMail': {
+          if (!mail) break;
+          void mail.testNow(store.project.name).then((r) => {
+            ws.send(JSON.stringify({ type: 'mailTest', ...r } satisfies ServerMessage));
+            broadcast({ type: 'mail', state: mail.status() });
+          });
+          break;
+        }
         case 'testTelegram': {
           if (!telegram) break;
           void telegram.testNow().then((r) => {

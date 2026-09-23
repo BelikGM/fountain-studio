@@ -273,6 +273,24 @@ export interface TelegramKnownChat {
   atMs: number;
 }
 
+/** Уведомления на почту — то же, что уходит боту. Пароль наружу не отдаётся. */
+export interface MailStatus {
+  enabled: boolean;
+  host: string;
+  port: number;
+  security: 'none' | 'starttls' | 'tls';
+  user: string;
+  from: string;
+  to: string;
+  alarms: boolean;
+  reports: boolean;
+  state: boolean;
+  hasPassword: boolean;
+  queued: number;
+  lastOkMs: number;
+  lastError: string;
+}
+
 export interface TelegramStatus {
   enabled: boolean;
   hasToken: boolean;
@@ -544,6 +562,23 @@ export type ClientMessage =
       recipients?: TelegramRecipient[];
     }
   | { type: 'testTelegram' }
+  // Почта: те же разделы, что у бота. Пароль уходит ТОЛЬКО сюда и обратно не
+  // приходит никогда — как токен бота.
+  | {
+      type: 'updateMail';
+      enabled?: boolean;
+      host?: string;
+      port?: number;
+      security?: 'none' | 'starttls' | 'tls';
+      user?: string;
+      password?: string;
+      from?: string;
+      to?: string;
+      alarms?: boolean;
+      reports?: boolean;
+      state?: boolean;
+    }
+  | { type: 'testMail' }
   /** Тихий режим на N часов (0 — снять): не слать аварии во время работ на объекте. */
   | { type: 'setTelegramQuiet'; hours: number }
   // Журнал событий (§27 доработки, §3 п.1): источники на стороне редактора
@@ -693,6 +728,9 @@ export type ServerMessage =
   /** Состояние уведомлений — БЕЗ токена: наружу уходит только «настроено или нет». */
   | { type: 'telegram'; state: TelegramStatus }
   | { type: 'telegramTest'; ok: boolean; error?: string }
+  /** Состояние уведомлений на почту — БЕЗ пароля. */
+  | { type: 'mail'; state: MailStatus }
+  | { type: 'mailTest'; ok: boolean; error?: string }
   /** Ответ на saveNow. */
   | { type: 'saved'; atMs: number }
   /** Новое событие в журнале (шлётся всем клиентам сразу при возникновении). */

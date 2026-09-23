@@ -61,7 +61,8 @@ npm -w @fountain-studio/engine run failsafe-test     # аварийное отк
 npm -w @fountain-studio/engine run eventlog-test     # журнал на диске
 npm -w @fountain-studio/engine run wind-test         # ветер: порог, выдержки, борт чаши, датчик Modbus/MQTT
 npm -w @fountain-studio/engine run worker-test       # расчёт в отдельном потоке
-npm -w @fountain-studio/engine run telegram-test     # уведомления
+npm -w @fountain-studio/engine run telegram-test     # уведомления в Telegram
+npm -w @fountain-studio/engine run mail-test         # уведомления на почту: разговор по SMTP
 npm -w @fountain-studio/engine run audio-test         # звук: громкость, вырезки монтажа
 npm -w @fountain-studio/engine run lines-test         # вселенные и такт на ходу, без провала значений
 npm run app-test                                     # УСТАНОВЛЕННАЯ программа: движок из сборки, окно, значок у часов, автозапуск

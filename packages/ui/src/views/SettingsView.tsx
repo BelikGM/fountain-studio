@@ -960,6 +960,111 @@ function RecipientsBlock({ engine }: { engine: EngineConnection }) {
 }
 
 /**
+ * Уведомления на почту — второй канал рядом с ботом.
+ *
+ * Нужен там, где Telegram не в ходу: эксплуатирующая организация, охрана,
+ * начальник объекта. Уходит ровно то же, что и боту, с теми же разделами.
+ * Пароль вводится здесь и обратно НИКОГДА не приходит — как токен бота:
+ * наружу уходит только «задан или нет».
+ */
+function MailPanel({ engine }: { engine: EngineConnection }) {
+  const { mail, mailTest, send } = engine;
+  const [password, setPassword] = useState('');
+  if (!mail) return null;
+  const set = (patch: Record<string, unknown>): void => send({ type: 'updateMail', ...patch } as never);
+  const when = (ms: number): string =>
+    ms > 0 ? new Date(ms).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'ещё ни разу';
+
+  return (
+    <section className="panel">
+      <h2>Уведомления на почту</h2>
+      <p className="dim">
+        То же, что уходит боту: аварии сразу, отчёт раз в сутки. Нужно там, где Telegram не в ходу — эксплуатирующей
+        организации, охране, начальнику объекта. Нет интернета — письма копятся и уходят, когда связь появится.
+      </p>
+      <div className="form-row">
+        <label className="field">
+          <input type="checkbox" checked={mail.enabled} onChange={(e) => set({ enabled: e.target.checked })} /> Включено
+        </label>
+        <label className="field">
+          <input type="checkbox" checked={mail.alarms} onChange={(e) => set({ alarms: e.target.checked })} /> Аварии
+        </label>
+        <label className="field">
+          <input type="checkbox" checked={mail.reports} onChange={(e) => set({ reports: e.target.checked })} /> Отчёты
+        </label>
+        <label className="field">
+          <input type="checkbox" checked={mail.state} onChange={(e) => set({ state: e.target.checked })} /> Состояние
+        </label>
+      </div>
+      <div className="form-row">
+        <label className="field" data-hint="Адрес SMTP-сервера почты. Яндекс — smtp.yandex.ru, Mail.ru — smtp.mail.ru, Gmail — smtp.gmail.com.">
+          Сервер:{' '}
+          <CommitInput width={180} placeholder="smtp.yandex.ru" value={mail.host} onCommit={(v) => set({ host: v })} />
+        </label>
+        <label className="field" data-hint="465 — сразу шифрованное соединение (SSL/TLS), 587 — обычное с переходом на шифрование (STARTTLS).">
+          Порт:{' '}
+          <CommitInput width={70} type="number" value={String(mail.port)} onCommit={(v) => set({ port: Number(v) || 587 })} />
+        </label>
+        <label className="field" data-hint="Как шифруется соединение. Почти везде подходит STARTTLS на 587 или SSL/TLS на 465; «без шифрования» — только для своего сервера в локальной сети.">
+          Шифрование:{' '}
+          <select value={mail.security} onChange={(e) => set({ security: e.target.value })}>
+            <option value="starttls">STARTTLS (порт 587)</option>
+            <option value="tls">SSL/TLS (порт 465)</option>
+            <option value="none">без шифрования</option>
+          </select>
+        </label>
+      </div>
+      <div className="form-row">
+        <label className="field" data-hint="Логин на почтовом сервере — обычно полный адрес ящика, с которого шлём.">
+          Ящик:{' '}
+          <CommitInput width={200} placeholder="fountain@yandex.ru" value={mail.user} onCommit={(v) => set({ user: v })} />
+        </label>
+        <label className="field" data-hint="Пароль приложения, а НЕ пароль от почты: у Яндекса, Mail.ru и Gmail обычный пароль для программ не работает — заведите пароль приложения в настройках ящика. Здесь он хранится в fountain.secrets.json и наружу не отдаётся.">
+          Пароль:{' '}
+          <input
+            className="input"
+            style={{ width: 160 }}
+            type="password"
+            placeholder={mail.hasPassword ? 'задан' : 'пароль приложения'}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </label>
+        <button
+          className="btn"
+          disabled={password === ''}
+          onClick={() => {
+            set({ password });
+            setPassword('');
+          }}
+        >
+          Сохранить пароль
+        </button>
+      </div>
+      <div className="form-row">
+        <label className="field" data-hint="Кому слать. Несколько адресов — через запятую или пробел.">
+          Кому:{' '}
+          <CommitInput width={320} placeholder="dezhurny@site.ru, engineer@site.ru" value={mail.to} onCommit={(v) => set({ to: v })} />
+        </label>
+        <button className="btn" onClick={() => send({ type: 'testMail' })} disabled={!mail.enabled}>
+          Отправить проверочное
+        </button>
+      </div>
+      <p className="dim">
+        Состояние: {mail.hasPassword ? 'пароль задан' : 'пароль не задан'} · последнее письмо: {when(mail.lastOkMs)} ·
+        в очереди {mail.queued}
+        {mail.lastError !== '' && <span className="error-text"> · {mail.lastError}</span>}
+      </p>
+      {mailTest && (
+        <p className={mailTest.ok ? 'ok-text' : 'error-text'}>
+          {mailTest.ok ? '✔ Письмо отправлено — проверьте ящик.' : `Не получилось: ${mailTest.error ?? 'нет связи'}`}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
  * Датчик ветра → безопасное снижение струй.
  *
  * Настраивается здесь один раз при пусконаладке; текущее показание ветра
@@ -2395,6 +2500,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
       <BackupPanel engine={engine} />
       <AutostartPanel engine={engine} />
       <TelegramPanel engine={engine} />
+      <MailPanel engine={engine} />
       <FailsafePanel engine={engine} />
       <WindLimitPanel engine={engine} />
       <IdleScenePanel engine={engine} />
