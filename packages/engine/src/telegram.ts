@@ -91,6 +91,8 @@ export interface TelegramConfig {
   topicsBySite: boolean;
   /** Созданные темы объектов: имя объекта → номер темы. */
   siteTopics: Record<string, number>;
+  /** Дни, когда суточный отчёт дошёл («ГГГГ-ММ-ДД»), последние 30. */
+  reportDays?: string[];
   /**
    * Ещё получатели, помимо главного чата: дежурный, инженер, начальник. У
    * каждого свои разделы — дежурному аварии, начальнику только отчёт. Главный
@@ -304,6 +306,7 @@ export class TelegramNotifier {
     siteTopicCount: number;
     quietUntilMs: number;
     recipients: TelegramRecipient[];
+    reportDays: string[];
     knownChats: TelegramKnownChat[];
   } {
     return {
@@ -323,6 +326,7 @@ export class TelegramNotifier {
       siteTopicCount: Object.keys(this.cfg.siteTopics).length,
       quietUntilMs: this.cfg.quietUntilMs,
       recipients: this.cfg.recipients,
+      reportDays: this.cfg.reportDays ?? [],
       knownChats: [...this.knownChats.values()].sort((a, b) => b.atMs - a.atMs).slice(0, 8),
     };
   }
@@ -648,12 +652,26 @@ export class TelegramNotifier {
         if (!item) break;
         const ok = await this.deliver(item.kind, item.site, item.html, item.keyboard);
         if (!ok) break; // связи нет — оставляем в очереди, попробуем позже
+        // Отчёт ДОШЁЛ — отмечаем день. Именно доставку, а не постановку в
+        // очередь: без связи отчёт мог пролежать в ней до вечера.
+        if (item.kind === 'report') this.markReportDay();
         this.queue.shift();
         this.saveQueue();
       }
     } finally {
       this.sending = false;
     }
+  }
+
+  /** Отметить сегодняшний день как «отчёт дошёл». */
+  private markReportDay(): void {
+    const d = new Date();
+    const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const days = this.cfg.reportDays ?? [];
+    if (days.includes(day)) return;
+    this.cfg.reportDays = [...days, day].slice(-30);
+    this.saveSecrets();
+    this.onStatusChange?.();
   }
 
   /** Кому слать: если не задано — узнаём из того, кто написал боту. */

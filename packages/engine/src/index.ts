@@ -4,6 +4,8 @@ import { namesForRdm, sanitizeProject, sanitizeRemoteSettings, type ConfigUniver
 import { AudioStore } from './audio';
 import { AudioPlayer } from './audioplayer';
 import { BackupStore } from './backups';
+import { daysUntilExpiry, EXPIRY_WARNING_DAYS, VENDOR_EMAIL } from '@fountain-studio/shared';
+import { loadLicenseStatus } from './license';
 import { MailNotifier } from './mailnotify';
 import { TelegramNotifier } from './telegram';
 import { buildSiteSnapshot } from './siteSnapshot';
@@ -101,6 +103,41 @@ const telegram = new TelegramNotifier(
  * «что считать аварией» и тихий режим не пришлось повторять во втором месте.
  */
 telegram.onOutgoing = (kind, html, site) => mail.notify(kind, html, site);
+
+/**
+ * Напоминание о продлении лицензии — наружу, а не только полосой в окне.
+ *
+ * Полосу «остаётся N дней» видит тот, кто открыл редактор. На объекте редактор
+ * не открывают неделями: фонтан играет сам. Поэтому за две недели до конца
+ * движок сам пишет в журнал — а оттуда напоминание уходит теми же каналами,
+ * что и аварии: в Telegram и на почту.
+ *
+ * Раз в сутки, а не каждый тик: иначе получателей завалило бы одинаковыми
+ * сообщениями. Через день до конца срока напоминаем каждый раз — это уже
+ * срочно.
+ */
+let licenseRemindedDay = -1;
+function remindAboutLicense(): void {
+  const st = loadLicenseStatus(appDataDir);
+  const left = daysUntilExpiry(st.expiresAt);
+  if (left === null) return;
+  const day = new Date().getDate();
+  if (licenseRemindedDay === day) return;
+  licenseRemindedDay = day;
+  if (left <= 0) {
+    eventLog.log(
+      'license',
+      `срок лицензии истёк${st.graceDaysLeft ? `, осталось льготных дней: ${st.graceDaysLeft}` : ''} — продлите: ${VENDOR_EMAIL}`,
+      'error',
+    );
+    return;
+  }
+  if (left <= EXPIRY_WARNING_DAYS) {
+    eventLog.log('license', `до конца лицензии ${left} дн. — продлите заранее: ${VENDOR_EMAIL}`, 'warn');
+  }
+}
+remindAboutLicense();
+setInterval(remindAboutLicense, 60 * 60_000).unref?.();
 
 /**
  * Команды из чата → действие на объекте. Отправщик уведомлений намеренно не

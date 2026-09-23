@@ -1,3 +1,4 @@
+import { VENDOR_EMAIL as VENDOR_MAIL } from '@fountain-studio/shared';
 /**
  * Тарифы (§27 доработки, «Продукт», 18.09.2026) — тексты и цены в одном
  * месте, чтобы экран приветствия (WelcomeView) и панель лицензии
@@ -61,7 +62,8 @@ export const CUSTOM_DEV_NOTE =
  * появятся на экране приветствия сами (пустые строки просто не рисуются).
  */
 export const VENDOR_CONTACTS = {
-  email: 'belikgeorgij4@gmail.com',
+  // Адрес один на программу — он же в напоминаниях от движка (shared/license.ts).
+  email: VENDOR_MAIL,
   phone: '',
   telegram: '',
   vk: '',

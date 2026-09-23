@@ -861,6 +861,7 @@ function TelegramPanel({ engine }: { engine: EngineConnection }) {
         </label>
       </div>
       <RecipientsBlock engine={engine} />
+      <ReportHistory days={telegram.reportDays} hour={telegram.dailyHour} />
       <p className="dim">
         Состояние: {telegram.hasToken ? 'токен задан' : 'токен не задан'} ·{' '}
         {telegram.chatId
@@ -875,6 +876,43 @@ function TelegramPanel({ engine }: { engine: EngineConnection }) {
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * Приходил ли суточный отчёт каждый день.
+ *
+ * Молчание бота само по себе ничего не значит: может, на объекте всё спокойно,
+ * а может, бот умер ещё неделю назад и никто этого не заметил. Здесь — неделя
+ * по дням: «✔» отчёт дошёл, «—» нет. Отмечается именно ДОСТАВКА, а не отправка.
+ */
+function ReportHistory({ days, hour }: { days: string[]; hour: number }) {
+  const today = new Date();
+  const cells: { label: string; ok: boolean; today: boolean }[] = [];
+  for (let back = 6; back >= 0; back--) {
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - back);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    cells.push({
+      label: `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}`,
+      ok: days.includes(key),
+      today: back === 0,
+    });
+  }
+  const pending = today.getHours() < hour;
+  return (
+    <div className="form-row">
+      <span
+        className="quick-row-label"
+        data-hint="Приходил ли суточный отчёт по дням. Молчание бота само по себе не значит «всё хорошо» — по этой строке видно, что связь была."
+      >
+        Отчёты за неделю:
+      </span>
+      {cells.map((c) => (
+        <span key={c.label} className={c.ok ? 'ok-text' : c.today && pending ? 'dim' : 'warn'}>
+          {c.label} {c.ok ? '✔' : c.today && pending ? '⏳' : '—'}
+        </span>
+      ))}
+    </div>
   );
 }
 
