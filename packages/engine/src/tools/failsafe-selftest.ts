@@ -146,6 +146,60 @@ async function main(): Promise<void> {
   check('вода падает и при выключенном гашении света', !!last2 && pumpIdx.every((i) => last2[i] === 0), last2 ? String(last2[pumpIdx[0]!]) : 'нет кадра');
   check('свет при этом остался гореть', !!last2 && lampIdx.every((i) => last2[i] === 180), last2 ? String(last2[lampIdx[0]!]) : 'нет кадра');
 
+  /*
+   * Режим наладки (см. messages.ts, setBenchMode). На столе интерфейса DMX нет
+   * вовсе, выход «не доставляет» всегда — и гашение каждые timeoutSec роняло
+   * воду и свет в 0: проверить форсунки было нельзя. В режиме наладки гашение
+   * не срабатывает, но ПРИЧИНА (linkBad) по-прежнему видна: интерфейс должен
+   * честно писать, что кадры в линию не уходят.
+   */
+  const engine3 = new Engine({ ...config, benchMode: true });
+  engine3.setProject(sanitizeProject({ ...project, failsafe: { enabled: true, timeoutSec: TIMEOUT_SEC, lights: true } }));
+  engine3.start();
+  const u3 = engine3.universes[0]!;
+  check('режим наладки включён из настроек программы', engine3.benchModeOn());
+  for (const i of pumpIdx) engine3.setChannel(1, i + 1, 200);
+  for (const i of lampIdx) engine3.setChannel(1, i + 1, 180);
+  await sleep(TIMEOUT_SEC * 1000 + 700);
+  const st3 = engine3.failsafeState();
+  check('в режиме наладки гашение не срабатывает', !st3.active, JSON.stringify(st3));
+  check('в режиме наладки вода держится', pumpIdx.every((i) => u3.out[i] === 200), `${u3.out[pumpIdx[0]!]}`);
+  check('в режиме наладки свет держится', lampIdx.every((i) => u3.out[i] === 180), `${u3.out[lampIdx[0]!]}`);
+  check('причина всё равно видна: выход не доставляет', st3.linkBad, JSON.stringify(st3));
+  check('состояние говорит, что режим наладки включён', st3.benchMode);
+
+  // Выключили режим наладки на ходу — гашение обязано сработать снова.
+  engine3.setBenchMode(false);
+  await sleep(TIMEOUT_SEC * 1000 + 700);
+  const st4 = engine3.failsafeState();
+  check('после выключения наладки гашение сработало', st4.active, JSON.stringify(st4));
+  check('вода ушла в 0', pumpIdx.every((i) => u3.out[i] === 0), `${u3.out[pumpIdx[0]!]}`);
+  // И обратно: включили наладку — гашение снимается сразу, не дожидаясь таймаута.
+  engine3.setBenchMode(true);
+  await sleep(300);
+  check('включили наладку — гашение снялось сразу', !engine3.failsafeState().active);
+  check('вода вернулась к своим значениям', pumpIdx.every((i) => u3.out[i] === 200), `${u3.out[pumpIdx[0]!]}`);
+  engine3.stop();
+
+  /*
+   * Признак «выход не доставляет» держится всё время, пока оборудования нет, —
+   * именно по нему интерфейс рисует полосу наладки. Раньше полоса висела на
+   * мгновенном active: гашение то срабатывало, то снималось, и кнопка
+   * «включить режим наладки» исчезала из-под мыши.
+   */
+  const engine4 = new Engine({ ...config, benchMode: true });
+  engine4.setProject(project);
+  engine4.start();
+  await sleep(400);
+  const bad1 = engine4.failsafeState().linkBad;
+  await sleep(600);
+  const bad2 = engine4.failsafeState().linkBad;
+  check('признак недоставки не мигает', bad1 && bad2, `${bad1} → ${bad2}`);
+  (engine4.universes[0]!.outputs[0]! as { healthy?: () => boolean }).healthy = () => true;
+  await sleep(400);
+  check('починили выход — признак снялся', !engine4.failsafeState().linkBad);
+  engine4.stop();
+
   console.log(`failsafe: пройдено ${passed}, ошибок ${failed}`);
   process.exit(failed ? 1 : 0);
 }

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  DMX_MAX_VALUE,
   DMX_UNIVERSE_SIZE,
   DEFAULT_PATTERN_SPEED_SEC,
   STEP_PATTERNS,
@@ -14,12 +13,12 @@ import {
   num,
 } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
-import { requestTab } from '../navigate';
 import { Fader } from '../components/Fader';
+import { ManualBlocked } from '../components/ManualBlocked';
+import { QuickAll } from '../components/QuickAll';
 import { PauseIcon, PlayIcon, StopIcon } from '../components/Icons';
 import { askConfirm } from '../components/ConfirmDialog';
 import { noteManual } from '../manualActivity';
-import { hexToRgb } from '../colorPresets';
 
 /** Варианты числа адресов на странице; 512 — вся вселенная одной лентой. */
 const PAGE_SIZES = [16, 32, 64, 128, 256, DMX_UNIVERSE_SIZE];
@@ -56,18 +55,6 @@ const PATTERN_HINT: Record<TestPatternMode, string> = {
   solo: 'По одному прибору за раз, по порядку адресов — обход всех приборов без беготни к щиту и без второго человека. Сколько держать каждый — поле справа',
 };
 
-/** Только чистые цвета — по требованию §27 доработки: R/G/B, их полные комбинации, белый и чёрный. */
-const PURE_COLOR_PRESETS: { name: string; hex: string }[] = [
-  { name: 'Красный', hex: '#ff0000' },
-  { name: 'Зелёный', hex: '#00ff00' },
-  { name: 'Синий', hex: '#0000ff' },
-  { name: 'Жёлтый', hex: '#ffff00' },
-  { name: 'Пурпурный', hex: '#ff00ff' },
-  { name: 'Голубой', hex: '#00ffff' },
-  { name: 'Белый', hex: '#ffffff' },
-  { name: 'Чёрный', hex: '#000000' },
-];
-
 const ROLE_FADER_CLASS: Partial<Record<ChannelRole, string>> = {
   red: 'fader-red',
   green: 'fader-green',
@@ -85,39 +72,10 @@ function classifyChannel(kind: DeviceKind, role: ChannelRole): string {
 
 /** Консоль прямого управления: фейдеры адресов, тест-генераторы, СТОП. */
 export function ConsoleView({ engine }: { engine: EngineConnection }) {
-  const { project, universes, stats, frames, playback, windState, send, updateProject } = engine;
-  /**
-   * Почему ползунок «падает сразу» — самая частая жалоба с объекта.
-   *
-   * На «Отладке» человек двигает фейдер, а значение возвращается в 0 — и
-   * выглядит это как сломанная программа. На самом деле поверх ручного
-   * управления работает что-то из трёх: аварийное отключение (каждый такт
-   * гасит насосы и клапаны), стоп по расписанию (гасит всё) или движок вообще
-   * не отвечает (тогда не уходит ничего, а фейдер показывает последний
-   * пришедший кадр). Раньше об этом на вкладке не было ни слова.
-   */
-  const blocked: { text: string; fix: string; tab?: 'settings' | 'schedule' } | null = !engine.connected
-    ? {
-        text: 'Нет связи с движком — ползунки, кнопки и тест-генератор сейчас ни на что не влияют.',
-        fix: 'Кадры приборам шлёт движок, а он не отвечает: запустите программу (значок у часов) и дождитесь, пока точка в шапке станет зелёной.',
-      }
-    : engine.failsafe?.active
-      ? {
-          text: `Работает аварийное отключение: ${engine.failsafe.reason || 'причина не указана'}.`,
-          fix: 'Насосы и клапаны принудительно уходят в 0 каждый такт — поэтому ползунок и «падает». Пока налаживаете без оборудования, выключите его: «Настройки» → «Аварийное отключение».',
-          tab: 'settings',
-        }
-      : playback.dark === 'off'
-        ? {
-            text: 'Стоп по расписанию — всё погашено до следующего запуска.',
-            fix: 'Кадр обнуляется после всех слоёв, включая ручные ползунки и тест-генератор. Запустите что-нибудь руками (сцену, шоу) или дождитесь записи расписания.',
-            tab: 'schedule',
-          }
-        : null;
+  const { project, universes, stats, playback, windState, send } = engine;
   const [universeId, setUniverseId] = useState<number | null>(null);
   const [pageSize, setPageSize] = useState(32);
   const [page, setPage] = useState(0);
-  const [customColor, setCustomColor] = useState<string | null>(null);
   /** Область применения тест-генератора — местная, движку уходит вместе с режимом. */
   const [scope, setScope] = useState<TestPatternScope>('all');
   /** Темп текущего режима: шаг для шаговых, период для циклических. Хранится и уходит движку в секундах. */
@@ -154,39 +112,8 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
     send({ type: playback.pausedAll ? 'resumeAll' : 'pauseAll' });
   };
 
-  // Массовое управление по типу прибора (§27 доработки, по примеру прежнего
-  // приложения — «все насосы/клапаны/светильники разом», для пусконаладки).
-  // Пишет во все подходящие адреса каналами setChannel — тот же путь, что и
-  // обычный фейдер, просто циклом по устройствам нужного вида.
-  const setAllOfKind = (kind: DeviceKind, roles: Partial<Record<string, number>>): void => {
-    if (!project) return;
-    for (const d of project.devices) {
-      const profile = profiles.get(d.profileId);
-      if (!profile || profile.kind !== kind) continue;
-      profile.channels.forEach((c, i) => {
-        const v = roles[c.role];
-        if (v !== undefined) send({ type: 'setChannel', universe: d.universe, channel: d.address + i, value: v });
-      });
-    }
-  };
 
-  // Есть ли в патче клапаны вообще — только чтобы не показывать мёртвую кнопку.
-  // Раньше здесь ещё считалось «все ли клапаны сейчас открыты» по живым кадрам,
-  // и подпись кнопки прыгала ОТКРЫТЫ/ЗАКРЫТЫ на каждом кадре тест-генератора:
-  // кнопка выглядела индикатором, хотя это команда. Состояние линии показывают
-  // сами фейдеры, кнопке оно не нужно.
-  const hasValves = useMemo(() => {
-    if (!project) return false;
-    return project.devices.some((d) => {
-      const profile = profiles.get(d.profileId);
-      return !!profile && profile.kind === 'valve' && profile.channels.some((c) => c.role === 'open');
-    });
-  }, [project, profiles]);
 
-  // Что сделает следующее нажатие. Это НЕ состояние линии: сцена, шоу или
-  // тест-генератор могут двигать клапаны сами, и подстраиваться под них
-  // кнопка-команда не должна — иначе снова начнёт прыгать.
-  const [valveNextOpen, setValveNextOpen] = useState(true);
 
   // При первом hello выбираем первую вселенную.
   useEffect(() => {
@@ -225,7 +152,6 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
   const usedChannels = useMemo(() => [...owners.keys()].sort((a, b) => a - b), [owners]);
   const filterActive = onlyUsed && usedChannels.length > 0;
 
-  const frame = universeId !== null ? frames[universeId] : undefined;
   const pattern = stats?.pattern ?? 'off';
   // Единица показа. «Бегущая» живёт в сотых долях секунды — «0.1 с» читается
   // хуже, чем «100 мс», и требует возни с дробями в поле. Остальные режимы
@@ -245,56 +171,8 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
 
   return (
     <>
-      {blocked && (
-        <div className="license-banner license-banner-grace">
-          <span>
-            ⚠ {blocked.text} {blocked.fix}
-          </span>
-          {/*
-            Выключить аварийное гашение можно прямо отсюда.
-            На столе, без подключённого оборудования, выход «не доставляет
-            кадры» всегда — и проверить форсунки было нельзя вовсе: значения
-            гасли каждый такт. Гонять человека в «Настройки» посреди наладки
-            незачем, кнопка нужна там, где он в этот момент работает. Включить
-            обратно — той же кнопкой.
-          */}
-          {engine.failsafe?.active && project && (
-            <button
-              className="btn btn-small"
-              data-hint="Выключить аварийное гашение: насосы и клапаны перестанут уходить в 0 каждый такт, и приборами можно управлять руками. Не забудьте включить обратно перед сдачей объекта."
-              onClick={() =>
-                updateProject({ ...project, failsafe: { ...project.failsafe, enabled: false } })
-              }
-            >
-              Выключить на время наладки
-            </button>
-          )}
-          {blocked.tab && (
-            <button className="btn btn-small" onClick={() => requestTab(blocked.tab!)}>
-              Перейти
-            </button>
-          )}
-        </div>
-      )}
-      {/*
-        Гашение выключено — это НЕ нормальное состояние объекта: о нём надо
-        помнить и вернуть перед сдачей, иначе при обрыве вывода вода останется
-        поднятой.
-      */}
-      {project && !project.failsafe.enabled && (
-        <div className="license-banner">
-          <span>
-            ⚠ Аварийное гашение выключено — приборы держат последнее значение, даже если движок перестанет
-            выдавать кадры. Это режим наладки; перед сдачей объекта включите обратно.
-          </span>
-          <button
-            className="btn btn-small"
-            onClick={() => updateProject({ ...project, failsafe: { ...project.failsafe, enabled: true } })}
-          >
-            Включить
-          </button>
-        </div>
-      )}
+      <ManualBlocked engine={engine} />
+
       <div className="toolbar">
         <div className="group">
           {universes.map((u) => (
@@ -516,75 +394,7 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
         </button>
       </div>
 
-      <div className="quick-controls">
-        <div className="quick-controls-title" data-hint="Одно значение сразу всем приборам этого вида — для пусконаладки">
-          Сразу все приборы одного вида
-        </div>
-
-        <div className="quick-row">
-          <span className="quick-row-label">Свет:</span>
-          <div className="color-presets">
-            {PURE_COLOR_PRESETS.map((p) => (
-              <button
-                key={p.hex}
-                type="button"
-                className="color-swatch"
-                style={{ background: p.hex }}
-                data-hint={p.name}
-                onClick={() => {
-                  const [r, g, b] = hexToRgb(p.hex);
-                  setAllOfKind('lamp', { red: r, green: g, blue: b });
-                }}
-              />
-            ))}
-            <label
-              className="color-swatch color-swatch-custom"
-              style={customColor ? { background: customColor } : undefined}
-              data-hint="Свой цвет — нажмите, чтобы выбрать"
-            >
-              <input
-                type="color"
-                value={customColor ?? '#000000'}
-                onChange={(e) => {
-                  setCustomColor(e.target.value);
-                  const [r, g, b] = hexToRgb(e.target.value);
-                  setAllOfKind('lamp', { red: r, green: g, blue: b });
-                }}
-              />
-            </label>
-          </div>
-        </div>
-
-        <hr className="quick-divider" />
-
-        <div className="quick-row">
-          <span className="quick-row-label">Насосы:</span>
-          <input
-            type="range"
-            min={0}
-            max={255}
-            defaultValue={0}
-            onChange={(e) => setAllOfKind('pump', { intensity: Number(e.target.value) })}
-          />
-        </div>
-
-        <hr className="quick-divider" />
-
-        <div className="quick-row">
-          <span className="quick-row-label">Клапаны:</span>
-          <button
-            className={valveNextOpen ? 'btn toggle-open' : 'btn toggle-closed'}
-            disabled={!hasValves}
-            data-hint="Команда сразу всем клапанам. На кнопке — что произойдёт по нажатию; текущее положение каждого видно на его ползунке"
-            onClick={() => {
-              setAllOfKind('valve', { open: valveNextOpen ? DMX_MAX_VALUE : 0 });
-              setValveNextOpen(!valveNextOpen);
-            }}
-          >
-            {valveNextOpen ? 'Открыть' : 'Закрыть'}
-          </button>
-        </div>
-      </div>
+      <QuickAll project={project} send={send} where="console" />
 
       <main className="faders">
         {(filterActive
@@ -596,8 +406,8 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
         ).map((channel) => (
           <Fader
             key={`${universeId}-${channel}`}
+            universe={universeId}
             channel={channel}
-            value={frame?.[channel - 1] ?? 0}
             owner={owners.get(channel - 1)?.label}
             roleClass={owners.get(channel - 1)?.roleClass}
             twoState={owners.get(channel - 1)?.twoState}

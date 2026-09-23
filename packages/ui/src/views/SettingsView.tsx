@@ -1120,9 +1120,10 @@ function MailPanel({ engine }: { engine: EngineConnection }) {
  * и служебный свет: это свойство объекта, а не компьютера.
  */
 function FailsafePanel({ engine }: { engine: EngineConnection }) {
-  const { project, updateProject, failsafe } = engine;
+  const { project, updateProject, failsafe, engineConfig, send } = engine;
   if (!project) return null;
   const cfg = project.failsafe;
+  const bench = engineConfig?.benchMode === true;
   const update = (patch: Partial<typeof cfg>): void =>
     updateProject({ ...project, failsafe: { ...cfg, ...patch } });
 
@@ -1139,11 +1140,31 @@ function FailsafePanel({ engine }: { engine: EngineConnection }) {
         <p className="error-text" style={{ marginLeft: 0 }}>
           ✖ Сейчас сработало: {failsafe.reason}. Вода отключена.
         </p>
+      ) : failsafe?.linkBad ? (
+        <p className="warn" style={{ marginLeft: 0 }}>
+          ⚠ Выход не доставляет кадры приборам — интерфейс DMX не найден или кабель не подключён
+          {bench ? ' (гашение не срабатывает: включён режим наладки)' : `, через ${cfg.timeoutSec} с вода уйдёт в 0`}.
+        </p>
       ) : (
         <p className="ok-text">
           ✔ Вывод в норме{failsafe && failsafe.trips > 0 ? ` (срабатываний с запуска: ${failsafe.trips})` : ''}
         </p>
       )}
+      {/*
+        Режим наладки — настройка ПРОГРАММЫ, поэтому стоит отдельной строкой, а
+        не среди галочек объекта: объект уезжает на фонтан, и гашение там нужно
+        включённым. Подробнее — в messages.ts (setBenchMode).
+      */}
+      <div className="form-row">
+        <label
+          className="field"
+          data-hint="Наладка на столе: на ЭТОМ компьютере гашение не срабатывает, и приборами можно управлять руками без интерфейса DMX. В объект настройка не попадает — на фонтане гашение останется включённым. Сохраняется в настройках программы: переживает перезагрузку страницы и перезапуск."
+        >
+          <input type="checkbox" checked={bench} onChange={(e) => send({ type: 'setBenchMode', on: e.target.checked })} />{' '}
+          Режим наладки на этом компьютере
+        </label>
+        {bench && <span className="warn">⚠ перед сдачей объекта выключить</span>}
+      </div>
       <div className="form-row">
         <label className="field">
           <input type="checkbox" checked={cfg.enabled} onChange={(e) => update({ enabled: e.target.checked })} />{' '}

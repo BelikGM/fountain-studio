@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { frameBus } from './frameBus';
 import { onConfigResult } from './settingsDraft';
 import type {
   BackupInfo,
@@ -32,6 +33,15 @@ export interface JitterSample {
 }
 /** Раз в секунду (частота 'stats' от движка) — час истории. */
 const MAX_JITTER_SAMPLES = 3600;
+
+/**
+ * Как часто живые кадры попадают в состояние React (мс).
+ *
+ * Живое и плавное рисуется мимо React (см. frameBus.ts), а состояние нужно
+ * таблицам с числами — им пяти раз в секунду достаточно. Реже делать нельзя:
+ * по этим же числам показывается положение клапана и «горит ли свет».
+ */
+const FRAME_STATE_MS = 200;
 
 /**
  * Диалог «в объекте есть несохранённые правки» — попытка переключиться на
@@ -74,6 +84,8 @@ export interface EngineConfigState {
   audioTrebleDb: number;
   /** Нашёлся ли проигрыватель: без него вечерняя программа идёт в тишине. */
   audioReady: boolean;
+  /** Режим наладки: на этом компьютере аварийное гашение не срабатывает. */
+  benchMode: boolean;
 }
 
 /** Внешние пульты: что задано и что сейчас на самом деле (порт открыт, брокер на связи). */
@@ -252,6 +264,10 @@ export function useEngine(): EngineConnection {
     playlist: null,
     pausedAll: false,
   });
+  /** Накопленные кадры для редкой правки состояния React (см. FRAME_STATE_MS). */
+  const pendingFramesRef = useRef<Record<number, Uint8Array>>({});
+  const pendingWireRef = useRef<Record<number, Uint8Array>>({});
+  const frameFlushRef = useRef<number | undefined>(undefined);
   const wsRef = useRef<WebSocket | null>(null);
   /** Сколько наших правок ещё «в полёте» — их эхо от движка не применяем, чтобы не сбивать ввод. */
   const pendingEditsRef = useRef(0);
@@ -317,6 +333,7 @@ export function useEngine(): EngineConnection {
               audioBassDb: msg.audioBassDb,
               audioTrebleDb: msg.audioTrebleDb,
               audioReady: msg.audioReady,
+              benchMode: msg.benchMode,
             });
             break;
           case 'configResult':
@@ -333,11 +350,27 @@ export function useEngine(): EngineConnection {
             break;
           case 'frame': {
             const logical = base64ToBytes(msg.data);
-            setFrames((prev) => ({ ...prev, [msg.universe]: logical }));
-            setWireFrames((prev) => ({
-              ...prev,
-              [msg.universe]: msg.wire ? base64ToBytes(msg.wire) : logical,
-            }));
+            const wire = msg.wire ? base64ToBytes(msg.wire) : logical;
+            /*
+             * Кадр сначала в шину (frameBus) — мимо React: живые значения
+             * рисуют фейдеры и 3D сами, без перерисовки приложения.
+             *
+             * В состояние React тот же кадр попадает НЕ ЧАЩЕ пяти раз в
+             * секунду и одной правкой на все вселенные. Состояние нужно
+             * таблицам («Поток», отладка прибора в 3D), где важны сами числа, а
+             * не плавность; раньше же каждая вселенная дважды за кадр меняла
+             * состояние — и приложение перерисовывалось 40 раз в секунду.
+             */
+            frameBus.push(msg.universe, logical, wire);
+            pendingFramesRef.current[msg.universe] = logical;
+            pendingWireRef.current[msg.universe] = wire;
+            if (frameFlushRef.current === undefined) {
+              frameFlushRef.current = window.setTimeout(() => {
+                frameFlushRef.current = undefined;
+                setFrames({ ...pendingFramesRef.current });
+                setWireFrames({ ...pendingWireRef.current });
+              }, FRAME_STATE_MS);
+            }
             break;
           }
           case 'project':
@@ -527,6 +560,7 @@ export function useEngine(): EngineConnection {
     return () => {
       disposed = true;
       if (retryTimer !== undefined) clearTimeout(retryTimer);
+      if (frameFlushRef.current !== undefined) window.clearTimeout(frameFlushRef.current);
       wsRef.current?.close();
     };
   }, []);

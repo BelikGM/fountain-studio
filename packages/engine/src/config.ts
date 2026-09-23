@@ -107,6 +107,16 @@ export interface EngineConfig {
    */
   playbackLookaheadMs?: number;
   /**
+   * Режим наладки: на ЭТОМ компьютере аварийное гашение не срабатывает.
+   *
+   * Настройка программы, а не объекта: на столе у наладчика интерфейса DMX нет,
+   * выход «не доставляет кадры» всегда, и гашение каждые десять секунд роняет
+   * насосы и свет в 0 — проверить нечего. В объекте гашение при этом остаётся
+   * включённым: он уезжает на фонтан, где это защита. Подробнее — в messages.ts
+   * (setBenchMode).
+   */
+  benchMode?: boolean;
+  /**
    * Откуда прочитаны настройки программы. Нужен, чтобы дописать в тот же файл
    * переключатель подготовки кадров: в установленном приложении человек до
    * этого файла руками не доберётся.
@@ -168,6 +178,8 @@ export function loadAppConfig(appDataDir: string): EngineConfig & { configFile: 
     ...(raw.license ? { license: raw.license } : {}),
     // По умолчанию ВКЛЮЧЕНО: выключается только явным false в настройках.
     playbackWorker: raw.playbackWorker !== false,
+    // Режим наладки — только явным true: по умолчанию защита работает.
+    benchMode: raw.benchMode === true,
     ...(typeof raw.playbackLookaheadMs === 'number' && Number.isFinite(raw.playbackLookaheadMs)
       ? { playbackLookaheadMs: Math.max(0, Math.min(2000, Math.round(raw.playbackLookaheadMs))) }
       : {}),
@@ -235,6 +247,8 @@ export function loadConfig(argv: string[]): EngineConfig & { configFile: string 
     ...(raw.mqtt ? { mqtt: raw.mqtt } : {}),
     // По умолчанию ВКЛЮЧЕНО: выключается только явным false в настройках.
     playbackWorker: raw.playbackWorker !== false,
+    // Режим наладки — только явным true: по умолчанию защита работает.
+    benchMode: raw.benchMode === true,
     ...(typeof raw.playbackLookaheadMs === 'number' && Number.isFinite(raw.playbackLookaheadMs)
       ? { playbackLookaheadMs: Math.max(0, Math.min(2000, Math.round(raw.playbackLookaheadMs))) }
       : {}),

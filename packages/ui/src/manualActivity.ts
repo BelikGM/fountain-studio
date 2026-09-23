@@ -23,9 +23,34 @@ export interface ManualActivity {
 let last: ManualActivity | null = null;
 const subs = new Set<(a: ManualActivity) => void>();
 
+/**
+ * Как часто сообщаем подписчикам, мс.
+ *
+ * Отметку ставит КАЖДОЕ движение пальцем по фейдеру, а в 3D — ещё и каждый
+ * канал каждого прибора в наборе: «все насосы» на пятидесяти форсунках давали
+ * полсотни вызовов на одно движение мыши. Подписчик у отметки один — строка
+ * состояния внизу, и мерит она минуты. Пока сообщали сразу, эта строка
+ * перерисовывала ВСЁ приложение по нескольку тысяч раз в секунду, и ползунки
+ * на «Отладке» ехали рывками.
+ */
+const NOTIFY_MS = 1000;
+let notifiedAtMs = 0;
+let notifyTimer: number | undefined;
+
+function notify(): void {
+  notifiedAtMs = Date.now();
+  notifyTimer = undefined;
+  if (last) for (const fn of subs) fn(last);
+}
+
 export function noteManual(where: ManualWhere, what: string): void {
   last = { where, what, atMs: Date.now() };
-  for (const fn of subs) fn(last);
+  if (notifyTimer !== undefined) return;
+  const waitMs = NOTIFY_MS - (Date.now() - notifiedAtMs);
+  if (waitMs <= 0) notify();
+  // Хвост: последнее вмешательство не должно потеряться, если человек
+  // отпустил ползунок сразу после предыдущего сообщения.
+  else notifyTimer = setTimeout(notify, waitMs) as unknown as number;
 }
 
 export function lastManual(): ManualActivity | null {

@@ -610,12 +610,16 @@ select {
   left: 0;
   right: 0;
   background: var(--accent-fill);
-  /* Кадры DMX приходят двадцать раз в секунду, и без сглаживания полоса
-     дёргалась ступеньками — особенно когда общий ползунок насосов двигает
-     сразу все фейдеры. */
-  transition: height 0.1s linear;
+  /* Уровень задаётся масштабом, а не высотой, и без CSS-перехода.
+     Высота меняла раскладку: каждый кадр «Волны» браузер заново раскладывал
+     все фейдеры страницы (на объекте их сотни), а переход по высоте делал это
+     ещё и между кадрами. Масштаб рисуется видеокартой без пересчёта раскладки;
+     плавность даёт фильтр в Fader.tsx. */
+  height: 100%;
+  transform-origin: bottom;
+  transform: scaleY(0);
+  will-change: transform;
 }
-.fader-dragging .fader-fill { transition: height 0.03s linear; }
 /* Кнопки действий в строке таблицы — всегда в одну линию: когда под строкой
    раскрыта панель (калибровка, Modbus), столбец сжимался и кнопки вставали
    столбиком во всех строках. */
@@ -653,7 +657,7 @@ select {
 }
 .fader-toggle:hover { border-color: var(--accent); }
 .fader-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.fader-two-state .fader-fill { transition: height 0.12s ease; }
+.fader-two-state .fader-fill { transition: transform 0.12s ease; }
 .fader-two-state .fader-value { font-size: 10px; letter-spacing: 0.02em; }
 
 .fader-channel {

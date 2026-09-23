@@ -1,57 +1,35 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import { DMX_MAX_VALUE } from '@fountain-studio/shared';
+import { frameBus } from '../frameBus';
 
 /**
- * Плавное значение фейдера.
+ * Вертикальный фейдер 0–255 (для двухпозиционных — тумблер).
  *
- * Кадры DMX приходят двадцать раз в секунду, поэтому и полоса, и цифра
- * прыгали ступеньками: особенно заметно, когда общий ползунок насосов двигает
- * разом полсотни фейдеров. Здесь значение догоняет заданное фильтром первого
- * порядка — за кадр проходит фиксированную долю оставшегося пути, поэтому
- * скачок любой величины сглаживается одинаково ровно.
+ * Значение фейдер берёт САМ из шины кадров (frameBus) и рисует его прямо в DOM,
+ * без состояния React. Так сделано не из любви к DOM: раньше каждый фейдер
+ * получал значение пропом и на каждом кадре от движка (10 раз в секунду)
+ * перерисовывался весь список, а сглаживание крутило у каждого фейдера свой
+ * requestAnimationFrame со setState на каждом шаге. На объекте, где приборов
+ * сотни, это давало десятки тысяч перерисовок в секунду: ползунок ехал за
+ * пальцем рывками, а через несколько минут окно вставало совсем.
  *
- * Во время перетаскивания постоянная времени втрое короче: фейдер должен
- * идти за пальцем, а не плыть следом.
+ * Сглаживание. Кадры приходят десять раз в секунду, поэтому и полоса, и цифра
+ * шли ступеньками — особенно когда общий ползунок насосов двигает разом
+ * полсотни фейдеров. Значение догоняет цель фильтром первого порядка: за такт
+ * проходит фиксированную долю оставшегося пути, и скачок любой величины
+ * сглаживается одинаково ровно. Пока тянут — постоянная времени втрое короче:
+ * фейдер должен идти за пальцем, а не плыть следом.
  */
-function useSmoothValue(target: number, dragging: boolean): number {
-  const [shown, setShown] = useState(target);
-  const currentRef = useRef(target);
-  const rafRef = useRef(0);
-  const lastRef = useRef(0);
 
-  useEffect(() => {
-    // Разница меньше единицы DMX — анимировать нечего.
-    if (Math.abs(currentRef.current - target) < 1) {
-      currentRef.current = target;
-      setShown(target);
-      return;
-    }
-    const tauMs = dragging ? 35 : 105;
-    lastRef.current = performance.now();
-    const step = (now: number): void => {
-      const dt = Math.min(100, now - lastRef.current);
-      lastRef.current = now;
-      const k = 1 - Math.exp(-dt / tauMs);
-      currentRef.current += (target - currentRef.current) * k;
-      if (Math.abs(target - currentRef.current) < 0.5) {
-        currentRef.current = target;
-        setShown(target);
-        return;
-      }
-      setShown(Math.round(currentRef.current));
-      rafRef.current = requestAnimationFrame(step);
-    };
-    rafRef.current = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [target, dragging]);
-
-  return shown;
-}
+/** Постоянная времени сглаживания, мс: обычная и во время перетаскивания. */
+const TAU_IDLE_MS = 105;
+const TAU_DRAG_MS = 35;
 
 interface FaderProps {
-  /** DMX-адрес 1..512 (для подписи). */
+  /** Вселенная, из кадра которой берём значение (null — ещё не выбрана). */
+  universe: number | null;
+  /** DMX-адрес 1..512 (для подписи и для чтения кадра). */
   channel: number;
-  value: number;
   /** Владелец адреса из патча («Насос 1 · Мощность»); нет — адрес свободен. */
   owner?: string;
   /** CSS-класс по типу прибора/роли канала (§27 доработки) — красит цифру и полосу. */
@@ -67,41 +45,122 @@ interface FaderProps {
   onChange: (value: number) => void;
 }
 
-/** Вертикальный фейдер 0–255 (для двухпозиционных — тумблер) с управлением мышью/тачем. */
-export function Fader({ channel, value, owner, roleClass, twoState, onChange }: FaderProps) {
-  const trackRef = useRef<HTMLDivElement>(null);
-  const [dragValue, setDragValue] = useState<number | null>(null);
+export const Fader = memo(function Fader({
+  universe,
+  channel,
+  owner,
+  roleClass,
+  twoState,
+  onChange,
+}: FaderProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const trackRef = useRef<HTMLElement | null>(null);
+  const fillRef = useRef<HTMLDivElement>(null);
+  const textRef = useRef<HTMLDivElement>(null);
+  /** Значение под пальцем: пока тянут, показываем его, а не кадр движка. */
+  const dragRef = useRef<number | null>(null);
+  /**
+   * Размер шкалы, замеренный в начале протяжки. Мерить его на каждом движении
+   * нельзя: мы только что поменяли высоту полосы, и замер заставляет браузер
+   * тут же пересчитать раскладку ВСЕХ фейдеров страницы. На 400 фейдерах это
+   * было ~20 мс на каждое движение мыши — ползунок отставал от пальца.
+   */
+  const rectRef = useRef<DOMRect | null>(null);
+  /** Сглаженное значение (с дробной частью) и последнее НАРИСОВАННОЕ целое. */
+  const smoothRef = useRef(0);
+  const paintedRef = useRef(Number.NaN);
 
-  const dragging = dragValue !== null;
-  const shown = useSmoothValue(dragValue ?? value, dragging);
-  const isOpen = shown >= 128;
+  const paint = (value: number): void => {
+    if (paintedRef.current === value) return;
+    paintedRef.current = value;
+    const open = value >= 128;
+    // Масштаб, а не высота — см. .fader-fill в styles.css: без пересчёта раскладки.
+    if (fillRef.current) fillRef.current.style.transform = `scaleY(${twoState ? (open ? 1 : 0) : value / DMX_MAX_VALUE})`;
+    if (textRef.current) textRef.current.textContent = twoState ? (open ? 'Откр' : 'Закр') : String(value);
+    if (twoState) {
+      const btn = trackRef.current;
+      if (btn) {
+        btn.setAttribute(
+          'data-hint',
+          `${owner ?? `адрес ${channel}`} — ${open ? 'открыт' : 'закрыт'}, нажмите чтобы переключить`,
+        );
+      }
+    }
+  };
+
+  // Подписка на шину кадров: один общий такт на страницу, рисуем в DOM.
+  useEffect(() => {
+    smoothRef.current = frameBus.value(universe, channel);
+    paintedRef.current = Number.NaN;
+    paint(Math.round(smoothRef.current));
+    let lastMs = performance.now();
+    return frameBus.subscribe(() => {
+      const now = performance.now();
+      const dt = Math.min(100, now - lastMs);
+      lastMs = now;
+      const dragging = dragRef.current !== null;
+      const target = dragging ? dragRef.current! : frameBus.value(universe, channel);
+      const k = 1 - Math.exp(-dt / (dragging ? TAU_DRAG_MS : TAU_IDLE_MS));
+      let next = smoothRef.current + (target - smoothRef.current) * k;
+      // Разница меньше половины единицы DMX — доводим сразу: иначе фильтр
+      // бесконечно подбирается к цели и такт никогда не останавливается.
+      const settled = Math.abs(target - next) < 0.5;
+      if (settled) next = target;
+      smoothRef.current = next;
+      paint(Math.round(next));
+      return !settled;
+    });
+  }, [universe, channel, twoState, owner]);
+
+  const setDragging = (on: boolean): void => {
+    rootRef.current?.classList.toggle('fader-dragging', on);
+  };
 
   const applyPointer = (clientY: number): void => {
-    const rect = trackRef.current!.getBoundingClientRect();
+    const track = trackRef.current;
+    if (!track) return;
+    const rect = rectRef.current ?? track.getBoundingClientRect();
     const ratio = 1 - (clientY - rect.top) / rect.height;
     const v = Math.max(0, Math.min(DMX_MAX_VALUE, Math.round(ratio * DMX_MAX_VALUE)));
-    setDragValue(v);
+    dragRef.current = v;
+    // Рисуем сразу, не дожидаясь такта: палец не должен ждать кадра.
+    smoothRef.current = v;
+    paint(v);
+    frameBus.wake();
     onChange(v);
   };
 
   const toggle = (): void => {
-    const v = isOpen ? 0 : DMX_MAX_VALUE;
-    setDragValue(v);
+    const v = paintedRef.current >= 128 ? 0 : DMX_MAX_VALUE;
+    dragRef.current = v;
+    smoothRef.current = v;
+    paint(v);
+    frameBus.wake();
     onChange(v);
+    // Тумблер не тянут — через миг снова показываем то, что на линии.
+    window.setTimeout(() => {
+      dragRef.current = null;
+      frameBus.wake();
+    }, 250);
   };
 
-  const cls =
-    (owner ? `fader fader-owned ${roleClass ?? ''}` : 'fader') + (dragging ? ' fader-dragging' : '');
+  const cls = (owner ? `fader fader-owned ${roleClass ?? ''}` : 'fader') + (twoState ? ' fader-two-state' : '');
 
   if (twoState) {
     return (
-      <div
-        className={`${cls} fader-two-state`}
-        data-hint={`${owner ?? `адрес ${channel}`} — ${isOpen ? 'открыт' : 'закрыт'}, нажмите чтобы переключить`}
-      >
-        <div className="fader-value">{isOpen ? 'Откр' : 'Закр'}</div>
-        <button type="button" className="fader-track fader-toggle" onClick={toggle}>
-          <div className="fader-fill" style={{ height: isOpen ? '100%' : '0%' }} />
+      <div ref={rootRef} className={cls}>
+        <div className="fader-value" ref={textRef}>
+          Закр
+        </div>
+        <button
+          type="button"
+          className="fader-track fader-toggle"
+          ref={(n) => {
+            trackRef.current = n;
+          }}
+          onClick={toggle}
+        >
+          <div className="fader-fill" ref={fillRef} />
           {owner && <span className="fader-name">{owner}</span>}
         </button>
         <div className="fader-channel">{channel}</div>
@@ -110,21 +169,37 @@ export function Fader({ channel, value, owner, roleClass, twoState, onChange }: 
   }
 
   return (
-    <div className={cls} data-hint={owner ?? `адрес ${channel} свободен`}>
-      <div className="fader-value">{shown}</div>
+    <div ref={rootRef} className={cls} data-hint={owner ?? `адрес ${channel} свободен`}>
+      <div className="fader-value" ref={textRef}>
+        0
+      </div>
       <div
-        ref={trackRef}
+        ref={(n) => {
+          trackRef.current = n;
+        }}
         className="fader-track"
         onPointerDown={(e) => {
-          e.currentTarget.setPointerCapture(e.pointerId);
+          try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+          } catch {
+            // Захват недоступен (перо, эмуляция) — тянуть всё равно можно,
+            // пока указатель над шкалой.
+          }
+          rectRef.current = e.currentTarget.getBoundingClientRect();
+          setDragging(true);
           applyPointer(e.clientY);
         }}
         onPointerMove={(e) => {
           if (e.buttons & 1) applyPointer(e.clientY);
         }}
-        onPointerUp={() => setDragValue(null)}
+        onPointerUp={() => {
+          rectRef.current = null;
+          setDragging(false);
+          dragRef.current = null;
+          frameBus.wake();
+        }}
       >
-        <div className="fader-fill" style={{ height: `${(shown / DMX_MAX_VALUE) * 100}%` }} />
+        <div className="fader-fill" ref={fillRef} />
         {/*
           Имя прибора — прямо на шкале, снизу вверх. Раньше под ползунком был
           только номер адреса, а чей он — только в подсказке: чтобы найти
@@ -135,4 +210,4 @@ export function Fader({ channel, value, owner, roleClass, twoState, onChange }: 
       <div className="fader-channel">{channel}</div>
     </div>
   );
-}
+});

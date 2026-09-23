@@ -141,6 +141,7 @@ export function startServer(
     audioBassDb: engine.config.audio.bassDb,
     audioTrebleDb: engine.config.audio.trebleDb,
     audioReady: player?.ready() ?? false,
+    benchMode: engine.benchModeOn(),
   });
   const broadcastNetwork = (): void => {
     if (net) broadcast({ type: 'network', state: net.state() });
@@ -593,6 +594,15 @@ export function startServer(
           saveAppConfigPatch(engine.config.configFile ?? '', frameModeToConfig(msg.mode));
           broadcast(configMessage());
           broadcastPlayback();
+          break;
+        }
+        case 'setBenchMode': {
+          // Настройка ПРОГРАММЫ: пишем в app-config.json сразу, чтобы режим
+          // наладки переживал и перезагрузку страницы, и перезапуск программы.
+          // В объект не лезем — он уезжает на фонтан, где гашение нужно.
+          engine.setBenchMode(msg.on === true);
+          saveAppConfigPatch(engine.config.configFile ?? '', { benchMode: engine.benchModeOn() });
+          broadcast(configMessage());
           break;
         }
         case 'updateConfig': {

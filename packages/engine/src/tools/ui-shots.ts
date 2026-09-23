@@ -48,13 +48,18 @@ const scenarioHead = JSON.parse(fs.readFileSync(scenarioFile, 'utf8')) as {
   appConfig?: Record<string, unknown>;
   lines?: Record<string, unknown>;
   engineEnv?: Record<string, string>;
+  /** Свой проект вместо демо (путь к project.json) — например, большой, чтобы проверить скорость. */
+  projectFile?: string;
 };
 const scenarioAppConfig = scenarioHead.appConfig ?? {};
 fs.writeFileSync(path.join(appData, 'app-config.json'), JSON.stringify({ ...scenarioAppConfig, server: { port: PORT } }));
 const license = path.join(defaultAppDataDir(), 'fountain.license.json');
 if (fs.existsSync(license)) fs.copyFileSync(license, path.join(appData, 'fountain.license.json'));
 else console.warn('лицензии на этом компьютере нет — редактор покажет экран активации');
-fs.writeFileSync(path.join(proj, 'project.json'), JSON.stringify(sanitizeProject(createDemoProject())));
+const ownProject = scenarioHead.projectFile
+  ? JSON.parse(fs.readFileSync(path.resolve(path.dirname(scenarioFile), scenarioHead.projectFile), 'utf8'))
+  : createDemoProject();
+fs.writeFileSync(path.join(proj, 'project.json'), JSON.stringify(sanitizeProject(ownProject)));
 fs.writeFileSync(
   path.join(proj, 'lines.json'),
   JSON.stringify({

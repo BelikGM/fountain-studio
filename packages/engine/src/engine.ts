@@ -295,7 +295,19 @@ export class Engine {
   /** С какого момента держится беда (0 — всё в порядке): такт или выходы. */
   private stallSinceMs = 0;
   private linkBadSinceMs = 0;
-  private failsafe: FailsafeState = { active: false, reason: '', sinceMs: 0, trips: 0 };
+  private failsafe: FailsafeState = {
+    active: false,
+    reason: '',
+    sinceMs: 0,
+    trips: 0,
+    linkBad: false,
+    benchMode: false,
+  };
+  /**
+   * Режим наладки: на ЭТОМ компьютере гашение не срабатывает (см. setBenchMode
+   * и messages.ts). Настройка программы — приходит из app-config.json.
+   */
+  private benchMode = false;
   /** Сообщить наружу, что аварийное отключение включилось или снялось. */
   onFailsafeChange: ((state: FailsafeState) => void) | null = null;
 
@@ -315,6 +327,8 @@ export class Engine {
         outputs: u.outputs.map(createOutput),
       });
     }
+    this.benchMode = config.benchMode === true;
+    this.failsafe = { ...this.failsafe, benchMode: this.benchMode };
     this.frameMode = frameModeFromConfig(config.playbackWorker !== false, config.playbackLookaheadMs ?? FRAME_LOOKAHEAD_MS);
     this.playbackSource = this.makePlayback(this.frameMode);
     this.ticker = new Ticker(config.timing.tickMs, config.timing.spinMs, (n) => this.tick(n));
@@ -744,10 +758,30 @@ export class Engine {
     const now = Date.now();
     const prev = this.lastTickWallMs;
     this.lastTickWallMs = now;
-    if (!this.failsafeConfig.enabled) {
-      this.stallSinceMs = 0;
+
+    // 2. Выходы, которые умеют сказать о доставке. Считаем ВСЕГДА, даже когда
+    // гашение выключено или идёт наладка: интерфейсу нужно знать причину, а не
+    // только мгновенное «сработало/не сработало» (см. FailsafeState.linkBad).
+    let known = 0;
+    let bad = 0;
+    for (const u of this.universes) {
+      for (const o of u.outputs) {
+        if (!o.healthy) continue;
+        known++;
+        if (!o.healthy()) bad++;
+      }
+    }
+    const linkBadNow = known > 0 && bad === known;
+    if (linkBadNow) {
+      if (this.linkBadSinceMs === 0) this.linkBadSinceMs = now;
+    } else {
       this.linkBadSinceMs = 0;
+    }
+
+    if (!this.failsafeConfig.enabled || this.benchMode) {
+      this.stallSinceMs = 0;
       if (this.failsafe.active) this.setFailsafe(false, '');
+      else this.touchFailsafe(linkBadNow);
       return;
     }
     const limitMs = this.failsafeConfig.timeoutSec * 1000;
@@ -762,22 +796,6 @@ export class Engine {
       this.stallSinceMs = 0;
     }
 
-    // 2. Выходы, которые умеют сказать о доставке.
-    let known = 0;
-    let bad = 0;
-    for (const u of this.universes) {
-      for (const o of u.outputs) {
-        if (!o.healthy) continue;
-        known++;
-        if (!o.healthy()) bad++;
-      }
-    }
-    if (known > 0 && bad === known) {
-      if (this.linkBadSinceMs === 0) this.linkBadSinceMs = now;
-    } else {
-      this.linkBadSinceMs = 0;
-    }
-
     const stalled = this.stallSinceMs > 0;
     const linkLost = this.linkBadSinceMs > 0 && now - this.linkBadSinceMs > limitMs;
     // 3. Расчёт в отдельном потоке: поток умер или встал. Кадр при этом
@@ -788,7 +806,10 @@ export class Engine {
     const calcLost = !this.playback.healthy;
 
     const active = stalled || linkLost || calcLost;
-    if (active === this.failsafe.active) return;
+    if (active === this.failsafe.active) {
+      this.touchFailsafe(linkBadNow);
+      return;
+    }
     this.setFailsafe(
       active,
       stalled
@@ -801,12 +822,48 @@ export class Engine {
     );
   }
 
+  /**
+   * Обновить причину («выход не доставляет кадры») и режим наладки, не трогая
+   * само гашение. Интерфейс рисует полосу наладки по этим признакам, а не по
+   * мгновенному active: иначе кнопка «выключить на время наладки» то
+   * появлялась, то исчезала — ровно на это и жаловались с объекта.
+   */
+  private touchFailsafe(linkBad: boolean): void {
+    if (this.failsafe.linkBad === linkBad && this.failsafe.benchMode === this.benchMode) return;
+    this.failsafe = { ...this.failsafe, linkBad, benchMode: this.benchMode };
+    this.onFailsafeChange?.(this.failsafe);
+  }
+
+  /** Режим наладки: гашение на этом компьютере не срабатывает (настройка программы). */
+  setBenchMode(on: boolean): void {
+    if (this.benchMode === on) return;
+    this.benchMode = on;
+    this.config.benchMode = on;
+    eventLog.log(
+      'engine',
+      on
+        ? 'Включён режим наладки: аварийное гашение на этом компьютере не срабатывает — приборами можно управлять без интерфейса DMX.'
+        : 'Режим наладки выключен: аварийное гашение снова работает.',
+      on ? 'warn' : 'info',
+    );
+    // Гашение может быть активно прямо сейчас — снимаем его тем же тиком, не
+    // ожидая следующей проверки, иначе вода ещё секунду будет в нуле.
+    if (on && this.failsafe.active) this.setFailsafe(false, '');
+    else this.touchFailsafe(this.failsafe.linkBad);
+  }
+
+  benchModeOn(): boolean {
+    return this.benchMode;
+  }
+
   private setFailsafe(active: boolean, reason: string): void {
     this.failsafe = {
       active,
       reason: active ? reason : '',
       sinceMs: active ? Date.now() : 0,
       trips: this.failsafe.trips + (active ? 1 : 0),
+      linkBad: this.linkBadSinceMs > 0,
+      benchMode: this.benchMode,
     };
     if (active) {
       eventLog.log(

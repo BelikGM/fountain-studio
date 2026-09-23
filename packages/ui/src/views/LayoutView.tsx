@@ -41,6 +41,9 @@ import {
   num,
 } from '@fountain-studio/shared';
 import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
+import { frameBus } from '../frameBus';
+import { ManualBlocked } from '../components/ManualBlocked';
+import { QuickAll } from '../components/QuickAll';
 import { SmartSearch } from '../components/SmartSearch';
 import { noteManual } from '../manualActivity';
 import { hexToRgb } from '../colorPresets';
@@ -85,7 +88,7 @@ type Ask = (text: string, options?: ConfirmOptions) => Promise<boolean>;
 
 /** Вкладка «3D»: схема фонтана, живая визуализация струй и света, импорт DXF. */
 export function LayoutView({ engine }: { engine: EngineConnection }) {
-  const { project, frames, wireFrames, send, updateProject, windState } = engine;
+  const { project, frames, send, updateProject, windState } = engine;
   const [selected, setSelected] = useState<Selected>(null);
   const [multi, setMulti] = useState<MultiSel>(EMPTY_MULTI);
   const multiRef = useRef(multi);
@@ -159,8 +162,12 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
   // Сцена читает кадр ЛИНИИ: если адреса переадресованы, на объекте будет
   // именно он. Отладка ниже по-прежнему работает с расчётными адресами —
   // там вы управляете своим прибором, а не смотрите на результат.
-  const framesRef = useRef(wireFrames);
-  framesRef.current = wireFrames;
+  //
+  // Кадры берём из шины (frameBus), а не из состояния React: в шину они
+  // попадают сразу, как пришли от движка, а состояние обновляется редко
+  // (см. useEngine.ts). Раньше плавность 3D зависела от частоты перерисовок
+  // приложения — теперь rAF-цикл сцены читает свежий кадр сам.
+  const framesRef = useRef(frameBus.wire);
   const deviceIndex = useMemo(() => (project ? buildDeviceIndex(project) : new Map()), [project]);
   const deviceIndexRef = useRef(deviceIndex);
   deviceIndexRef.current = deviceIndex;
@@ -468,7 +475,14 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
   const setLayout = (next: FountainLayout): void => updateProject({ ...project, layout: next });
 
   return (
-    <main className="view view-split">
+    <>
+      {/*
+        Та же полоса, что на «Отладке»: пока идёт аварийное гашение или выход не
+        доставляет кадры, ползунки прибора в панели справа ни на что не влияют —
+        и человек должен видеть ПОЧЕМУ здесь же, а не искать по вкладкам.
+      */}
+      <ManualBlocked engine={engine} />
+      <main className="view view-split">
       <aside className="sidebar">
         <ElementList
           layout={layout}
@@ -632,8 +646,15 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
             )}
           </>
         </ActiveWrap>
+        {/*
+          «Сразу все приборы одного вида» — та же панель, что на «Отладке».
+          В 3D она нужна не меньше: здесь видно результат, и бегать на другую
+          вкладку ради «поднять все насосы» незачем.
+        */}
+        <QuickAll project={project} send={send} where="layout" />
       </aside>
-    </main>
+      </main>
+    </>
   );
 }
 
@@ -2018,6 +2039,54 @@ function pumpFaders(nozzles: Nozzle[]): { id: string; label: string }[] {
   ];
 }
 
+/**
+ * Ползунок насоса в отладке прибора.
+ *
+ * Показывает то, что на линии, но ПОКА ТЯНУТ — своё положение. Раньше значение
+ * бралось прямо из кадра, и ползунок вырывался из-под пальца: движок отвечает
+ * своим кадром не мгновенно, а если работает аварийное гашение, то и вовсе
+ * присылает нули. Выглядело это как «в 3D приборы не включаются» — при том что
+ * команда уходила исправно.
+ */
+function PumpFader({
+  label,
+  deviceName,
+  live,
+  onChange,
+}: {
+  label: string;
+  deviceName?: string;
+  /** Значение с линии. */
+  live: number;
+  onChange: (value: number) => void;
+}) {
+  const [held, setHeld] = useState<number | null>(null);
+  const shown = held ?? live;
+  return (
+    <div className="form-row">
+      <span className="quick-row-label" data-hint={deviceName}>
+        {label}:
+      </span>
+      <input
+        type="range"
+        min={0}
+        max={DMX_MAX_VALUE}
+        value={shown}
+        onChange={(e) => {
+          const v = Number(e.target.value);
+          setHeld(v);
+          onChange(v);
+        }}
+        // Отпустили — ещё полсекунды показываем своё, чтобы успел дойти кадр, и
+        // только потом снова верим линии.
+        onPointerUp={() => window.setTimeout(() => setHeld(null), 500)}
+        onBlur={() => setHeld(null)}
+      />
+      <span className="dim">{shown}</span>
+    </div>
+  );
+}
+
 function LiveDebug({
   project,
   frames,
@@ -2049,22 +2118,29 @@ function LiveDebug({
     if (i < 0) return 0;
     return frames[d.universe]?.[d.address - 1 + i] ?? 0;
   };
+  // noteManual — ОДИН раз на действие, а не на каждый канал каждого прибора:
+  // отметку слушает строка состояния внизу, и в наборе из пятидесяти форсунок
+  // полсотни отметок за одно движение мыши перерисовывали всё приложение
+  // (см. manualActivity.ts).
   const write = (deviceIds: string[], role: ChannelRole, value: number): void => {
+    let what = '';
     for (const id of deviceIds) {
       const d = byId.get(id);
       const pr = d && profiles.get(d.profileId);
       if (!d || !pr) continue;
       pr.channels.forEach((c, i) => {
         if (c.role === role) {
-          noteManual('layout', d.name);
+          what = what === '' ? d.name : `${deviceIds.length} прибора(ов)`;
           send({ type: 'setChannel', universe: d.universe, channel: d.address + i, value });
         }
       });
     }
+    if (what !== '') noteManual('layout', what);
   };
   const setColor = (hex: string, keepSwatch = false): void => {
     if (!keepSwatch) setLight(hex);
     const [r, g, bb] = hexToRgb(hex);
+    let what = '';
     for (const id of lightIds) {
       const d = byId.get(id);
       const pr = d && profiles.get(d.profileId);
@@ -2081,11 +2157,12 @@ function LiveDebug({
                   ? Math.max(r, g, bb)
                   : undefined;
         if (v !== undefined) {
-          noteManual('layout', d.name);
+          what = what === '' ? d.name : `свет, ${lightIds.length} прибора(ов)`;
           send({ type: 'setChannel', universe: d.universe, channel: d.address + i, value: v });
         }
       });
     }
+    if (what !== '') noteManual('layout', what);
   };
 
   const nothing = pumps.length === 0 && valveIds.length === 0 && lightIds.length === 0;
@@ -2107,23 +2184,15 @@ function LiveDebug({
               подписан просто «Насос»; второй появляется только если насос
               добавлен кнопкой «+». У вариативной их изначально два — это два
               независимых насоса: подачи и раскрытия конуса. */}
-          {pumps.map(({ id, label }) => {
-            const d = byId.get(id);
-            const val = readRole(id, 'intensity');
-            return (
-              <div className="form-row" key={id + label}>
-                <span className="quick-row-label" data-hint={d?.name}>{label}:</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={DMX_MAX_VALUE}
-                  value={val}
-                  onChange={(e) => write([id], 'intensity', Number(e.target.value))}
-                />
-                <span className="dim">{val}</span>
-              </div>
-            );
-          })}
+          {pumps.map(({ id, label }) => (
+            <PumpFader
+              key={id + label}
+              label={label}
+              deviceName={byId.get(id)?.name}
+              live={readRole(id, 'intensity')}
+              onChange={(v) => write([id], 'intensity', v)}
+            />
+          ))}
           {valveIds.length > 0 && (
             <div className="form-row">
               <span className="quick-row-label">Клапан{valveIds.length > 1 ? ` (${valveIds.length})` : ''}:</span>
