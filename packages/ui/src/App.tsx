@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { canEditShows, EXPIRY_WARNING_DAYS, daysUntilExpiry,
+import {
+  PROTOCOL_VERSION, canEditShows, EXPIRY_WARNING_DAYS, daysUntilExpiry,
   num,
 } from '@fountain-studio/shared';
 import { VENDOR_EMAIL } from './plans';
@@ -437,7 +438,7 @@ export function App() {
             style={{ marginLeft: 6 }}
             data-hint={
               engine.engineConfig?.autosaveEnabled
-                ? `Есть несохранённые правки. Автосохранение — раз в ${engine.engineConfig.autosaveMin} мин; нажмите, чтобы сохранить сейчас (Ctrl+S).`
+                ? `Есть несохранённые правки. Автосохранение — раз в ${engine.engineConfig.autosaveSec} с; нажмите, чтобы сохранить сейчас (Ctrl+S).`
                 : 'Есть несохранённые правки, автосохранение выключено. Нажмите, чтобы сохранить (Ctrl+S).'
             }
             onClick={() => send({ type: 'saveNow' })}
@@ -527,6 +528,21 @@ export function App() {
       */}
       {effectiveTab !== 'settings' && (
         <LinesDraftBanner engine={engine} onOpenSettings={() => setTab('settings')} />
+      )}
+      {/*
+        Движок старее редактора. Движок — отдельный процесс и живёт дольше:
+        редактор обновился, а движок остался прежним, и новые кнопки молча
+        не работали (23.09.2026: «Режим отладки» не включался, автосохранение
+        выглядело выключенным). Номер протокола движок присылает в hello.
+      */}
+      {engine.connected && engine.engineProtocol !== null && engine.engineProtocol !== PROTOCOL_VERSION && (
+        <div className="license-banner license-banner-grace">
+          <span>
+            ⚠ Движок запущен из {engine.engineProtocol < PROTOCOL_VERSION ? 'более старой' : 'более новой'} версии, чем
+            редактор, — часть кнопок работать не будет (режим отладки, автосохранение и другие новые). Перезапустите
+            программу: значок у часов → «Остановить фонтан и выйти», затем запустите снова.
+          </span>
+        </div>
       )}
       {/*
         Объект правят вдвоём с разных машин. Каждый редактор шлёт движку объект

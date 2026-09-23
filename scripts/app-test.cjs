@@ -64,7 +64,9 @@ function launch(extraArgs, extraEnv) {
   const ud = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-app-ud-'));
   const data = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-app-data-'));
   fs.writeFileSync(path.join(ud, 'app-config.json'), JSON.stringify({ server: { port: PORT } }));
-  const env = { ...process.env, FOUNTAIN_LOCAL_UI: '1', FOUNTAIN_ENGINE_PORT: String(PORT), FOUNTAIN_DATA_DIR: data, ...extraEnv };
+  // Тестовое имя записи автозапуска: первый запуск установленной программы
+  // включает автозапуск сам, и без этого проверка записала бы НАСТОЯЩИЙ.
+  const env = { ...process.env, FOUNTAIN_LOCAL_UI: '1', FOUNTAIN_ENGINE_PORT: String(PORT), FOUNTAIN_DATA_DIR: data, FOUNTAIN_AUTOSTART_NAME: 'FountainStudioTEST', FOUNTAIN_TEST_FIRST_AUTOSTART: '1', ...extraEnv };
   delete env.ELECTRON_RUN_AS_NODE;
   const proc = spawn(electron, [path.join(ROOT, 'packages/app'), `--user-data-dir=${ud}`, ...extraArgs], { env });
   let log = '';
@@ -116,6 +118,23 @@ function launch(extraArgs, extraEnv) {
     await sleep(1500);
   }
   console.log('— автозапуск установленной программы (реестр, тестовое имя) —');
+  {
+    // Первый запуск (временная папка данных — «чистая» машина) включает
+    // автозапуск сам: программа должна подниматься после перезагрузки.
+    let firstRun = false;
+    try {
+      execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v FountainStudioTEST', { stdio: 'ignore' });
+      firstRun = true;
+    } catch {
+      firstRun = false;
+    }
+    check(firstRun, 'первый запуск установленной программы сам включил автозапуск с Windows');
+    try {
+      execSync('reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v FountainStudioTEST /f', { stdio: 'ignore' });
+    } catch {
+      /* записи нет — нечего убирать */
+    }
+  }
   {
     const code = [
       "import { isAutostartEnabled, isAutostartSupported, setAutostart } from './packages/engine/src/autostart.ts';",

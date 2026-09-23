@@ -33,6 +33,11 @@ const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 /** Имя записи; переменная — только для проверки, чтобы не трогать настоящую. */
 const RUN_NAME = process.env.FOUNTAIN_AUTOSTART_NAME || 'FountainStudio';
 
+/** Установленная программа (а не запуск из исходников). */
+export function isPackagedApp(): boolean {
+  return packagedApp();
+}
+
 function packagedApp(): boolean {
   return process.platform === 'win32' && APP_CMD !== '';
 }

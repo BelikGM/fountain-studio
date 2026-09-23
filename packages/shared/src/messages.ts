@@ -10,6 +10,18 @@ import type { Project } from './project';
 import type { RemoteSettings } from './remote';
 import type { WindLimitConfig, WindSensorStatus } from './windlimit';
 
+/**
+ * Версия протокола редактор ↔ движок. Поднимать при КАЖДОМ новом сообщении
+ * или поле, без которого редактор работает неправильно.
+ *
+ * Зачем. Движок — отдельный процесс, и он живёт дольше редактора: редактор
+ * обновился (перезагрузили страницу), а движок остался старым. Новые кнопки
+ * при этом молча не работали — «Режим отладки» не включался, автосохранение
+ * выглядело выключенным (заказчик 23.09.2026). Теперь редактор сверяет номер
+ * и прямо говорит: движок старый, перезапустите его.
+ */
+export const PROTOCOL_VERSION = 3;
+
 export type TestPatternMode =
   | 'off'
   | 'sine'
@@ -536,7 +548,7 @@ export type ClientMessage =
    */
   | { type: 'setFrameMode'; mode: FrameMode }
   /**
-   * Режим наладки: НА ЭТОМ компьютере аварийное гашение не срабатывает.
+   * Режим отладки: НА ЭТОМ компьютере аварийное гашение не срабатывает.
    *
    * Настройка ПРОГРАММЫ, а не объекта, и это важно. На столе у наладчика
    * интерфейса DMX нет вовсе, выход «не доставляет кадры» всегда, и гашение
@@ -548,10 +560,10 @@ export type ClientMessage =
    */
   | { type: 'setBenchMode'; on: boolean }
   /**
-   * Автосохранение проекта: включено ли и как часто, мин. Настройка ПРОГРАММЫ
-   * (как работает этот человек на этом компьютере), а не проекта.
+   * Автосохранение проекта: включено ли и как часто, СЕКУНД. Настройка
+   * ПРОГРАММЫ (как работает этот человек на этом компьютере), а не проекта.
    */
-  | { type: 'setAutosave'; enabled: boolean; minutes: number }
+  | { type: 'setAutosave'; enabled: boolean; seconds: number }
   /**
    * Громкость вечерней программы, дБ (−40…0), и «звук выключен». Настройка ПРОГРАММЫ, не объекта:
    * она про усилитель и колонки на месте, а не про шоу. Уже играющий трек не
@@ -639,7 +651,14 @@ export interface ProjectsState {
 
 /** Движок → UI */
 export type ServerMessage =
-  | { type: 'hello'; version: string; tickMs: number; universes: UniverseInfo[] }
+  | {
+      type: 'hello';
+      version: string;
+      tickMs: number;
+      universes: UniverseInfo[];
+      /** Версия протокола движка (см. PROTOCOL_VERSION). Нет поля — движок старше 23.09.2026. */
+      protocol?: number;
+    }
   /** Редактируемая конфигурация движка (шлётся при подключении и после updateConfig). */
   | {
       type: 'config';
@@ -664,11 +683,11 @@ export type ServerMessage =
        * человеку это надо видеть до вечера, а не выяснять по тишине.
        */
       audioReady: boolean;
-      /** Режим наладки на этом компьютере (см. setBenchMode). */
+      /** Режим отладки на этом компьютере (см. setBenchMode). */
       benchMode: boolean;
       /** Автосохранение проекта (см. setAutosave). */
       autosaveEnabled: boolean;
-      autosaveMin: number;
+      autosaveSec: number;
     }
   /**
    * Есть ли в открытом проекте правки, ещё не записанные на диск. Приходит при

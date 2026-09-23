@@ -1,4 +1,5 @@
 import {
+  failsafeTargetsText,
   applyAddressRemap,
   describeLinesChange,
   sameOutputs,
@@ -304,7 +305,7 @@ export class Engine {
     benchMode: false,
   };
   /**
-   * Режим наладки: на ЭТОМ компьютере гашение не срабатывает (см. setBenchMode
+   * Режим отладки: на ЭТОМ компьютере гашение не срабатывает (см. setBenchMode
    * и messages.ts). Настройка программы — приходит из app-config.json.
    */
   private benchMode = false;
@@ -760,7 +761,7 @@ export class Engine {
     this.lastTickWallMs = now;
 
     // 2. Выходы, которые умеют сказать о доставке. Считаем ВСЕГДА, даже когда
-    // гашение выключено или идёт наладка: интерфейсу нужно знать причину, а не
+    // гашение выключено или включён режим отладки: интерфейсу нужно знать причину, а не
     // только мгновенное «сработало/не сработало» (см. FailsafeState.linkBad).
     let known = 0;
     let bad = 0;
@@ -823,9 +824,9 @@ export class Engine {
   }
 
   /**
-   * Обновить причину («выход не доставляет кадры») и режим наладки, не трогая
-   * само гашение. Интерфейс рисует полосу наладки по этим признакам, а не по
-   * мгновенному active: иначе кнопка «выключить на время наладки» то
+   * Обновить причину («выход не доставляет кадры») и режим отладки, не трогая
+   * само гашение. Интерфейс рисует полосу отладки по этим признакам, а не по
+   * мгновенному active: иначе кнопка «выключить на время отладки» то
    * появлялась, то исчезала — ровно на это и жаловались с объекта.
    */
   private touchFailsafe(linkBad: boolean): void {
@@ -834,7 +835,7 @@ export class Engine {
     this.onFailsafeChange?.(this.failsafe);
   }
 
-  /** Режим наладки: гашение на этом компьютере не срабатывает (настройка программы). */
+  /** Режим отладки: гашение на этом компьютере не срабатывает (настройка программы). */
   setBenchMode(on: boolean): void {
     if (this.benchMode === on) return;
     this.benchMode = on;
@@ -842,8 +843,8 @@ export class Engine {
     eventLog.log(
       'engine',
       on
-        ? 'Включён режим наладки: аварийное гашение на этом компьютере не срабатывает — приборами можно управлять без интерфейса DMX.'
-        : 'Режим наладки выключен: аварийное гашение снова работает.',
+        ? 'Включён режим отладки: аварийное гашение на этом компьютере не срабатывает — приборами можно управлять без интерфейса DMX.'
+        : 'Режим отладки выключен: аварийное гашение снова работает.',
       on ? 'warn' : 'info',
     );
     // Гашение может быть активно прямо сейчас — снимаем его тем же тиком, не
@@ -868,7 +869,7 @@ export class Engine {
     if (active) {
       eventLog.log(
         'авария',
-        `Аварийное отключение: ${reason}. Насосы и клапаны в 0${this.failsafeConfig.lights ? ', свет погашен' : ''}.`,
+        `Аварийное отключение: ${reason}. В 0: ${failsafeTargetsText(this.failsafeConfig)}.`,
         'error',
       );
     } else {
@@ -881,7 +882,9 @@ export class Engine {
   private applySafeValues(u: { id: number; out: Uint8Array }): void {
     const byKind = this.kindGroups.get(u.id);
     if (!byKind) return;
-    const kinds: string[] = ['pump', 'valve'];
+    const kinds: string[] = [];
+    if (this.failsafeConfig.pumps !== false) kinds.push('pump');
+    if (this.failsafeConfig.valves !== false) kinds.push('valve');
     if (this.failsafeConfig.lights) kinds.push('lamp');
     for (const kind of kinds) {
       const groups = byKind.get(kind as never);

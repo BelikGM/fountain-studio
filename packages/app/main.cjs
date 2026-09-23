@@ -198,7 +198,9 @@ function forkEngine() {
     serviceName: 'fountain-engine',
     stdio: 'inherit',
     cwd: dataDir(),
-    env: { ...process.env, FOUNTAIN_APP_CMD: autostartCommand() },
+    // FOUNTAIN_APP_PACKAGED — настоящая установленная программа: только она при
+    // первом запуске сама включает автозапуск (см. engine/src/index.ts).
+    env: { ...process.env, FOUNTAIN_APP_CMD: autostartCommand(), FOUNTAIN_APP_PACKAGED: app.isPackaged ? '1' : '' },
   });
   engineProc.on('exit', (code) => {
     console.log(`[app] движок завершился (код ${code})`);

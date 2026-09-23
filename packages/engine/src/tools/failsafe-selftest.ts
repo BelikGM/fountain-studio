@@ -147,9 +147,9 @@ async function main(): Promise<void> {
   check('свет при этом остался гореть', !!last2 && lampIdx.every((i) => last2[i] === 180), last2 ? String(last2[lampIdx[0]!]) : 'нет кадра');
 
   /*
-   * Режим наладки (см. messages.ts, setBenchMode). На столе интерфейса DMX нет
+   * Режим отладки (см. messages.ts, setBenchMode). На столе интерфейса DMX нет
    * вовсе, выход «не доставляет» всегда — и гашение каждые timeoutSec роняло
-   * воду и свет в 0: проверить форсунки было нельзя. В режиме наладки гашение
+   * воду и свет в 0: проверить форсунки было нельзя. В режиме отладки гашение
    * не срабатывает, но ПРИЧИНА (linkBad) по-прежнему видна: интерфейс должен
    * честно писать, что кадры в линию не уходят.
    */
@@ -157,35 +157,35 @@ async function main(): Promise<void> {
   engine3.setProject(sanitizeProject({ ...project, failsafe: { enabled: true, timeoutSec: TIMEOUT_SEC, lights: true } }));
   engine3.start();
   const u3 = engine3.universes[0]!;
-  check('режим наладки включён из настроек программы', engine3.benchModeOn());
+  check('режим отладки включён из настроек программы', engine3.benchModeOn());
   for (const i of pumpIdx) engine3.setChannel(1, i + 1, 200);
   for (const i of lampIdx) engine3.setChannel(1, i + 1, 180);
   await sleep(TIMEOUT_SEC * 1000 + 700);
   const st3 = engine3.failsafeState();
-  check('в режиме наладки гашение не срабатывает', !st3.active, JSON.stringify(st3));
-  check('в режиме наладки вода держится', pumpIdx.every((i) => u3.out[i] === 200), `${u3.out[pumpIdx[0]!]}`);
-  check('в режиме наладки свет держится', lampIdx.every((i) => u3.out[i] === 180), `${u3.out[lampIdx[0]!]}`);
+  check('в режиме отладки гашение не срабатывает', !st3.active, JSON.stringify(st3));
+  check('в режиме отладки вода держится', pumpIdx.every((i) => u3.out[i] === 200), `${u3.out[pumpIdx[0]!]}`);
+  check('в режиме отладки свет держится', lampIdx.every((i) => u3.out[i] === 180), `${u3.out[lampIdx[0]!]}`);
   check('причина всё равно видна: выход не доставляет', st3.linkBad, JSON.stringify(st3));
-  check('состояние говорит, что режим наладки включён', st3.benchMode);
+  check('состояние говорит, что режим отладки включён', st3.benchMode);
 
-  // Выключили режим наладки на ходу — гашение обязано сработать снова.
+  // Выключили режим отладки на ходу — гашение обязано сработать снова.
   engine3.setBenchMode(false);
   await sleep(TIMEOUT_SEC * 1000 + 700);
   const st4 = engine3.failsafeState();
-  check('после выключения наладки гашение сработало', st4.active, JSON.stringify(st4));
+  check('после выключения режима отладки гашение сработало', st4.active, JSON.stringify(st4));
   check('вода ушла в 0', pumpIdx.every((i) => u3.out[i] === 0), `${u3.out[pumpIdx[0]!]}`);
-  // И обратно: включили наладку — гашение снимается сразу, не дожидаясь таймаута.
+  // И обратно: включили режим отладки — гашение снимается сразу, не дожидаясь таймаута.
   engine3.setBenchMode(true);
   await sleep(300);
-  check('включили наладку — гашение снялось сразу', !engine3.failsafeState().active);
+  check('включили режим отладки — гашение снялось сразу', !engine3.failsafeState().active);
   check('вода вернулась к своим значениям', pumpIdx.every((i) => u3.out[i] === 200), `${u3.out[pumpIdx[0]!]}`);
   engine3.stop();
 
   /*
    * Признак «выход не доставляет» держится всё время, пока оборудования нет, —
-   * именно по нему интерфейс рисует полосу наладки. Раньше полоса висела на
+   * именно по нему интерфейс рисует полосу отладки. Раньше полоса висела на
    * мгновенном active: гашение то срабатывало, то снималось, и кнопка
-   * «включить режим наладки» исчезала из-под мыши.
+   * «включить режим отладки» исчезала из-под мыши.
    */
   const engine4 = new Engine({ ...config, benchMode: true });
   engine4.setProject(project);
@@ -199,6 +199,26 @@ async function main(): Promise<void> {
   await sleep(400);
   check('починили выход — признак снялся', !engine4.failsafeState().linkBad);
   engine4.stop();
+
+  /*
+   * Что гасить — три отдельные галочки (заказчик 23.09.2026). Гасим только
+   * насосы: клапаны остаются открытыми, свет горит.
+   */
+  const valveIdx = channelsOfKind('valve');
+  check('в демо-проекте есть клапаны', valveIdx.length > 0, String(valveIdx.length));
+  const engine5 = new Engine(config);
+  engine5.setProject(sanitizeProject({ ...project, failsafe: { enabled: true, timeoutSec: TIMEOUT_SEC, pumps: true, valves: false, lights: false } }));
+  engine5.start();
+  const u5 = engine5.universes[0]!;
+  for (const i of pumpIdx) engine5.setChannel(1, i + 1, 200);
+  for (const i of valveIdx) engine5.setChannel(1, i + 1, 255);
+  for (const i of lampIdx) engine5.setChannel(1, i + 1, 180);
+  await sleep(TIMEOUT_SEC * 1000 + 700);
+  check('гашение сработало', engine5.failsafeState().active);
+  check('насосы в 0', pumpIdx.every((i) => u5.out[i] === 0), `${u5.out[pumpIdx[0]!]}`);
+  check('клапаны без галочки остались открыты', valveIdx.every((i) => u5.out[i] === 255), `${u5.out[valveIdx[0]!]}`);
+  check('свет без галочки остался гореть', lampIdx.every((i) => u5.out[i] === 180), `${u5.out[lampIdx[0]!]}`);
+  engine5.stop();
 
   console.log(`failsafe: пройдено ${passed}, ошибок ${failed}`);
   process.exit(failed ? 1 : 0);

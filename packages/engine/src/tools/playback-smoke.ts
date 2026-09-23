@@ -2678,22 +2678,24 @@ async function main(): Promise<void> {
 
   console.log('— Сохранение проекта —');
   /*
-   * Автосохранение по умолчанию — раз в 5 минут (решение заказчика
-   * 23.09.2026), поэтому правки теста сейчас в памяти движка, а не на диске.
-   * Шапка редактора узнаёт об этом по projectDirty.
+   * Автосохранение по умолчанию — раз в секунду (решение заказчика
+   * 23.09.2026): правки теста уже на диске. Шапка редактора узнаёт о
+   * несохранённом по projectDirty.
    */
-  await waitFor('движок сообщил о несохранённых правках', () => dirtyMsg?.dirty === true);
-  check(store.isDirty, 'правки есть, но на диск ещё не записаны — ждут автосохранения или Ctrl+S');
-  check(configMsg?.autosaveEnabled === true && configMsg.autosaveMin === 5, 'по умолчанию автосохранение включено, раз в 5 минут');
-  // Ctrl+S — пишет сразу.
+  check(configMsg?.autosaveEnabled === true && configMsg.autosaveSec === 1, 'по умолчанию автосохранение включено, раз в секунду');
+  await waitFor('автосохранение записало правки', () => !store.isDirty && dirtyMsg?.dirty === false, 3000);
+  check(dirtyMsg?.savedAtMs !== null, 'время сохранения известно — его видно в Настройках');
+  // Выключили — правка ждёт Ctrl+S.
+  send({ type: 'setAutosave', enabled: false, seconds: 7 });
+  await waitFor('автосохранение выключено', () => configMsg?.autosaveEnabled === false && configMsg.autosaveSec === 7);
+  send({ type: 'updateProject', project: { ...store.project } });
+  await waitFor('правка есть', () => dirtyMsg?.dirty === true);
+  await sleep(1500);
+  check(store.isDirty, 'без автосохранения правка ждёт Ctrl+S, на диск сама не уходит');
   send({ type: 'saveNow' });
   await waitFor('после Ctrl+S правок в памяти не осталось', () => dirtyMsg?.dirty === false);
-  check(dirtyMsg?.savedAtMs !== null, 'время сохранения известно — его видно в Настройках');
-  // Настройка — программы, пишется в app-config.json сразу.
-  send({ type: 'setAutosave', enabled: false, minutes: 7 });
-  await waitFor('автосохранение выключено', () => configMsg?.autosaveEnabled === false && configMsg.autosaveMin === 7);
-  const appCfg = JSON.parse(fs.readFileSync(path.join(tmpDir, 'app-config.json'), 'utf8')) as { autosave?: { enabled: boolean; minutes: number } };
-  check(appCfg.autosave?.enabled === false && appCfg.autosave.minutes === 7, 'настройка автосохранения записана в настройки программы');
+  const appCfg = JSON.parse(fs.readFileSync(path.join(tmpDir, 'app-config.json'), 'utf8')) as { autosave?: { enabled: boolean; seconds: number } };
+  check(appCfg.autosave?.enabled === false && appCfg.autosave.seconds === 7, 'настройка автосохранения записана в настройки программы');
   const saved = JSON.parse(fs.readFileSync(projectFile, 'utf8')) as Project;
   check(
     saved.devices.length === 4 &&

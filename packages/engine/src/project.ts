@@ -13,13 +13,13 @@ export class ProjectStore {
   private dirty = false;
   /**
    * Как часто дописывать правки на диск, мс; null — автосохранение выключено
-   * (правки ждут «Сохранить»). По умолчанию — раз в 5 минут.
+   * (правки ждут «Сохранить»). По умолчанию — раз в секунду.
    *
    * Раньше каждая правка уходила на диск через полсекунды, и спрашивать при
    * переключении проекта было не о чем. Заказчик просил управляемое
    * автосохранение: включено по умолчанию, раз в N минут, можно выключить.
    */
-  private autosaveMs: number | null = 5 * 60_000;
+  private autosaveMs: number | null = 1000;
   /** Когда проект последний раз записан на диск (unix-время, мс). */
   private savedAt: number | null = null;
   /** Правки появились или ушли на диск — для «не сохранено» в шапке. */
@@ -75,8 +75,8 @@ export class ProjectStore {
    * правку: при непрерывной работе он иначе не сработал бы никогда. Он
    * взводится первой правкой после сохранения и пишет всё, что накопилось.
    */
-  setAutosave(enabled: boolean, minutes: number): void {
-    this.autosaveMs = enabled ? Math.max(1, minutes) * 60_000 : null;
+  setAutosave(enabled: boolean, seconds: number): void {
+    this.autosaveMs = enabled ? Math.max(1, seconds) * 1000 : null;
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
     if (this.dirty && this.autosaveMs !== null) this.saveTimer = setTimeout(() => this.flush(), this.autosaveMs);

@@ -23,12 +23,26 @@ export interface FailsafeConfig {
   enabled: boolean;
   /** Сколько секунд беды терпим, прежде чем гасить. */
   timeoutSec: number;
-  /** Гасить ли заодно свет (воду гасим всегда). */
+  /**
+   * Что гасить — три отдельные галочки (заказчик 23.09.2026). Раньше вода
+   * гасилась всегда, а свет — по галочке «Гасить и свет»; на части объектов
+   * клапаны держат открытыми (ливнёвка, перелив), а насосы глушат, и
+   * наоборот. По умолчанию — всё.
+   */
+  pumps: boolean;
+  valves: boolean;
   lights: boolean;
 }
 
 export function defaultFailsafeConfig(): FailsafeConfig {
-  return { enabled: true, timeoutSec: 10, lights: true };
+  return { enabled: true, timeoutSec: 10, pumps: true, valves: true, lights: true };
+}
+
+/** Что именно гасится — для журнала и подписей («насосы, клапаны и свет»). */
+export function failsafeTargetsText(cfg: Pick<FailsafeConfig, 'pumps' | 'valves' | 'lights'>): string {
+  const parts = [cfg.pumps ? 'насосы' : '', cfg.valves ? 'клапаны' : '', cfg.lights ? 'свет' : ''].filter(Boolean);
+  if (parts.length === 0) return 'ничего (все три галочки сняты)';
+  return parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(', ')} и ${parts[parts.length - 1]}`;
 }
 
 export const FAILSAFE_TIMEOUT_MIN_SEC = 3;
@@ -42,6 +56,8 @@ export function sanitizeFailsafeConfig(raw: unknown): FailsafeConfig {
   return {
     enabled: typeof r.enabled === 'boolean' ? r.enabled : d.enabled,
     timeoutSec: Number.isFinite(t) ? Math.min(FAILSAFE_TIMEOUT_MAX_SEC, Math.max(FAILSAFE_TIMEOUT_MIN_SEC, t)) : d.timeoutSec,
+    pumps: typeof r.pumps === 'boolean' ? r.pumps : d.pumps,
+    valves: typeof r.valves === 'boolean' ? r.valves : d.valves,
     lights: typeof r.lights === 'boolean' ? r.lights : d.lights,
   };
 }
@@ -59,11 +75,11 @@ export interface FailsafeState {
    * Выход прямо сейчас не доставляет кадры приборам (интерфейс не найден,
    * порт закрыт, кабель выдернут). Отдельно от active, потому что это две
    * разные вещи, и на столе видно только вторую: беда может длиться, а
-   * гашение — не сработать (режим наладки) или ещё не отсчитать timeoutSec.
-   * Пока флага не было, полоса с кнопкой «выключить на время наладки» то
+   * гашение — не сработать (режим отладки) или ещё не отсчитать timeoutSec.
+   * Пока флага не было, полоса с кнопкой «выключить на время отладки» то
    * появлялась, то исчезала — по мгновенному active, а не по причине.
    */
   linkBad: boolean;
-  /** Режим наладки: гашение на этом компьютере не срабатывает (см. setBenchMode). */
+  /** Режим отладки: гашение на этом компьютере не срабатывает (см. setBenchMode). */
   benchMode: boolean;
 }

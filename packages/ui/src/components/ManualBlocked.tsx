@@ -1,5 +1,6 @@
+import { failsafeTargetsText } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
-import { requestTab } from '../navigate';
+import { requestSettingsPanel, requestTab } from '../navigate';
 
 /**
  * Одна полоса: почему ручное управление сейчас не доходит до приборов.
@@ -18,7 +19,7 @@ import { requestTab } from '../navigate';
  * Полоса одинаковая на «Отладке» и в «3D»: раньше она была только на «Отладке»,
  * и в 3D человек видел просто неработающие ползунки прибора.
  *
- * Кнопка «режим наладки» показывается по ПРИЧИНЕ (`linkBad` — выход не
+ * Кнопка «режим отладки» показывается по ПРИЧИНЕ (`linkBad` — выход не
  * доставляет кадры), а не по мгновенному `failsafe.active`: на столе гашение то
  * срабатывает, то снимается, и кнопка исчезала из-под мыши.
  */
@@ -34,10 +35,12 @@ export function ManualBlocked({ engine }: { engine: EngineConnection }) {
     /** Кнопка справа: что делает и как подписана. */
     action?: { label: string; hint: string; run: () => void };
     tab?: 'settings' | 'schedule';
+    /** Панель «Настроек», к которой ведёт «Перейти» (раскрывается и прокручивается). */
+    panel?: string;
   };
 
   const benchOn: Strip['action'] = {
-    label: 'Режим наладки',
+    label: 'Режим отладки',
     hint: 'На ЭТОМ компьютере аварийное гашение перестанет срабатывать, и приборами можно управлять руками без интерфейса DMX. Настройка программы: в проект не попадёт, на фонтане гашение останется включённым. Переживает перезагрузку страницы и перезапуск программы.',
     run: () => send({ type: 'setBenchMode', on: true }),
   };
@@ -52,16 +55,17 @@ export function ManualBlocked({ engine }: { engine: EngineConnection }) {
     engine.connected && failsafe?.active
       ? {
           danger: true,
-          text: `Работает аварийное гашение (${failsafe.reason || 'причина не указана'}). Насосы, клапаны и свет уходят в 0 каждый такт — поэтому ползунок и «падает». На столе включите режим наладки: гашение перестанет срабатывать здесь, в проекте останется включённым.`,
+          text: `Работает аварийное отключение: ${failsafe.reason || 'причина не указана'}. В 0 каждый такт уходят ${project ? failsafeTargetsText(project.failsafe) : 'насосы, клапаны и свет'} — поэтому ползунок и «падает». На столе включите режим отладки: на этом компьютере отключение перестанет срабатывать, в проекте останется включённым.`,
           action: bench ? undefined : benchOn,
-          tab: 'settings',
+          panel: 'Аварийное отключение',
         }
       : null,
     engine.connected && !failsafe?.active && failsafe?.linkBad && !bench && project?.failsafe.enabled
       ? {
           danger: true,
-          text: `Кадры в линию не уходят: интерфейс DMX не найден или кабель не подключён. Через ${timeoutSec} с аварийное гашение уронит воду и свет в 0. На столе включите режим наладки.`,
+          text: `Кадры в линию не уходят: интерфейс DMX не найден или кабель не подключён. Через ${timeoutSec} с аварийное отключение погасит приборы. На столе включите режим отладки.`,
           action: benchOn,
+          panel: 'Аварийное отключение',
         }
       : null,
     engine.connected && !failsafe?.active && playback.dark === 'off'
@@ -86,9 +90,9 @@ export function ManualBlocked({ engine }: { engine: EngineConnection }) {
     bench
       ? {
           danger: false,
-          text: 'Режим наладки: на этом компьютере аварийное гашение не срабатывает — приборы держат последнее значение, даже если кадры перестанут доходить. Перед сдачей объекта выключите.',
+          text: 'Обратите внимание: включён режим отладки — на этом компьютере аварийное отключение не срабатывает, приборы держат последнее значение, даже если кадры перестанут доходить. Перед сдачей объекта выключите.',
           action: {
-            label: 'Выключить режим наладки',
+            label: 'Выключить режим отладки',
             hint: 'Вернуть аварийное гашение на этом компьютере',
             run: () => send({ type: 'setBenchMode', on: false }),
           },
@@ -107,8 +111,12 @@ export function ManualBlocked({ engine }: { engine: EngineConnection }) {
           {strip.action.label}
         </button>
       )}
-      {strip.tab && (
-        <button className="btn btn-small" onClick={() => requestTab(strip.tab!)}>
+      {(strip.tab || strip.panel) && (
+        <button
+          className="btn btn-small"
+          data-hint={strip.panel ? `Открыть «Настройки» → «${strip.panel}»` : undefined}
+          onClick={() => (strip.panel ? requestSettingsPanel(strip.panel) : requestTab(strip.tab!))}
+        >
           Перейти
         </button>
       )}

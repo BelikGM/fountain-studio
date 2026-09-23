@@ -107,7 +107,7 @@ export interface EngineConfig {
    */
   playbackLookaheadMs?: number;
   /**
-   * Режим наладки: на ЭТОМ компьютере аварийное гашение не срабатывает.
+   * Режим отладки: на ЭТОМ компьютере аварийное гашение не срабатывает.
    *
    * Настройка программы, а не объекта: на столе у наладчика интерфейса DMX нет,
    * выход «не доставляет кадры» всегда, и гашение каждые десять секунд роняет
@@ -117,12 +117,18 @@ export interface EngineConfig {
    */
   benchMode?: boolean;
   /**
-   * Автосохранение проекта (решение заказчика 23.09.2026): включено и раз в
-   * minutes минут. Выключено — правки живут в памяти движка до «Сохранить»
-   * (Ctrl+S), а при переключении проекта программа спрашивает, что с ними
-   * делать. При закрытии программы несохранённое дописывается всегда.
+   * Автосохранение проекта (решение заказчика 23.09.2026): включено, раз в
+   * seconds секунд, по умолчанию раз в секунду. Выключено — правки живут в
+   * памяти движка до «Сохранить» (Ctrl+S), а при переключении проекта
+   * программа спрашивает, что с ними делать. При закрытии программы
+   * несохранённое дописывается всегда.
    */
-  autosave?: { enabled: boolean; minutes: number };
+  autosave?: { enabled: boolean; seconds: number };
+  /**
+   * Автозапуск с Windows уже включали при первом запуске установленной
+   * программы. Нужен, чтобы не включать его снова, если человек сам выключил.
+   */
+  autostartInit?: boolean;
   /**
    * Откуда прочитаны настройки программы. Нужен, чтобы дописать в тот же файл
    * переключатель подготовки кадров: в установленном приложении человек до
@@ -185,23 +191,28 @@ export function loadAppConfig(appDataDir: string): EngineConfig & { configFile: 
     ...(raw.license ? { license: raw.license } : {}),
     // По умолчанию ВКЛЮЧЕНО: выключается только явным false в настройках.
     playbackWorker: raw.playbackWorker !== false,
-    // Режим наладки — только явным true: по умолчанию защита работает.
+    // Режим отладки — только явным true: по умолчанию защита работает.
     benchMode: raw.benchMode === true,
     autosave: sanitizeAutosave(raw.autosave),
+    autostartInit: raw.autostartInit === true,
     ...(typeof raw.playbackLookaheadMs === 'number' && Number.isFinite(raw.playbackLookaheadMs)
       ? { playbackLookaheadMs: Math.max(0, Math.min(2000, Math.round(raw.playbackLookaheadMs))) }
       : {}),
   };
 }
 
-/** Автосохранение: по умолчанию включено, раз в 5 минут; интервал 1…120 мин. */
-export const AUTOSAVE_DEFAULT_MIN = 5;
-export function sanitizeAutosave(raw: unknown): { enabled: boolean; minutes: number } {
-  const r = (raw && typeof raw === 'object' ? raw : {}) as { enabled?: unknown; minutes?: unknown };
-  const m = Math.round(Number(r.minutes));
+/**
+ * Автосохранение: по умолчанию включено, раз в секунду (заказчик 23.09.2026);
+ * интервал 1…3600 с. Первую версию (в тот же день) хранили в минутах — такие
+ * настройки переводим в секунды.
+ */
+export const AUTOSAVE_DEFAULT_SEC = 1;
+export function sanitizeAutosave(raw: unknown): { enabled: boolean; seconds: number } {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as { enabled?: unknown; seconds?: unknown; minutes?: unknown };
+  const sec = r.seconds !== undefined ? Math.round(Number(r.seconds)) : Math.round(Number(r.minutes) * 60);
   return {
     enabled: r.enabled !== false,
-    minutes: Number.isFinite(m) ? Math.min(120, Math.max(1, m)) : AUTOSAVE_DEFAULT_MIN,
+    seconds: Number.isFinite(sec) ? Math.min(3600, Math.max(1, sec)) : AUTOSAVE_DEFAULT_SEC,
   };
 }
 
@@ -266,9 +277,10 @@ export function loadConfig(argv: string[]): EngineConfig & { configFile: string 
     ...(raw.mqtt ? { mqtt: raw.mqtt } : {}),
     // По умолчанию ВКЛЮЧЕНО: выключается только явным false в настройках.
     playbackWorker: raw.playbackWorker !== false,
-    // Режим наладки — только явным true: по умолчанию защита работает.
+    // Режим отладки — только явным true: по умолчанию защита работает.
     benchMode: raw.benchMode === true,
     autosave: sanitizeAutosave(raw.autosave),
+    autostartInit: raw.autostartInit === true,
     ...(typeof raw.playbackLookaheadMs === 'number' && Number.isFinite(raw.playbackLookaheadMs)
       ? { playbackLookaheadMs: Math.max(0, Math.min(2000, Math.round(raw.playbackLookaheadMs))) }
       : {}),

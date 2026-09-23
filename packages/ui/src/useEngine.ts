@@ -84,11 +84,12 @@ export interface EngineConfigState {
   audioTrebleDb: number;
   /** Нашёлся ли проигрыватель: без него вечерняя программа идёт в тишине. */
   audioReady: boolean;
-  /** Режим наладки: на этом компьютере аварийное гашение не срабатывает. */
+  /** Режим отладки: на этом компьютере аварийное гашение не срабатывает. */
   benchMode: boolean;
   /** Автосохранение проекта: включено ли и раз во сколько минут. */
   autosaveEnabled: boolean;
-  autosaveMin: number;
+  /** Раз во сколько секунд. */
+  autosaveSec: number;
 }
 
 /** Внешние пульты: что задано и что сейчас на самом деле (порт открыт, брокер на связи). */
@@ -204,6 +205,8 @@ export interface EngineConnection {
   activateLicense: (fileText: string) => Promise<LicenseStatus>;
   /** Есть ли в проекте правки, ещё не записанные на диск, и когда он сохранён последний раз. */
   projectDirty: { dirty: boolean; savedAtMs: number | null };
+  /** Версия протокола подключённого движка (null — ещё не ответил). См. PROTOCOL_VERSION. */
+  engineProtocol: number | null;
 }
 
 /** Сколько шагов истории Undo/Redo держим в памяти. */
@@ -228,6 +231,8 @@ const ENGINE_URL = `ws://${location.hostname || '127.0.0.1'}:${ENGINE_PORT}`;
 export function useEngine(): EngineConnection {
   const [connected, setConnected] = useState(false);
   const [version, setVersion] = useState<string | null>(null);
+  /** Версия протокола движка из hello; 0 — движок старше, чем проверка версий. */
+  const [engineProtocol, setEngineProtocol] = useState<number | null>(null);
   const [tickMs, setTickMs] = useState<number | null>(null);
   const [universes, setUniverses] = useState<UniverseInfo[]>([]);
   const [stats, setStats] = useState<EngineStats | null>(null);
@@ -328,6 +333,7 @@ export function useEngine(): EngineConnection {
         switch (msg.type) {
           case 'hello':
             setVersion(msg.version);
+            setEngineProtocol(msg.protocol ?? 0);
             setTickMs(msg.tickMs);
             setUniverses(msg.universes);
             break;
@@ -344,7 +350,7 @@ export function useEngine(): EngineConnection {
               audioReady: msg.audioReady,
               benchMode: msg.benchMode,
               autosaveEnabled: msg.autosaveEnabled,
-              autosaveMin: msg.autosaveMin,
+              autosaveSec: msg.autosaveSec,
             });
             break;
           case 'configResult':
@@ -823,6 +829,7 @@ export function useEngine(): EngineConnection {
     canRedo: redoStackRef.current.length > 0,
     activateLicense,
     projectDirty,
+    engineProtocol,
   };
 }
 

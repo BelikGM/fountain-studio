@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useCollapsiblePanels } from '../collapsiblePanels';
 import {
   FRAME_MODE_ABOUT,
   FRAME_MODE_CONFIRM,
@@ -14,6 +15,7 @@ import {
   type UsbDmxScan,
   type UsbDriverProblem,
   FAILSAFE_TIMEOUT_MIN_SEC,
+  failsafeTargetsText,
   FAILSAFE_TIMEOUT_MAX_SEC,
   describeLinesChange,
   nextUniverse,
@@ -488,12 +490,12 @@ function AppSettingsBackupPanel({ engine }: { engine: EngineConnection }) {
  */
 function AutosavePanel({ engine }: { engine: EngineConnection }) {
   const { engineConfig, send, projectDirty } = engine;
-  const [draftMin, setDraftMin] = useState<string | null>(null);
+  const [draftSec, setDraftSec] = useState<string | null>(null);
   if (!engineConfig) return null;
   const enabled = engineConfig.autosaveEnabled;
-  const minutes = engineConfig.autosaveMin;
-  const apply = (en: boolean, min: number): void =>
-    send({ type: 'setAutosave', enabled: en, minutes: Math.min(120, Math.max(1, Math.round(min))) });
+  const seconds = engineConfig.autosaveSec;
+  const apply = (en: boolean, sec: number): void =>
+    send({ type: 'setAutosave', enabled: en, seconds: Math.min(3600, Math.max(1, Math.round(sec))) });
   const savedAt = projectDirty.savedAtMs ? new Date(projectDirty.savedAtMs).toLocaleTimeString('ru-RU') : null;
   return (
     <section className="panel">
@@ -505,31 +507,31 @@ function AutosavePanel({ engine }: { engine: EngineConnection }) {
       </p>
       <div className="form-row">
         <label className="field">
-          <input type="checkbox" checked={enabled} onChange={(e) => apply(e.target.checked, minutes)} /> Автосохранение
+          <input type="checkbox" checked={enabled} onChange={(e) => apply(e.target.checked, seconds)} /> Автосохранение
         </label>
-        <label className={enabled ? 'field' : 'field dim'} data-hint="Как часто записывать правки на диск, минут (1–120)">
+        <label className={enabled ? 'field' : 'field dim'} data-hint="Как часто записывать правки на диск, секунд (1–3600). По умолчанию — раз в секунду.">
           каждые{' '}
           <input
             className="input input-num"
             type="number"
             min={1}
-            max={120}
+            max={3600}
             step={1}
             disabled={!enabled}
-            value={draftMin ?? String(minutes)}
-            onChange={(e) => setDraftMin(e.target.value)}
+            value={draftSec ?? String(seconds)}
+            onChange={(e) => setDraftSec(e.target.value)}
             onBlur={() => {
-              const v = Number(draftMin);
-              if (draftMin !== null && Number.isFinite(v) && v > 0) apply(true, v);
-              setDraftMin(null);
+              const v = Number(draftSec);
+              if (draftSec !== null && Number.isFinite(v) && v > 0) apply(true, v);
+              setDraftSec(null);
             }}
           />{' '}
-          мин
+          с
         </label>
       </div>
       <p className={projectDirty.dirty ? 'warn' : 'ok-text'} style={{ marginLeft: 0 }}>
         {projectDirty.dirty
-          ? `● Есть несохранённые правки${enabled ? ` — запишутся в течение ${minutes} мин` : ''}. Сохранить сейчас — Ctrl+S.`
+          ? `● Есть несохранённые правки${enabled ? ` — запишутся в течение ${seconds} с` : ''}. Сохранить сейчас — Ctrl+S.`
           : `✔ Всё сохранено${savedAt ? ` (последний раз в ${savedAt})` : ''}.`}
       </p>
     </section>
@@ -1183,55 +1185,53 @@ function FailsafePanel({ engine }: { engine: EngineConnection }) {
   const bench = engineConfig?.benchMode === true;
   const update = (patch: Partial<typeof cfg>): void =>
     updateProject({ ...project, failsafe: { ...cfg, ...patch } });
+  const targets = failsafeTargetsText(cfg);
+
+  /*
+   * Состояние — одной фразой, что происходит СЕЙЧАС. Раньше было «Сейчас
+   * сработало: … Вода отключена» — и непонятно, что «сработало», и неверно:
+   * гасится не только вода, но и клапаны и свет (по галочкам ниже).
+   */
+  const status: { cls: string; text: string } = failsafe?.active
+    ? {
+        cls: 'error-text',
+        text: `✖ Аварийное отключение работает: ${failsafe.reason || 'причина не указана'}. Сейчас в 0: ${targets}. Как только кадры снова пойдут, всё вернётся само.`,
+      }
+    : failsafe?.linkBad
+      ? {
+          cls: 'warn',
+          text: bench
+            ? '⚠ Кадры в линию не уходят (интерфейс DMX не найден или кабель не подключён), но аварийное отключение не срабатывает — включён режим отладки.'
+            : `⚠ Кадры в линию не уходят (интерфейс DMX не найден или кабель не подключён). Через ${cfg.timeoutSec} с аварийное отключение погасит: ${targets}.`,
+        }
+      : {
+          cls: 'ok-text',
+          text: `✔ Кадры доходят до приборов${failsafe && failsafe.trips > 0 ? ` (отключение срабатывало с запуска: ${failsafe.trips})` : ''}.`,
+        };
 
   return (
     <section className="panel">
       <h2>Аварийное отключение</h2>
       <p className="dim">
-        Если движок перестал выдавать кадры приборам — такт вставал или выход не доставляет
-        (выдернули USB, закрылся порт), — насосы и клапаны принудительно уходят в 0. Без этого
-        приборы держат ПОСЛЕДНЕЕ принятое значение: насос продолжит крутиться, струя останется
-        поднятой. Когда вывод восстановится, движок сам вернётся к обычной картине.
+        Если движок перестал выдавать кадры приборам — такт вставал или выход не доставляет (выдернули USB,
+        закрылся порт), — выбранные ниже приборы принудительно уходят в 0. Без этого приборы держат ПОСЛЕДНЕЕ
+        принятое значение: насос продолжит крутиться, струя останется поднятой. Когда вывод восстановится,
+        движок сам вернётся к обычной картине.
       </p>
-      {failsafe?.active ? (
-        <p className="error-text" style={{ marginLeft: 0 }}>
-          ✖ Сейчас сработало: {failsafe.reason}. Вода отключена.
-        </p>
-      ) : failsafe?.linkBad ? (
-        <p className="warn" style={{ marginLeft: 0 }}>
-          ⚠ Выход не доставляет кадры приборам — интерфейс DMX не найден или кабель не подключён
-          {bench ? ' (гашение не срабатывает: включён режим наладки)' : `, через ${cfg.timeoutSec} с вода уйдёт в 0`}.
-        </p>
-      ) : (
-        <p className="ok-text">
-          ✔ Вывод в норме{failsafe && failsafe.trips > 0 ? ` (срабатываний с запуска: ${failsafe.trips})` : ''}
-        </p>
-      )}
-      {/*
-        Режим наладки — настройка ПРОГРАММЫ, поэтому стоит отдельной строкой, а
-        не среди галочек объекта: объект уезжает на фонтан, и гашение там нужно
-        включённым. Подробнее — в messages.ts (setBenchMode).
-      */}
+      <p className={status.cls} style={{ marginLeft: 0 }}>
+        {status.text}
+      </p>
       <div className="form-row">
-        <label
-          className="field"
-          data-hint="Наладка на столе: на ЭТОМ компьютере гашение не срабатывает, и приборами можно управлять руками без интерфейса DMX. В проект настройка не попадает — на фонтане гашение останется включённым. Сохраняется в настройках программы: переживает перезагрузку страницы и перезапуск."
-        >
-          <input type="checkbox" checked={bench} onChange={(e) => send({ type: 'setBenchMode', on: e.target.checked })} />{' '}
-          Режим наладки на этом компьютере
-        </label>
-        {bench && <span className="warn">⚠ перед сдачей объекта выключить</span>}
-      </div>
-      <div className="form-row">
+        {/* Подпись — само название, а не «Включено»: сразу видно, ЧТО включено. */}
         <label className="field">
-          <input type="checkbox" checked={cfg.enabled} onChange={(e) => update({ enabled: e.target.checked })} />{' '}
-          Включено
+          <input type="checkbox" checked={cfg.enabled} onChange={(e) => update({ enabled: e.target.checked })} /> Аварийное
+          отключение
         </label>
         <label
-          className="field"
-          data-hint="Сколько терпим пропажу вывода, прежде чем гасить воду. Меньше 3 с ставить не стоит: короткие подвисания Windows — обычное дело, и фонтан начнёт мигать."
+          className={cfg.enabled ? 'field' : 'field dim'}
+          data-hint="Сколько терпим пропажу вывода, прежде чем гасить. Меньше 3 секунд ставить не стоит: короткие подвисания Windows — обычное дело, и фонтан начнёт мигать."
         >
-          Ждать, с:{' '}
+          Ждать, секунд:{' '}
           <input
             className="input input-num"
             type="number"
@@ -1250,20 +1250,45 @@ function FailsafePanel({ engine }: { engine: EngineConnection }) {
             }
           />
         </label>
-        <label className="field" data-hint="Гасить ли заодно подсветку. Воду (насосы и клапаны) гасим всегда — это безопасность; свет иногда просят оставить, чтобы объект не стоял в темноте.">
-          <input
-            type="checkbox"
-            checked={cfg.lights}
-            disabled={!cfg.enabled}
-            onChange={(e) => update({ lights: e.target.checked })}
-          />{' '}
-          Гасить и свет
+      </div>
+      {/*
+        Что гасить — три отдельные галочки (заказчик 23.09.2026). Раньше вода
+        гасилась всегда, а свет — одной галочкой «Гасить и свет».
+      */}
+      <div className="form-row">
+        <span className={cfg.enabled ? 'field' : 'field dim'}>Гасить:</span>
+        <label className="field" data-hint="Насосы в 0 — струи опускаются. Это главная защита: без неё струя останется поднятой.">
+          <input type="checkbox" checked={cfg.pumps !== false} disabled={!cfg.enabled} onChange={(e) => update({ pumps: e.target.checked })} />{' '}
+          насосы
+        </label>
+        <label className="field" data-hint="Клапаны в 0 — закрываются. Снимите, если на объекте клапаны должны оставаться открытыми (ливнёвка, перелив).">
+          <input type="checkbox" checked={cfg.valves !== false} disabled={!cfg.enabled} onChange={(e) => update({ valves: e.target.checked })} />{' '}
+          клапаны
+        </label>
+        <label className="field" data-hint="Свет в 0. Снимите, если подсветку просят оставить, чтобы объект не стоял в темноте.">
+          <input type="checkbox" checked={cfg.lights} disabled={!cfg.enabled} onChange={(e) => update({ lights: e.target.checked })} />{' '}
+          свет
         </label>
       </div>
+      {/*
+        Режим отладки — настройка ПРОГРАММЫ, поэтому стоит отдельной строкой
+        ниже настроек проекта: проект уезжает на фонтан, и гашение там нужно
+        включённым. Подробнее — в messages.ts (setBenchMode).
+      */}
+      <div className="form-row">
+        <label
+          className="field"
+          data-hint="Отладка на столе: на ЭТОМ компьютере аварийное отключение не срабатывает, и приборами можно управлять руками без интерфейса DMX. В проект настройка не попадает — на фонтане отключение останется включённым. Хранится в настройках программы: переживает перезагрузку страницы и перезапуск."
+        >
+          <input type="checkbox" checked={bench} onChange={(e) => send({ type: 'setBenchMode', on: e.target.checked })} /> Режим
+          отладки на этом компьютере
+        </label>
+        {bench && <span className="warn">⚠ перед сдачей объекта выключить</span>}
+      </div>
       <p className="dim">
-        Чего этим не закрыть: если процесс движка убит целиком, слать безопасный кадр уже некому —
-        для этого есть сторож, который поднимает движок заново (он стартует с нулей). Закрытие
-        редактора аварией НЕ считается: шоу играет движок, и оно должно продолжаться.
+        Чего этим не закрыть: если процесс движка убит целиком, слать безопасный кадр уже некому — для этого
+        есть сторож, который поднимает движок заново (он стартует с нулей). Закрытие редактора аварией НЕ
+        считается: шоу играет движок, и оно должно продолжаться.
       </p>
     </section>
   );
@@ -2358,6 +2383,9 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
    * показываем то, что работает в движке.
    */
   const { draft, status, message, changes } = useSettingsDraft();
+  /** Панели сворачиваются до плашки с названием (см. collapsiblePanels.ts). */
+  const rootRef = useRef<HTMLElement>(null);
+  useCollapsiblePanels(rootRef);
   const tickMs = draft?.tickMs ?? engineConfig?.tickMs ?? 50;
   const universes = draft?.universes ?? engineConfig?.universes ?? [];
   const dirty = draft !== null;
@@ -2425,7 +2453,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
   const pending = describeLinesChange(engineConfig, { tickMs, universes });
 
   return (
-    <main className="view">
+    <main className="view view-settings" ref={rootRef}>
       <section className="panel">
         <h2>Вселенные DMX</h2>
         <p className="dim">

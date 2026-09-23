@@ -11,6 +11,7 @@ import {
   type RdmSensorReading,
   type ServerMessage,
   FRAME_MODES,
+  PROTOCOL_VERSION,
   frameModeToConfig,
   storedUniverseLabel,
   clampVolumeDb,
@@ -114,7 +115,7 @@ export function startServer(
   });
   /** После смены объекта редактор должен увидеть ВСЁ новое, а не половину. */
   const broadcastProjectSwitched = (): void => {
-    broadcast({ type: 'hello', version: ENGINE_VERSION, tickMs: engine.config.timing.tickMs, universes: engine.universeInfos() });
+    broadcast({ type: 'hello', version: ENGINE_VERSION, protocol: PROTOCOL_VERSION, tickMs: engine.config.timing.tickMs, universes: engine.universeInfos() });
     broadcast(configMessage());
     bumpRev();
     broadcast(projectMessage());
@@ -143,7 +144,7 @@ export function startServer(
     audioReady: player?.ready() ?? false,
     benchMode: engine.benchModeOn(),
     autosaveEnabled: engine.config.autosave?.enabled !== false,
-    autosaveMin: engine.config.autosave?.minutes ?? 5,
+    autosaveSec: engine.config.autosave?.seconds ?? 1,
   });
   const dirtyMessage = (): Extract<ServerMessage, { type: 'projectDirty' }> => ({
     type: 'projectDirty',
@@ -272,6 +273,7 @@ export function startServer(
     const hello: ServerMessage = {
       type: 'hello',
       version: ENGINE_VERSION,
+      protocol: PROTOCOL_VERSION,
       tickMs: engine.config.timing.tickMs,
       universes: engine.universeInfos(),
     };
@@ -606,14 +608,14 @@ export function startServer(
           break;
         }
         case 'setAutosave': {
-          // Настройка программы — пишем сразу, как и режим наладки.
-          const next = sanitizeAutosave({ enabled: msg.enabled, minutes: msg.minutes });
+          // Настройка программы — пишем сразу, как и режим отладки.
+          const next = sanitizeAutosave({ enabled: msg.enabled, seconds: msg.seconds });
           engine.config.autosave = next;
-          store.setAutosave(next.enabled, next.minutes);
+          store.setAutosave(next.enabled, next.seconds);
           saveAppConfigPatch(engine.config.configFile ?? '', { autosave: next });
           eventLog.log(
             'server',
-            next.enabled ? `автосохранение проекта: раз в ${next.minutes} мин` : 'автосохранение проекта выключено — правки сохраняются по Ctrl+S',
+            next.enabled ? `автосохранение проекта: раз в ${next.seconds} с` : 'автосохранение проекта выключено — правки сохраняются по Ctrl+S',
           );
           broadcast(configMessage());
           break;
@@ -663,6 +665,7 @@ export function startServer(
           broadcast({
             type: 'hello',
             version: ENGINE_VERSION,
+            protocol: PROTOCOL_VERSION,
             tickMs,
             universes: engine.universeInfos(),
           });
@@ -837,6 +840,7 @@ export function startServer(
               broadcast({
                 type: 'hello',
                 version: ENGINE_VERSION,
+                protocol: PROTOCOL_VERSION,
                 tickMs: engine.config.timing.tickMs,
                 universes: engine.universeInfos(),
               });

@@ -9,7 +9,8 @@ import { loadLicenseStatus } from './license';
 import { MailNotifier } from './mailnotify';
 import { TelegramNotifier } from './telegram';
 import { buildSiteSnapshot } from './siteSnapshot';
-import { loadAppConfig } from './config';
+import { loadAppConfig, saveAppConfigPatch } from './config';
+import { isAutostartEnabled, isPackagedApp, setAutostart } from './autostart';
 import { wireAlarmNotifications } from './alarms';
 import { generateDemoWav } from './demoaudio';
 import { DEMO_AUDIO_FILE, createDemoProject } from './demoproject';
@@ -67,6 +68,22 @@ fs.mkdirSync(appDataDir, { recursive: true });
 const config = loadAppConfig(appDataDir);
 const engine = new Engine(config);
 
+/*
+ * Автозапуск с Windows — ВКЛЮЧЁН по умолчанию (заказчик 23.09.2026). Программа
+ * управляет фонтаном без человека: после перезагрузки компьютера объекта (свет
+ * моргнул, Windows обновилась) она обязана подняться сама. Включаем один раз,
+ * при первом запуске установленной программы; выключил человек сам — больше не
+ * трогаем (флаг autostartInit). Из исходников не включаем: на машине
+ * разработчика задача планировщика появлялась бы без спроса.
+ */
+const installed = process.env.FOUNTAIN_APP_PACKAGED === '1' || process.env.FOUNTAIN_TEST_FIRST_AUTOSTART === '1';
+if (installed && isPackagedApp() && !config.autostartInit) {
+  const res = isAutostartEnabled() ? { ok: true } : setAutostart(true);
+  saveAppConfigPatch(config.configFile, { autostartInit: true });
+  config.autostartInit = true;
+  console.log(res.ok ? '[autostart] автозапуск с Windows включён (первый запуск)' : `[autostart] не удалось включить автозапуск: ${res.error ?? ''}`);
+}
+
 /**
  * Пока проект не открыт, хранилищам всё равно нужен какой-то путь. Даём им
  * служебную папку в данных программы: туда ничего осмысленного не попадёт —
@@ -78,7 +95,7 @@ fs.mkdirSync(idleDir, { recursive: true });
 const idle = projectPaths(idleDir);
 
 const store = new ProjectStore(idle.projectFile);
-store.setAutosave(config.autosave?.enabled !== false, config.autosave?.minutes ?? 5);
+store.setAutosave(config.autosave?.enabled !== false, config.autosave?.seconds ?? 1);
 const audio = new AudioStore(idle.audioDir);
 const player = new AudioPlayer(config.audio, idle.audioDir);
 const backups = new BackupStore(idle.projectFile, () => JSON.stringify(store.project, null, 2), config.backup);
