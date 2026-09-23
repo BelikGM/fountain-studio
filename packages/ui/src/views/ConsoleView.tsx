@@ -85,7 +85,7 @@ function classifyChannel(kind: DeviceKind, role: ChannelRole): string {
 
 /** Консоль прямого управления: фейдеры адресов, тест-генераторы, СТОП. */
 export function ConsoleView({ engine }: { engine: EngineConnection }) {
-  const { project, universes, stats, frames, playback, windState, send } = engine;
+  const { project, universes, stats, frames, playback, windState, send, updateProject } = engine;
   /**
    * Почему ползунок «падает сразу» — самая частая жалоба с объекта.
    *
@@ -250,11 +250,49 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
           <span>
             ⚠ {blocked.text} {blocked.fix}
           </span>
+          {/*
+            Выключить аварийное гашение можно прямо отсюда.
+            На столе, без подключённого оборудования, выход «не доставляет
+            кадры» всегда — и проверить форсунки было нельзя вовсе: значения
+            гасли каждый такт. Гонять человека в «Настройки» посреди наладки
+            незачем, кнопка нужна там, где он в этот момент работает. Включить
+            обратно — той же кнопкой.
+          */}
+          {engine.failsafe?.active && project && (
+            <button
+              className="btn btn-small"
+              data-hint="Выключить аварийное гашение: насосы и клапаны перестанут уходить в 0 каждый такт, и приборами можно управлять руками. Не забудьте включить обратно перед сдачей объекта."
+              onClick={() =>
+                updateProject({ ...project, failsafe: { ...project.failsafe, enabled: false } })
+              }
+            >
+              Выключить на время наладки
+            </button>
+          )}
           {blocked.tab && (
             <button className="btn btn-small" onClick={() => requestTab(blocked.tab!)}>
               Перейти
             </button>
           )}
+        </div>
+      )}
+      {/*
+        Гашение выключено — это НЕ нормальное состояние объекта: о нём надо
+        помнить и вернуть перед сдачей, иначе при обрыве вывода вода останется
+        поднятой.
+      */}
+      {project && !project.failsafe.enabled && (
+        <div className="license-banner">
+          <span>
+            ⚠ Аварийное гашение выключено — приборы держат последнее значение, даже если движок перестанет
+            выдавать кадры. Это режим наладки; перед сдачей объекта включите обратно.
+          </span>
+          <button
+            className="btn btn-small"
+            onClick={() => updateProject({ ...project, failsafe: { ...project.failsafe, enabled: true } })}
+          >
+            Включить
+          </button>
         </div>
       )}
       <div className="toolbar">
