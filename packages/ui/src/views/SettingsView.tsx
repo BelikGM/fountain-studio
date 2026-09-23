@@ -2546,7 +2546,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
   const { draft, status, message, changes } = useSettingsDraft();
   /** Панели сворачиваются до плашки с названием (см. collapsiblePanels.ts). */
   const rootRef = useRef<HTMLElement>(null);
-  useCollapsiblePanels(rootRef);
+  useCollapsiblePanels(rootRef, 'settings');
   const tickMs = draft?.tickMs ?? engineConfig?.tickMs ?? 50;
   const universes = draft?.universes ?? engineConfig?.universes ?? [];
   const dirty = draft !== null;

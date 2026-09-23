@@ -20,7 +20,7 @@ import type { WindLimitConfig, WindSensorStatus } from './windlimit';
  * выглядело выключенным (заказчик 23.09.2026). Теперь редактор сверяет номер
  * и прямо говорит: движок старый, перезапустите его.
  */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 export type TestPatternMode =
   | 'off'
@@ -570,6 +570,12 @@ export type ClientMessage =
    */
   | { type: 'setAutosave'; enabled: boolean; seconds: number }
   /**
+   * Панель свёрнута или раскрыта («вкладка:название»). Хранится в настройках
+   * программы, чтобы выбор переживал закрытие программы и был одинаков в
+   * любом окне (см. ui/collapsiblePanels.ts).
+   */
+  | { type: 'setUiCollapsed'; key: string; collapsed: boolean }
+  /**
    * Громкость вечерней программы, дБ (−40…0), и «звук выключен». Настройка ПРОГРАММЫ, не объекта:
    * она про усилитель и колонки на месте, а не про шоу. Уже играющий трек не
    * трогает — подхватит следующий.
@@ -704,6 +710,8 @@ export type ServerMessage =
       /** Автосохранение проекта (см. setAutosave). */
       autosaveEnabled: boolean;
       autosaveSec: number;
+      /** Свёрнутые панели вкладок (см. setUiCollapsed). */
+      uiCollapsed: Record<string, boolean>;
     }
   /**
    * Есть ли в открытом проекте правки, ещё не записанные на диск. Приходит при

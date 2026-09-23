@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import { useCollapsiblePanels } from '../collapsiblePanels';
 import { ReaddressPanel } from '../components/ReaddressPanel';
 import { RemapDialog } from '../components/RemapDialog';
 import {
@@ -74,13 +75,15 @@ export function PatchView({ engine }: { engine: EngineConnection }) {
   // лезть туда каждый день не надо, и случайно перепутать адреса всему объекту
   // не должно быть просто.
   const [remapOpen, setRemapOpen] = useState(false);
+  const rootRef = useRef<HTMLElement>(null);
+  useCollapsiblePanels(rootRef, 'patch');
 
   if (!project) return <main className="view">Жду данные проекта от движка…</main>;
 
   const remapped = Object.values(project.addressRemap ?? {}).reduce((s, t) => s + Object.keys(t).length, 0);
 
   return (
-    <main className="view">
+    <main className="view" ref={rootRef}>
       <section className="panel">
         <h2>Переадресация каналов</h2>
         <p className="dim">
@@ -644,7 +647,7 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
 
   return (
     <section className="panel">
-      <h2 className="panel-head-row">
+      <h2 className="panel-head-row" data-title="Приборы">
         Приборы <span className="dim">({project!.devices.length})</span>
         {issues.collisions.size > 0 && (
           <span className="error-text"> ⚠ пересечения адресов: {issues.collisions.size}</span>

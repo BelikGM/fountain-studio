@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCollapsiblePanels } from '../collapsiblePanels';
 import {
   BOWL_DEFAULTS,
   DMX_MAX_VALUE,
@@ -193,6 +194,9 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
   deviceIndexRef.current = deviceIndex;
 
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // Боковые панели 3D сворачиваются, как на «Настройках».
+  const rootRef = useRef<HTMLElement>(null);
+  useCollapsiblePanels(rootRef, 'layout');
   const sceneRef = useRef<FountainScene | null>(null);
   // Свежие проект и выделение для сцены, создаваемой позже разметки.
   const projectRef = useRef(project);
@@ -503,7 +507,7 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
         и человек должен видеть ПОЧЕМУ здесь же, а не искать по вкладкам.
       */}
       <ManualBlocked engine={engine} />
-      <main className="view view-split">
+      <main className="view view-split" ref={rootRef}>
       <aside className="sidebar">
         <ElementList
           layout={layout}
@@ -937,7 +941,8 @@ function ElementList({
   ];
 
   return (
-    <section className="panel">
+    // Список элементов не сворачивается: без него в 3D нечего выбирать.
+    <section className="panel" data-nocollapse="1">
       {/* Заголовка «Схема» нет: вкладка и так называется 3D, а место в узкой
           колонке дороже. Остаётся одна лупа, раскрывающаяся при наведении. */}
       <h2 className="panel-head-search">
@@ -1888,7 +1893,7 @@ function MultiProps({
 
   return (
     <section className="panel">
-      <h2>{title}</h2>
+      <h2 data-title="Отмечено несколько">{title}</h2>
       {only ? (
         <p className="dim group-mode" data-hint={GROUP_HINT}>
           Групповое редактирование

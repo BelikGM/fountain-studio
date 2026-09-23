@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useCollapsiblePanels } from '../collapsiblePanels';
 import { DMX_UNIVERSE_SIZE, type ClientMessage, type NetworkState, type RdmAction, type RdmSensorReading,
   universeTitle,
   num,
@@ -12,6 +13,8 @@ import type { EngineConnection } from '../useEngine';
 export function NetworkView({ engine }: { engine: EngineConnection }) {
   const { network, send } = engine;
   const [selectedUid, setSelectedUid] = useState<string | null>(null);
+  const rootRef = useRef<HTMLElement>(null);
+  useCollapsiblePanels(rootRef, 'network');
 
   /**
    * Привязать найденный на линии RDM-прибор к прибору из патча. Нужно ровно для
@@ -38,7 +41,7 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
 
   if (!network) {
     return (
-      <main className="view">
+      <main className="view" ref={rootRef}>
         <section className="panel">
           <h2>Art-Net ноды</h2>
           <p className="dim">
@@ -54,9 +57,9 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
   }
 
   return (
-    <main className="view">
+    <main className="view" ref={rootRef}>
       <section className="panel">
-        <h2>
+        <h2 data-title="Art-Net ноды">
           Art-Net ноды ({network.nodes.length}){' '}
           <button className="btn btn-small" onClick={() => send({ type: 'refreshNetwork' })}>
             Обновить сейчас
@@ -94,7 +97,7 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
       </section>
 
       <section className="panel">
-        <h2>RDM-приборы ({network.rdmDevices.length})</h2>
+        <h2 data-title="RDM-приборы">RDM-приборы ({network.rdmDevices.length})</h2>
         {network.rdmDevices.length === 0 ? (
           <p className="dim">
             Приборы не обнаружены. Нужна Art-Net нода с поддержкой RDM; ноды без RDM этот раздел не
@@ -290,7 +293,7 @@ function JitterPanel({ engine }: { engine: EngineConnection }) {
   const stats = engine.stats;
   return (
     <section className="panel">
-      <h2>Ровность такта {stats && <span className="dim">(такт {stats.intervalMs} мс)</span>}</h2>
+      <h2 data-title="Ровность такта">Ровность такта {stats && <span className="dim">(такт {stats.intervalMs} мс)</span>}</h2>
       {samples.length < 2 ? (
         <p className="dim">Собираю историю — обновляется раз в секунду, подождите немного.</p>
       ) : (
@@ -364,7 +367,7 @@ function EventLogPanel({ engine }: { engine: EngineConnection }) {
 
   return (
     <section className="panel">
-      <h2>
+      <h2 data-title="Журнал событий">
         Журнал событий
         {sources.length > 1 && (
           <select

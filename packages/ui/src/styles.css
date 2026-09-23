@@ -2284,6 +2284,9 @@ input[type='range']:disabled { opacity: 0.4; cursor: default; }
 .panel-toggle:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
 .panel-chevron {
   margin-left: auto;
+  /* Всегда последней: если в заголовке позже появится счётчик или значок,
+     React допишет его в конец — стрелка всё равно останется справа. */
+  order: 99;
   flex: none;
   width: 7px;
   height: 7px;
@@ -2318,10 +2321,12 @@ section.panel-flash { box-shadow: 0 0 0 1px var(--accent); transition: box-shado
 .color-swatch-file { display: inline-flex; align-items: center; justify-content: center; color: var(--fg-dim); }
 .color-swatch-file:hover { color: var(--fg); }
 .field-grid .color-presets { flex-wrap: nowrap; }
-/* Панели «Настроек» не сжимаются колонкой: на время анимации у панели
-   overflow: hidden, а у flex-элемента с ним min-height становится 0 — и
-   панель ужималась до своих отступов (26 px), прежде чем раскрыться. */
-main.view-settings > section.panel { flex-shrink: 0; }
+/* Сворачиваемые панели не сжимаются колонкой (на всех вкладках): на время
+   анимации у панели overflow: hidden, а у flex-элемента с ним min-height
+   становится 0 — и панель ужималась до своих отступов (26 px), прежде чем
+   раскрыться. Только помеченные: список элементов в 3D не сворачивается и
+   живёт по своим правилам. */
+.panels-collapsible > section.panel[data-collapsible='1'] { flex-shrink: 0; }
 
 /* Эквалайзер музыки: вертикальные ползунки по полосам, как в настройках
    наушников и музыкальных программ. Ползунок — стандартный range, повёрнутый

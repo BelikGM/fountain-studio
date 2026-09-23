@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { frameBus } from './frameBus';
+import { registerPanelStateSender, setPanelStateFromEngine } from './collapsiblePanels';
 import { applyUiPrefs, collectUiPrefs } from './uiPrefs';
 import { onConfigResult } from './settingsDraft';
 import type {
@@ -356,6 +357,8 @@ export function useEngine(): EngineConnection {
               autosaveEnabled: msg.autosaveEnabled,
               autosaveSec: msg.autosaveSec,
             });
+            // Свёрнутые панели вкладок — из настроек программы (см. collapsiblePanels.ts).
+            setPanelStateFromEngine(msg.uiCollapsed);
             break;
           case 'configResult':
             // Черновик вселенных живёт вне React (см. settingsDraft.ts): ответ
@@ -605,6 +608,12 @@ export function useEngine(): EngineConnection {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   }, []);
+
+  // Свернули/раскрыли панель — движок запоминает в настройках программы.
+  useEffect(() => {
+    registerPanelStateSender((key, collapsed) => send({ type: 'setUiCollapsed', key, collapsed }));
+    return () => registerPanelStateSender(null);
+  }, [send]);
 
   const updateProject = useCallback(
     (next: Project) => {

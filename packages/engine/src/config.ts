@@ -135,6 +135,8 @@ export interface EngineConfig {
    * программы. Нужен, чтобы не включать его снова, если человек сам выключил.
    */
   autostartInit?: boolean;
+  /** Свёрнутые панели вкладок редактора: «вкладка:название» → свёрнута (см. setUiCollapsed). */
+  uiCollapsed?: Record<string, boolean>;
   /**
    * Откуда прочитаны настройки программы. Нужен, чтобы дописать в тот же файл
    * переключатель подготовки кадров: в установленном приложении человек до
@@ -201,10 +203,21 @@ export function loadAppConfig(appDataDir: string): EngineConfig & { configFile: 
     benchMode: raw.benchMode === true,
     autosave: sanitizeAutosave(raw.autosave),
     autostartInit: raw.autostartInit === true,
+    uiCollapsed: sanitizeUiCollapsed(raw.uiCollapsed),
     ...(typeof raw.playbackLookaheadMs === 'number' && Number.isFinite(raw.playbackLookaheadMs)
       ? { playbackLookaheadMs: Math.max(0, Math.min(2000, Math.round(raw.playbackLookaheadMs))) }
       : {}),
   };
+}
+
+/** Свёрнутые панели: только строка → да/нет, ключи разумной длины и не больше 500. */
+export function sanitizeUiCollapsed(raw: unknown): Record<string, boolean> {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: Record<string, boolean> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>).slice(0, 500)) {
+    if (typeof v === 'boolean' && k.length > 0 && k.length <= 200) out[k] = v;
+  }
+  return out;
 }
 
 /**
@@ -295,6 +308,7 @@ export function loadConfig(argv: string[]): EngineConfig & { configFile: string 
     benchMode: raw.benchMode === true,
     autosave: sanitizeAutosave(raw.autosave),
     autostartInit: raw.autostartInit === true,
+    uiCollapsed: sanitizeUiCollapsed(raw.uiCollapsed),
     ...(typeof raw.playbackLookaheadMs === 'number' && Number.isFinite(raw.playbackLookaheadMs)
       ? { playbackLookaheadMs: Math.max(0, Math.min(2000, Math.round(raw.playbackLookaheadMs))) }
       : {}),

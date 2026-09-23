@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCollapsiblePanels } from '../collapsiblePanels';
 import { DMX_UNIVERSE_SIZE, profileMap, type Project,
   universeShort,
   universeTitle,
@@ -76,6 +77,8 @@ function addressKinds(project: Project | null, universe: number): (RoleFilter | 
 
 export function StreamView({ engine }: { engine: EngineConnection }) {
   const { project, frames, wireFrames, universes, network, requestDmxCapture } = engine;
+  const rootRef = useRef<HTMLElement>(null);
+  useCollapsiblePanels(rootRef, 'stream');
   /**
    * Входящий Art-Net движок отдаёт не потоком, а по запросу: держать его в
    * общей рассылке дорого, а нужен он редко. Поэтому опрашиваем сами и только
@@ -114,7 +117,7 @@ export function StreamView({ engine }: { engine: EngineConnection }) {
   }, [stage, requestDmxCapture]);
 
   return (
-    <main className="view">
+    <main className="view" ref={rootRef}>
       <section className="panel">
         <h2>Поток DMX</h2>
         <p className="dim">

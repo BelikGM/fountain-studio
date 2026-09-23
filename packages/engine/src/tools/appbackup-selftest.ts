@@ -106,9 +106,36 @@ function send(st: Conn, msg: AnyMsg): void {
 }
 
 (async () => {
-  const eng = startEngine();
-  const st = await connect();
+  let eng = startEngine();
+  let st = await connect();
   await sleep(1500);
+
+  // --- 0. Свёрнутые панели редактора живут в настройках программы -----------
+  // Заказчик 24.09.2026: закрыл программу, открыл — свёрнуто то же, что было.
+  // Память окна для этого не годится (у каждого адреса окна своя), поэтому
+  // выбор хранит движок в app-config.json.
+  send(st, { type: 'setUiCollapsed', key: 'settings:Громкость и эквалайзер', collapsed: true });
+  send(st, { type: 'setUiCollapsed', key: 'network:Журнал сети', collapsed: true });
+  send(st, { type: 'setUiCollapsed', key: 'network:Журнал сети', collapsed: false });
+  send(st, { type: 'setUiCollapsed', key: '', collapsed: true });
+  await sleep(400);
+  const col0 = st.last.config?.uiCollapsed as Record<string, boolean> | undefined;
+  check('свёрнутая панель — в состоянии движка', col0?.['settings:Громкость и эквалайзер'] === true, JSON.stringify(col0));
+  check('раскрытая обратно — раскрыта', col0?.['network:Журнал сети'] === false, JSON.stringify(col0));
+  check('пустое имя панели не принято', col0 !== undefined && !('' in col0), JSON.stringify(col0));
+  const disk0 = JSON.parse(fs.readFileSync(path.join(appDataDir, 'app-config.json'), 'utf8')) as { uiCollapsed?: Record<string, boolean>; audio?: { volumeDb?: number } };
+  check('записано в app-config.json', disk0.uiCollapsed?.['settings:Громкость и эквалайзер'] === true, JSON.stringify(disk0.uiCollapsed));
+  check('прочие настройки программы при этом целы', disk0.audio?.volumeDb === -7, JSON.stringify(disk0.audio));
+  // «Закрыли программу и открыли»: движок перезапущен с той же папкой данных.
+  st.ws.close();
+  eng.kill();
+  await sleep(800);
+  eng = startEngine();
+  st = await connect();
+  await sleep(1500);
+  const col1 = st.last.config?.uiCollapsed as Record<string, boolean> | undefined;
+  check('после перезапуска свёрнутое осталось свёрнутым', col1?.['settings:Громкость и эквалайзер'] === true, JSON.stringify(col1));
+  check('после перезапуска раскрытое осталось раскрытым', col1?.['network:Журнал сети'] === false, JSON.stringify(col1));
 
   // --- 1. Выгрузка: в файле всё, ради чего копия и делается ----------------
   // Редактор присылает и настройки своего окна (они в браузере, движок их не видит).
@@ -128,6 +155,12 @@ function send(st: Conn, msg: AnyMsg): void {
   check('токен внутри копии настоящий', secretsInZip?.data.toString('utf8').includes('секрет-123') === true);
   // Рабочих данных объектов в копии настроек быть не должно — у них свой перенос.
   check('объектов в копии настроек нет', !names.some((n) => n === 'project.json' || n.startsWith('audio/')), names.join(', '));
+  const cfgInZip = readZip(zip).find((e) => e.name === 'app-config.json')?.data.toString('utf8') ?? '';
+  check('свёрнутые панели попали в копию', cfgInZip.includes('Громкость и эквалайзер'), cfgInZip);
+  // После выгрузки свернули ещё панель — восстановление копии должно вернуть
+  // панели как в копии, и сразу, не дожидаясь перезапуска.
+  send(st, { type: 'setUiCollapsed', key: 'remote:OSC-привязки', collapsed: true });
+  await sleep(300);
 
   // --- 2. Восстановление: то, что потеряли, вернулось целым ----------------
   fs.rmSync(path.join(appDataDir, 'fountain.secrets.json'));
@@ -142,6 +175,9 @@ function send(st: Conn, msg: AnyMsg): void {
   check('токен бота вернулся', secrets.includes('секрет-123'), secrets);
   const lic = fs.readFileSync(path.join(appDataDir, 'fountain.license.json'), 'utf8');
   check('лицензия вернулась целой', lic.includes('подпись'), lic);
+  await sleep(300);
+  const col2 = st.last.config?.uiCollapsed as Record<string, boolean> | undefined;
+  check('свёрнутые панели из копии применились сразу', col2?.['settings:Громкость и эквалайзер'] === true && !('remote:OSC-привязки' in (col2 ?? {})), JSON.stringify(col2));
 
   // --- 3. Чужой и битый архив не затирают настройки ------------------------
   const foreign = createZip([{ name: 'project.json', data: Buffer.from('{}', 'utf8') }]);

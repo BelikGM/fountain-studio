@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { useCollapsiblePanels } from '../collapsiblePanels';
 import {
   uid,
   type DmxTrigger,
@@ -27,6 +28,8 @@ const ACTION_LABEL: Record<RemoteAction['type'], string> = {
  */
 export function RemoteView({ engine }: { engine: EngineConnection }) {
   const { project, remote, universes, updateProject } = engine;
+  const rootRef = useRef<HTMLElement>(null);
+  useCollapsiblePanels(rootRef, 'remote');
   if (!project) return <main className="view">Жду данные проекта от движка…</main>;
 
   const refOptions = (type: RemoteAction['type']): { id: string; name: string }[] => {
@@ -48,7 +51,7 @@ export function RemoteView({ engine }: { engine: EngineConnection }) {
     project.scenes.length > 0 ? { type: 'scene', refId: project.scenes[0]!.id } : { type: 'stopAll' };
 
   return (
-    <main className="view">
+    <main className="view" ref={rootRef}>
       {!remote ? (
         <section className="panel">
           <h2>Подключение</h2>

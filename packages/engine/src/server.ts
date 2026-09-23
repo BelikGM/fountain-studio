@@ -19,7 +19,7 @@ import {
   eqPresetOf,
 } from '@fountain-studio/shared';
 import type { AudioStore } from './audio';
-import { sanitizeAutosave, saveAppConfigPatch } from './config';
+import { sanitizeAutosave, sanitizeUiCollapsed, saveAppConfigPatch } from './config';
 import { isAutostartEnabled, isAutostartSupported, setAutostart, unsupportedReason } from './autostart';
 import type { BackupStore } from './backups';
 import type { MailNotifier } from './mailnotify';
@@ -150,6 +150,7 @@ export function startServer(
     benchMode: engine.benchModeOn(),
     autosaveEnabled: engine.config.autosave?.enabled !== false,
     autosaveSec: engine.config.autosave?.seconds ?? 1,
+    uiCollapsed: engine.config.uiCollapsed ?? {},
   });
   const dirtyMessage = (): Extract<ServerMessage, { type: 'projectDirty' }> => ({
     type: 'projectDirty',
@@ -616,6 +617,15 @@ export function startServer(
           broadcastPlayback();
           break;
         }
+        case 'setUiCollapsed': {
+          if (typeof msg.key !== 'string' || msg.key.length === 0 || msg.key.length > 200) break;
+          const next = sanitizeUiCollapsed({ ...(engine.config.uiCollapsed ?? {}), [msg.key]: msg.collapsed === true });
+          engine.config.uiCollapsed = next;
+          saveAppConfigPatch(engine.config.configFile ?? '', { uiCollapsed: next });
+          // Другим окнам — тоже: свернули в одном, видно во всех.
+          broadcast(configMessage());
+          break;
+        }
         case 'setAutosave': {
           // Настройка программы — пишем сразу, как и режим отладки.
           const next = sanitizeAutosave({ enabled: msg.enabled, seconds: msg.seconds });
@@ -808,6 +818,14 @@ export function startServer(
               JSON.parse(e.data.toString('utf8'));
               fs.writeFileSync(path.join(dir, e.name), e.data);
               restored.push(APP_BACKUP_FILES.find(([f]) => f === e.name)?.[1] ?? e.name);
+              if (e.name === 'app-config.json') {
+                // Свёрнутые панели — сразу, а не после перезапуска: иначе первый
+                // же щелчок по панели записал бы в восстановленный файл прежний
+                // набор из памяти движка.
+                const raw = JSON.parse(e.data.toString('utf8')) as { uiCollapsed?: unknown };
+                engine.config.uiCollapsed = sanitizeUiCollapsed(raw.uiCollapsed);
+                broadcast(configMessage());
+              }
             }
             if (restored.length === 0) throw new Error('в файле нет настроек программы — это копия проекта или чужой архив');
             ok = true;
