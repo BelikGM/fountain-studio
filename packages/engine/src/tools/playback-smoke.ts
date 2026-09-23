@@ -2185,6 +2185,22 @@ async function main(): Promise<void> {
     await waitFor('выключение utilityLight снимает форсирование', () => ch(10) === 0 && ch(11) === 0 && ch(12) === 0, 2000);
     check(true, 'utilityLight enabled=false: форсирование снято, канал вернулся в 0');
 
+    /*
+     * Вне окна времени служебное освещение прибор НЕ трогает (24.09.2026):
+     * раньше держало 0, и прибор, который участвует ещё и в шоу, гас.
+     * Окно ставим на пару часов вперёд от «сейчас» — заведомо вне его.
+     */
+    const hh = (h: number): string => String(((new Date().getHours() + h) % 24 + 24) % 24).padStart(2, '0') + ':00';
+    send({
+      type: 'updateProject',
+      project: { ...store.project, utilityLight: { enabled: true, deviceIds: ['rgb1'], always: false, onTime: hh(2), offTime: hh(3) } },
+    });
+    await waitFor('окно служебного света в будущем', () => projectEcho?.utilityLight.onTime === hh(2));
+    send({ type: 'setChannel', universe: 1, channel: 10, value: 77 });
+    await waitFor('вне окна прибор ведёт ручное управление', () => ch(10) === 77, 2000);
+    check(ch(10) === 77, 'вне окна служебное освещение прибор не гасит — его значение задаёт кто угодно другой');
+    send({ type: 'setChannel', universe: 1, channel: 10, value: 0 });
+
     send({ type: 'updateProject', project: { ...store.project, utilityLight: defaultUtilityLightConfig() } });
     await waitFor('utilityLight сброшен к умолчанию', () => projectEcho?.utilityLight.enabled === false);
   }

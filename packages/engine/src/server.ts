@@ -15,7 +15,8 @@ import {
   frameModeToConfig,
   storedUniverseLabel,
   clampVolumeDb,
-  clampToneDb,
+  clampEq,
+  eqPresetOf,
 } from '@fountain-studio/shared';
 import type { AudioStore } from './audio';
 import { sanitizeAutosave, saveAppConfigPatch } from './config';
@@ -68,9 +69,12 @@ export const ENGINE_VERSION = '0.6.0';
  * Кэш отзыва лицензий (revoked-cache.json) не берём: он наживной, движок
  * обновит его сам, когда будет сеть.
  */
+/** Настройки окна редактора в копии настроек программы (см. exportAppSettings). */
+const UI_PREFS_FILE = 'ui-prefs.json';
+
 const APP_BACKUP_FILES: [file: string, what: string][] = [
   ['fountain.license.json', 'лицензия'],
-  ['fountain.secrets.json', 'токен Telegram-бота'],
+  ['fountain.secrets.json', 'токен Telegram-бота и пароль почты'],
   ['app-config.json', 'настройки движка'],
   ['app-settings.json', 'недавние проекты'],
 ];
@@ -139,8 +143,9 @@ export function startServer(
     frameModeActive: engine.frameModeActive(),
     audioVolumeDb: engine.config.audio.volumeDb,
     audioMuted: engine.config.audio.muted,
-    audioBassDb: engine.config.audio.bassDb,
-    audioTrebleDb: engine.config.audio.trebleDb,
+    audioEq: engine.config.audio.eq ?? clampEq(undefined, engine.config.audio.bassDb, engine.config.audio.trebleDb),
+    audioEqPreset: engine.config.audio.eqPreset ?? 'flat',
+    audioEqCustom: engine.config.audio.eqCustom ?? engine.config.audio.eq ?? clampEq(undefined),
     audioReady: player?.ready() ?? false,
     benchMode: engine.benchModeOn(),
     autosaveEnabled: engine.config.autosave?.enabled !== false,
@@ -566,8 +571,12 @@ export function startServer(
             ...engine.config.audio,
             volumeDb: clampVolumeDb(msg.volumeDb),
             muted: msg.muted === true,
-            bassDb: clampToneDb(msg.bassDb),
-            trebleDb: clampToneDb(msg.trebleDb),
+            eq: clampEq(msg.eq),
+            eqPreset: typeof msg.eqPreset === 'string' ? msg.eqPreset : eqPresetOf(clampEq(msg.eq)),
+            eqCustom: clampEq(msg.eqCustom),
+            // Старый тембр больше не нужен: он переведён в полосы.
+            bassDb: undefined,
+            trebleDb: undefined,
           };
           player?.setConfig(engine.config.audio);
           // Настройка ПРОГРАММЫ: про усилитель на объекте, а не про шоу.
@@ -734,6 +743,12 @@ export function startServer(
             entries.push({ name: file, data: fs.readFileSync(full) });
             took.push(what);
           }
+          // Настройки окна редактора — их прислал сам редактор (см. messages.ts).
+          const prefs = msg.uiPrefs && typeof msg.uiPrefs === 'object' ? msg.uiPrefs : null;
+          if (prefs && Object.keys(prefs).length > 0) {
+            entries.push({ name: UI_PREFS_FILE, data: Buffer.from(JSON.stringify(prefs, null, 2), 'utf8') });
+            took.push('настройки окна редактора (горячие клавиши, камера 3D, скрытое в 3D, свёрнутые панели, тема)');
+          }
           entries.push({
             name: 'ЧТО-ЭТО.txt',
             data: Buffer.from(
@@ -769,11 +784,23 @@ export function startServer(
           const dir = projects?.appDataDir ?? '';
           let ok = false;
           let message = '';
+          let importedPrefs: Record<string, string> | undefined;
           try {
             if (!dir) throw new Error('движок не знает, где папка настроек');
             const entries = readZip(Buffer.from(msg.dataBase64, 'base64'));
             const known = new Set(APP_BACKUP_FILES.map(([f]) => f));
             const restored: string[] = [];
+            let uiPrefs: Record<string, string> | undefined;
+            const prefsEntry = entries.find((e) => e.name === UI_PREFS_FILE);
+            if (prefsEntry) {
+              const raw = JSON.parse(prefsEntry.data.toString('utf8')) as unknown;
+              if (raw && typeof raw === 'object') {
+                uiPrefs = Object.fromEntries(
+                  Object.entries(raw as Record<string, unknown>).filter((kv): kv is [string, string] => typeof kv[1] === 'string'),
+                );
+                restored.push('настройки окна редактора');
+              }
+            }
             for (const e of entries) {
               if (!known.has(e.name)) continue;
               // Проверяем, что это JSON, ДО записи: битый app-config.json
@@ -785,10 +812,18 @@ export function startServer(
             if (restored.length === 0) throw new Error('в файле нет настроек программы — это копия проекта или чужой архив');
             ok = true;
             message = `Восстановлено: ${restored.join(', ')}. Перезапустите программу, чтобы настройки вступили в силу.`;
+            importedPrefs = uiPrefs;
           } catch (err) {
             message = err instanceof Error ? err.message : String(err);
           }
-          ws.send(JSON.stringify({ type: 'appSettingsImportResult', ok, message } satisfies ServerMessage));
+          ws.send(
+            JSON.stringify({
+              type: 'appSettingsImportResult',
+              ok,
+              message,
+              ...(importedPrefs ? { uiPrefs: importedPrefs } : {}),
+            } satisfies ServerMessage),
+          );
           break;
         }
         case 'importProject': {

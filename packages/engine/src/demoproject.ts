@@ -31,7 +31,7 @@ export function createDemoProject(): Project {
     { id: sceneOffId, name: 'Всё выключено', values: {} },
     {
       id: sceneMaxId,
-      name: 'Максимум',
+      name: 'Всё на полную',
       values: {
         'demo-pump1': [255],
         'demo-valve1': [255],
@@ -43,7 +43,7 @@ export function createDemoProject(): Project {
     },
     {
       id: sceneRainbowId,
-      name: 'Радуга',
+      name: 'Цветная: вода 70 %, свет разными цветами',
       values: {
         'demo-pump1': [180],
         'demo-valve1': [255],

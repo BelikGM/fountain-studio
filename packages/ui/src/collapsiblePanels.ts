@@ -5,9 +5,9 @@ import { onSettingsPanelRequest, takePendingPanel } from './navigate';
  * Сворачиваемые панели «Настроек» (заказчик 23.09.2026).
  *
  * Панелей два десятка, и нужное приходилось искать прокруткой. Теперь каждая
- * сворачивается до своей плашки с названием: щелчок по плашке — раскрыть,
- * повторный — свернуть. Изначально всё свёрнуто, выбор каждой панели
- * запоминается на этом компьютере.
+ * сворачивается до своей плашки с названием: щелчок по плашке — свернуть,
+ * повторный — раскрыть. Изначально всё РАСКРЫТО (уточнение заказчика
+ * 24.09.2026), выбор каждой панели запоминается на этом компьютере.
  *
  * Почему поверх готовой разметки, а не компонентом-обёрткой. Панели — это
  * два десятка отдельных функций со своим `<section className="panel"><h2>`.
@@ -15,14 +15,18 @@ import { onSettingsPanelRequest, takePendingPanel } from './navigate';
  * можно забыть, и каждая новая панель снова без него. Здесь хук сам находит
  * панели вкладки при каждой отрисовке и подхватывает новые.
  *
- * Анимация — по max-height: высоту раскрытой панели меряем перед стартом, а
- * по окончании снимаем ограничение, чтобы панель могла расти (раскрыли
- * подробности, пришёл ответ движка).
+ * Анимация — высотой через Web Animations: обе высоты (до и после) меряем
+ * заранее, анимируем ровно между ними, по окончании высоту отпускаем — панель
+ * снова растёт сама (раскрыли подробности, пришёл ответ движка). Первая
+ * версия анимировала max-height и считала стартовую высоту по заголовку — при
+ * раскрытии панель сперва сжималась с 46 до 26 пикселей и только потом
+ * рывком открывалась (замер 24.09.2026).
  */
 
-const KEY = 'fountain.settings.collapsed';
-/** Изначально панели свёрнуты — так просил заказчик. */
-const DEFAULT_COLLAPSED = true;
+/** v2: при смене умолчания на «раскрыто» прежние отметки сброшены. */
+const KEY = 'fountain.settings.collapsed.v2';
+/** Изначально панели раскрыты — так просил заказчик (24.09.2026). */
+const DEFAULT_COLLAPSED = false;
 const ANIM_MS = 220;
 
 function loadState(): Record<string, boolean> {
@@ -53,47 +57,38 @@ function titleOf(section: HTMLElement): string {
   return own ?? (h2.textContent ?? '').trim();
 }
 
-/** Высота плашки свёрнутой панели: заголовок плюс внутренние отступы. */
-function collapsedHeight(section: HTMLElement, h2: HTMLElement): number {
-  const cs = getComputedStyle(section);
-  return h2.offsetHeight + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
-}
-
 function setCollapsed(section: HTMLElement, collapsed: boolean, animate: boolean): void {
   const h2 = section.querySelector(':scope > h2') as HTMLElement | null;
   if (!h2) return;
+  // Видимая высота — ДО отмены прежней анимации: щёлкнули посреди неё —
+  // продолжаем с того места, где панель сейчас, а не прыгаем.
+  const from = section.getBoundingClientRect().height;
+  const prev = (section as HTMLElement & { _anim?: Animation })._anim;
+  prev?.cancel();
+  // Состояние — сразу: по нему поворачивается стрелка, не дожидаясь конца анимации.
   section.dataset.collapsed = collapsed ? '1' : '0';
   h2.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-  const done = (): void => {
-    section.style.maxHeight = '';
+  if (!animate || typeof section.animate !== 'function') {
+    section.classList.toggle('panel-collapsed', collapsed);
+    return;
+  }
+  // Конечную высоту меряем синхронно, до кадра: глаз промежуточного состояния не увидит.
+  section.classList.toggle('panel-collapsed', collapsed);
+  const to = section.getBoundingClientRect().height;
+  // На время анимации содержимое видно (и при сворачивании тоже), лишнее обрезаем.
+  section.classList.remove('panel-collapsed');
+  section.style.overflow = 'hidden';
+  const anim = section.animate([{ height: `${from}px` }, { height: `${to}px` }], {
+    duration: ANIM_MS,
+    easing: 'cubic-bezier(0.2, 0, 0, 1)',
+  });
+  (section as HTMLElement & { _anim?: Animation })._anim = anim;
+  const finish = (): void => {
     section.style.overflow = '';
     section.classList.toggle('panel-collapsed', section.dataset.collapsed === '1');
   };
-  if (!animate) {
-    done();
-    return;
-  }
-  if (collapsed) {
-    // Сворачиваем: от нынешней высоты к высоте плашки, потом прячем содержимое.
-    section.style.overflow = 'hidden';
-    section.style.maxHeight = `${section.scrollHeight}px`;
-    void section.offsetHeight;
-    section.classList.add('panel-animating');
-    section.style.maxHeight = `${collapsedHeight(section, h2)}px`;
-  } else {
-    // Раскрываем: показываем содержимое, меряем полную высоту и растём до неё.
-    const from = collapsedHeight(section, h2);
-    section.classList.remove('panel-collapsed');
-    section.style.overflow = 'hidden';
-    section.style.maxHeight = `${from}px`;
-    void section.offsetHeight;
-    section.classList.add('panel-animating');
-    section.style.maxHeight = `${section.scrollHeight}px`;
-  }
-  window.setTimeout(() => {
-    section.classList.remove('panel-animating');
-    done();
-  }, ANIM_MS + 30);
+  anim.onfinish = finish;
+  anim.oncancel = finish;
 }
 
 /** Раскрыть панель по названию и прокрутить к ней (кнопка «Перейти» из полосы). */
@@ -104,8 +99,8 @@ function reveal(root: HTMLElement, title: string): boolean {
     setCollapsed(section, false, true);
     saveState(title, false);
   }
-  // Ждём начала раскрытия — иначе прокрутка считает по свёрнутой высоте.
-  window.setTimeout(() => section.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+  // Прокручиваем после раскрытия — иначе прокрутка считает по свёрнутой высоте.
+  window.setTimeout(() => section.scrollIntoView({ behavior: 'smooth', block: 'start' }), ANIM_MS + 20);
   section.classList.add('panel-flash');
   window.setTimeout(() => section.classList.remove('panel-flash'), 1600);
   return true;

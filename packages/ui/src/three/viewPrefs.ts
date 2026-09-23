@@ -19,9 +19,13 @@ const KEY = 'fountain.view.prefs';
 /** Умолчания: вращение приторможено вдвое, панорама ускорена вдвое. */
 export const VIEW_PREF_DEFAULTS: ViewPrefs = { rotateSpeed: 0.45, panSpeed: 2 };
 /** Допустимые пределы регулировок [минимум, максимум, шаг]. */
+/**
+ * Шаг — 0,01: ползунок почти непрерывный (заказчик 24.09.2026: шаг 0,05 и
+ * 0,1 ощущался ступеньками).
+ */
 export const VIEW_PREF_LIMITS = {
-  rotateSpeed: [0.1, 1.5, 0.05] as const,
-  panSpeed: [0.3, 5, 0.1] as const,
+  rotateSpeed: [0.1, 1.5, 0.01] as const,
+  panSpeed: [0.3, 5, 0.01] as const,
 };
 
 const clamp = (v: number, [lo, hi]: readonly [number, number, number]): number =>

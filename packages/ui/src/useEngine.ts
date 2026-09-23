@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { frameBus } from './frameBus';
+import { applyUiPrefs, collectUiPrefs } from './uiPrefs';
 import { onConfigResult } from './settingsDraft';
 import type {
   BackupInfo,
@@ -80,8 +81,10 @@ export interface EngineConfigState {
   /** Звук вечерней программы выключен. */
   audioMuted: boolean;
   /** Тембр вечерней программы, дБ. */
-  audioBassDb: number;
-  audioTrebleDb: number;
+  /** Эквалайзер: полосы, пресет и последняя своя настройка. */
+  audioEq: number[];
+  audioEqPreset: string;
+  audioEqCustom: number[];
   /** Нашёлся ли проигрыватель: без него вечерняя программа идёт в тишине. */
   audioReady: boolean;
   /** Режим отладки: на этом компьютере аварийное гашение не срабатывает. */
@@ -345,8 +348,9 @@ export function useEngine(): EngineConnection {
               frameModeActive: msg.frameModeActive,
               audioVolumeDb: msg.audioVolumeDb,
               audioMuted: msg.audioMuted,
-              audioBassDb: msg.audioBassDb,
-              audioTrebleDb: msg.audioTrebleDb,
+              audioEq: msg.audioEq,
+              audioEqPreset: msg.audioEqPreset,
+              audioEqCustom: msg.audioEqCustom,
               audioReady: msg.audioReady,
               benchMode: msg.benchMode,
               autosaveEnabled: msg.autosaveEnabled,
@@ -509,6 +513,8 @@ export function useEngine(): EngineConnection {
           case 'appSettingsImportResult': {
             const waiters = appImportWaitersRef.current;
             appImportWaitersRef.current = [];
+            // Настройки окна редактора — раскладываем сами: движок их не хранит.
+            if (msg.ok && msg.uiPrefs) applyUiPrefs(msg.uiPrefs);
             for (const resolve of waiters) resolve({ ok: msg.ok, message: msg.message });
             break;
           }
@@ -672,7 +678,7 @@ export function useEngine(): EngineConnection {
     () =>
       new Promise<{ filename: string; dataBase64: string }>((resolve) => {
         appExportWaitersRef.current.push(resolve);
-        send({ type: 'exportAppSettings' });
+        send({ type: 'exportAppSettings', uiPrefs: collectUiPrefs() });
       }),
     [send],
   );

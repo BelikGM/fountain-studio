@@ -80,7 +80,7 @@ try {
   check('движок отдал список вселенных', hello0?.universes?.length === 1, JSON.stringify(hello0?.universes));
   check('автоимя «Линия 1» в редактор не уходит', hello0?.universes?.[0]?.label === '', JSON.stringify(hello0?.universes?.[0]));
 
-  const maxScene = project.scenes.find((s) => s.name === 'Максимум')!;
+  const maxScene = project.scenes.find((s) => s.name === 'Всё на полную')!;
   ws.send(JSON.stringify({ type: 'setScene', sceneId: maxScene.id }));
   await sleep(600);
 

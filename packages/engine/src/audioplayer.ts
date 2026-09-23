@@ -2,10 +2,10 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  BASS_HZ,
-  clampToneDb,
+  clampEq,
   clampVolumeDb,
-  TREBLE_HZ,
+  EQ_BANDS_HZ,
+  eqBandWidthOct,
   volumeDbLabel,
   type AudioLevel,
   type CutRange,
@@ -16,11 +16,13 @@ export interface AudioPlayerConfig {
   player: 'auto' | 'ffplay' | 'none';
   /** Путь к ffplay (по умолчанию ищется в PATH). */
   ffplayPath: string;
-  /** Громкость, дБ (−40…0). */
+  /** Громкость, дБ (−12…+12). */
   volumeDb: number;
   /** Звук выключен совсем. */
   muted: boolean;
-  /** Тембр, дБ. */
+  /** Эквалайзер по EQ_BANDS_HZ, дБ. */
+  eq?: number[];
+  /** Старый тембр — только для перевода старых настроек. */
   bassDb?: number;
   trebleDb?: number;
 }
@@ -32,8 +34,9 @@ export interface AudioPlayerConfig {
  *
  * Громкость — фильтром volume в децибелах, в той же цепочке, что и вырезки
  * монтажа: так уровень точный и совпадает с тем, что написано в настройках.
- * «Звук выключен» — стартовой громкостью 0, без фильтра. Выше 0 дБ не
- * поднимаем (см. shared/audiovolume.ts).
+ * «Звук выключен» — стартовой громкостью 0, без фильтра. Подъём (громкость
+ * выше 0 дБ или любая полоса эквалайзера вверх) всегда закрывается
+ * ограничителем в конце цепочки (см. shared/audiovolume.ts).
  */
 export function playArgs(file: string, cuts: CutRange[], level: AudioLevel): string[] {
   const args = ['-nodisp', '-autoexit', '-loglevel', 'error', '-volume', level.muted ? '0' : '100'];
@@ -44,26 +47,30 @@ export function playArgs(file: string, cuts: CutRange[], level: AudioLevel): str
     filters.push(`aselect='not(${not})'`, 'asetpts=N/SR/TB');
   }
   if (!level.muted) {
-    // Тембр — до громкости: так громкость остаётся последним словом.
-    const bass = clampToneDb(level.bassDb);
-    const treble = clampToneDb(level.trebleDb);
+    // Эквалайзер — до громкости: так громкость остаётся последним словом.
+    const eq = level.eq ? clampEq(level.eq) : clampEq(undefined, level.bassDb, level.trebleDb);
+    const db = clampVolumeDb(level.volumeDb);
+    const boost = db > 0 || eq.some((g) => g > 0);
     /*
-     * Тембр считаем в плавающей точке. Файл в 16 бит (wav) фильтр bass/treble
-     * обрабатывает в тех же 16 битах и при подъёме сам срезает пики о потолок —
-     * ограничитель после него уже ничего не спасает, хрип остаётся (замерено
+     * Считаем в плавающей точке. Файл в 16 бит (wav) фильтры обрабатывают в
+     * тех же 16 битах и при подъёме сами срезают пики о потолок —
+     * ограничитель после них уже ничего не спасает, хрип остаётся (замерено
      * 22.09.2026: «clipping 2500 times» на громком басу +6 дБ).
      */
-    if (bass !== 0 || treble !== 0) filters.push('aformat=sample_fmts=fltp');
-    if (bass !== 0) filters.push(`bass=g=${bass}:f=${BASS_HZ}`);
-    if (treble !== 0) filters.push(`treble=g=${treble}:f=${TREBLE_HZ}`);
-    const db = clampVolumeDb(level.volumeDb);
+    if (boost || eq.some((g) => g !== 0)) filters.push('aformat=sample_fmts=fltp');
+    // Полоса — пиковый фильтр, шириной до середины между соседними полосами
+    // (см. eqBandWidthOct): тесные 12/14/16 кГц не складываются в +30 дБ.
+    EQ_BANDS_HZ.forEach((hz, i) => {
+      const g = eq[i]!;
+      if (g !== 0) filters.push(`equalizer=f=${hz}:t=o:w=${eqBandWidthOct(i).toFixed(2)}:g=${g}`);
+    });
     if (db !== 0) filters.push(`volume=${db}dB`);
     /*
-     * Подъём тембра может вывести громкий трек за потолок — это хрип в
+     * Любой подъём может вывести громкий трек за потолок — это хрип в
      * колонках. Ограничитель в конце цепочки срезает такие пики мягко. Без
      * подъёма он не нужен и не ставится: срез перегруза не даёт.
      */
-    if (bass > 0 || treble > 0) filters.push('alimiter=limit=0.95:level=false');
+    if (boost) filters.push('alimiter=limit=0.95:level=false');
   }
   if (filters.length > 0) args.push('-af', filters.join(','));
   args.push('-i', file);
@@ -103,7 +110,11 @@ export class AudioPlayer {
 
   /** Громкость сейчас — для ответа интерфейсу. */
   level(): AudioLevel {
-    return { volumeDb: this.config.volumeDb, muted: this.config.muted, bassDb: this.config.bassDb ?? 0, trebleDb: this.config.trebleDb ?? 0 };
+    return {
+      volumeDb: this.config.volumeDb,
+      muted: this.config.muted,
+      eq: this.config.eq ?? clampEq(undefined, this.config.bassDb, this.config.trebleDb),
+    };
   }
 
   /**

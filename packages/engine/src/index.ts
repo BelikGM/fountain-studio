@@ -10,7 +10,7 @@ import { MailNotifier } from './mailnotify';
 import { TelegramNotifier } from './telegram';
 import { buildSiteSnapshot } from './siteSnapshot';
 import { loadAppConfig, saveAppConfigPatch } from './config';
-import { isAutostartEnabled, isPackagedApp, setAutostart } from './autostart';
+import { isAutostartEnabled, isAutostartSupported, isPackagedApp, setAutostart } from './autostart';
 import { wireAlarmNotifications } from './alarms';
 import { generateDemoWav } from './demoaudio';
 import { DEMO_AUDIO_FILE, createDemoProject } from './demoproject';
@@ -72,12 +72,20 @@ const engine = new Engine(config);
  * Автозапуск с Windows — ВКЛЮЧЁН по умолчанию (заказчик 23.09.2026). Программа
  * управляет фонтаном без человека: после перезагрузки компьютера объекта (свет
  * моргнул, Windows обновилась) она обязана подняться сама. Включаем один раз,
- * при первом запуске установленной программы; выключил человек сам — больше не
- * трогаем (флаг autostartInit). Из исходников не включаем: на машине
- * разработчика задача планировщика появлялась бы без спроса.
+ * при первом запуске; выключил человек сам — больше не трогаем (флаг
+ * autostartInit).
+ *
+ * «Первый запуск» — это установленная программа ИЛИ настоящий движок из
+ * исходников (он стартует со своей папкой данных по умолчанию, без
+ * --app-data; заказчик работает именно так и просил автозапуск включённым,
+ * 24.09.2026). Проверки всегда передают --app-data со временной папкой — они
+ * автозапуск не трогают; окно из исходников (app:dev) — тоже.
  */
-const installed = process.env.FOUNTAIN_APP_PACKAGED === '1' || process.env.FOUNTAIN_TEST_FIRST_AUTOSTART === '1';
-if (installed && isPackagedApp() && !config.autostartInit) {
+const installed =
+  process.env.FOUNTAIN_APP_PACKAGED === '1' ||
+  process.env.FOUNTAIN_TEST_FIRST_AUTOSTART === '1' ||
+  (!isPackagedApp() && argValue('--app-data') === undefined);
+if (installed && isAutostartSupported() && !config.autostartInit) {
   const res = isAutostartEnabled() ? { ok: true } : setAutostart(true);
   saveAppConfigPatch(config.configFile, { autostartInit: true });
   config.autostartInit = true;

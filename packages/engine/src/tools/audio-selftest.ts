@@ -20,7 +20,16 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { clampToneDb, clampVolumeDb, levelFromPercent, toneDbLabel, volumeDbLabel } from '@fountain-studio/shared';
+import {
+  clampEq,
+  clampVolumeDb,
+  EQ_BANDS_HZ,
+  EQ_PRESETS,
+  eqPresetOf,
+  levelFromPercent,
+  toneDbLabel,
+  volumeDbLabel,
+} from '@fountain-studio/shared';
 import { AudioPlayer, playArgs } from '../audioplayer';
 import { sanitizeAudio } from '../config';
 
@@ -43,8 +52,10 @@ function argOf(args: string[], flag: string): string | undefined {
 // ── Децибелы ───────────────────────────────────────────────────────────────
 console.log('— громкость в дБ —');
 check('0 дБ — как в файле', clampVolumeDb(0) === 0);
-check('выше 0 дБ не поднимаем (перегруз в колонках)', clampVolumeDb(6) === 0, String(clampVolumeDb(6)));
-check('ниже −40 дБ не опускаем — дальше только «выключен»', clampVolumeDb(-90) === -40, String(clampVolumeDb(-90)));
+check('поднять можно: +6 дБ остаётся +6', clampVolumeDb(6) === 6, String(clampVolumeDb(6)));
+check('выше +12 дБ не поднимаем', clampVolumeDb(30) === 12, String(clampVolumeDb(30)));
+check('ниже −12 дБ не опускаем — дальше только «выключен»', clampVolumeDb(-90) === -12, String(clampVolumeDb(-90)));
+check('подпись подъёма со знаком «+3 дБ»', volumeDbLabel({ volumeDb: 3, muted: false }) === '+3 дБ', volumeDbLabel({ volumeDb: 3, muted: false }));
 check('шаг 0,5 дБ', clampVolumeDb(-6.3) === -6.5, String(clampVolumeDb(-6.3)));
 check('мусор вместо числа → 0 дБ', clampVolumeDb(Number.NaN) === 0);
 check('подпись «−6 дБ»', volumeDbLabel({ volumeDb: -6, muted: false }) === '−6 дБ', volumeDbLabel({ volumeDb: -6, muted: false }));
@@ -54,7 +65,7 @@ check('подпись «звук выключен»', volumeDbLabel({ volumeDb: 
 console.log('— перевод старых процентов —');
 check('100 % → 0 дБ', levelFromPercent(100).volumeDb === 0);
 check('50 % → −6 дБ (амплитуда вдвое)', levelFromPercent(50).volumeDb === -6, String(levelFromPercent(50).volumeDb));
-check('10 % → −20 дБ', levelFromPercent(10).volumeDb === -20, String(levelFromPercent(10).volumeDb));
+check('10 % → −12 дБ (ниже шкала не идёт)', levelFromPercent(10).volumeDb === -12, String(levelFromPercent(10).volumeDb));
 check('0 % → звук выключен', levelFromPercent(0).muted === true);
 
 // ── Аргументы запуска ──────────────────────────────────────────────────────
@@ -83,24 +94,33 @@ check('громкость — в той же цепочке, после выре
 const twoCuts = playArgs('track.mp3', [{ startMs: 0, endMs: 500 }, { startMs: 3000, endMs: 4000 }], { volumeDb: 0, muted: false, bassDb: 0, trebleDb: 0 });
 check('две вырезки объединены в один фильтр', (argOf(twoCuts, '-af') ?? '').split('between').length === 3, argOf(twoCuts, '-af'));
 
-// ── Тембр ──────────────────────────────────────────────────────────────────
-console.log('— тембр —');
-check('подъём больше +6 дБ не даём', clampToneDb(20) === 6, String(clampToneDb(20)));
-check('срез глубже −12 дБ не даём', clampToneDb(-30) === -12, String(clampToneDb(-30)));
-check('мусор → 0 дБ', clampToneDb('много') === 0);
+// ── Эквалайзер ─────────────────────────────────────────────────────────────
+console.log('— эквалайзер —');
+const eqWith = (pairs: Record<number, number>): number[] => EQ_BANDS_HZ.map((hz) => pairs[hz] ?? 0);
+check('десять полос: 60 … 16000 Гц', EQ_BANDS_HZ.length === 10 && EQ_BANDS_HZ[0] === 60 && EQ_BANDS_HZ[9] === 16000);
+check('у каждого пресета 10 значений в пределах ±12 дБ', EQ_PRESETS.every((p) => p.gains.length === 10 && p.gains.every((g) => Math.abs(g) <= 12)));
+check('пресет узнаётся по своим значениям', EQ_PRESETS.every((p) => eqPresetOf(p.gains) === p.id));
+check('накрученное руками — «своя настройка»', eqPresetOf(eqWith({ 600: 1.5 })) === 'custom');
+check('подъём больше +12 дБ не даём', clampEq(eqWith({ 60: 99 }))[0] === 12);
+check('старые «низкие +3 / высокие −6» переведены в полосы', clampEq(undefined, 3, -6).join(',') === '3,3,0,0,0,0,-6,-6,-6,-6', clampEq(undefined, 3, -6).join(','));
 check('подпись со знаком «+3 дБ»', toneDbLabel(3) === '+3 дБ', toneDbLabel(3));
 check('подпись «−6 дБ»', toneDbLabel(-6) === '−6 дБ', toneDbLabel(-6));
-const warm = argOf(playArgs('t.mp3', [], { volumeDb: -3, muted: false, bassDb: 3, trebleDb: -6 }), '-af') ?? '';
-check('низкие уходят фильтром bass на 100 Гц', warm.includes('bass=g=3:f=100'), warm);
-check('высокие — фильтром treble на 6 кГц', warm.includes('treble=g=-6:f=6000'), warm);
-check('тембр стоит раньше громкости', warm.indexOf('bass') < warm.indexOf('volume'), warm);
-check('при подъёме в конце ограничитель от хрипа', warm.endsWith('alimiter=limit=0.95:level=false'), warm);
-const cutOnly = argOf(playArgs('t.mp3', [], { volumeDb: 0, muted: false, bassDb: -6, trebleDb: 0 }), '-af') ?? '';
+const shaped = argOf(playArgs('t.mp3', [], { volumeDb: -3, muted: false, eq: eqWith({ 60: 3, 12000: -6 }) }), '-af') ?? '';
+check('полоса 60 Гц уходит своим фильтром', shaped.includes('equalizer=f=60:'), shaped);
+check('полоса 12 кГц — своим', shaped.includes('equalizer=f=12000:'), shaped);
+check('нулевые полосы фильтров не добавляют', !shaped.includes('equalizer=f=1000:'), shaped);
+check('эквалайзер стоит раньше громкости', shaped.indexOf('equalizer') < shaped.indexOf('volume'), shaped);
+check('при подъёме в конце ограничитель от хрипа', shaped.endsWith('alimiter=limit=0.95:level=false'), shaped);
+const cutOnly = argOf(playArgs('t.mp3', [], { volumeDb: 0, muted: false, eq: eqWith({ 60: -6 }) }), '-af') ?? '';
 check('при одном срезе ограничитель не нужен', !cutOnly.includes('alimiter'), cutOnly);
-const flat = playArgs('t.mp3', [], { volumeDb: 0, muted: false, bassDb: 0, trebleDb: 0 });
-check('тембр 0 — фильтров нет, звук как в файле', !flat.includes('-af'));
-const mutedTone = playArgs('t.mp3', [], { volumeDb: 0, muted: true, bassDb: 6, trebleDb: 6 });
-check('«звук выключен» — тембр не применяется', !mutedTone.includes('-af'));
+const louder = argOf(playArgs('t.mp3', [], { volumeDb: 6, muted: false }), '-af') ?? '';
+check('громкость выше файла — с ограничителем', louder.includes('volume=6dB') && louder.endsWith('alimiter=limit=0.95:level=false'), louder);
+const flat = playArgs('t.mp3', [], { volumeDb: 0, muted: false, eq: eqWith({}) });
+check('ровный эквалайзер — фильтров нет, звук как в файле', !flat.includes('-af'));
+const mutedTone = playArgs('t.mp3', [], { volumeDb: 0, muted: true, eq: eqWith({ 60: 6 }) });
+check('«звук выключен» — эквалайзер не применяется', !mutedTone.includes('-af'));
+const legacy = argOf(playArgs('t.mp3', [], { volumeDb: 0, muted: false, bassDb: 3, trebleDb: 0 }), '-af') ?? '';
+check('старая настройка «низкие» тоже играет — через полосы', legacy.includes('equalizer=f=60:') && legacy.includes('equalizer=f=170:'), legacy);
 
 // ── Разбор настройки ───────────────────────────────────────────────────────
 console.log('— настройки из файла —');
@@ -110,8 +130,9 @@ check('старые 50 % из файла стали −6 дБ', sanitizeAudio({ 
 check('старые 0 % — звук выключен', sanitizeAudio({ volume: 0 } as never).muted === true);
 check('старое поле процентов больше не хранится', !('volume' in sanitizeAudio({ volume: 50 } as never)));
 check('битая громкость не роняет движок', sanitizeAudio({ volumeDb: 'громко' } as never).volumeDb === 0);
-check('тембр по умолчанию — как в файле', sanitizeAudio(undefined).bassDb === 0 && sanitizeAudio(undefined).trebleDb === 0);
-check('тембр из файла читается и обрезается', sanitizeAudio({ bassDb: 4, trebleDb: 99 } as never).bassDb === 4 && sanitizeAudio({ bassDb: 4, trebleDb: 99 } as never).trebleDb === 6);
+check('эквалайзер по умолчанию ровный, пресет «По умолчанию»', (sanitizeAudio(undefined).eq ?? []).every((g) => g === 0) && sanitizeAudio(undefined).eqPreset === 'flat');
+check('старый тембр из файла переведён в полосы', (sanitizeAudio({ bassDb: 4, trebleDb: 6 } as never).eq ?? [])[0] === 4 && (sanitizeAudio({ bassDb: 4, trebleDb: 6 } as never).eq ?? [])[9] === 6);
+check('полосы из файла читаются и обрезаются', (sanitizeAudio({ eq: [99, 0, 0, 0, 0, 0, 0, 0, 0, -99] } as never).eq ?? []).join(',') === '12,0,0,0,0,0,0,0,0,-12');
 check('путь к проигрывателю не теряется', sanitizeAudio({ ffplayPath: 'D:/ff/ffplay.exe' } as never).ffplayPath === 'D:/ff/ffplay.exe');
 
 // ── Плеер целиком ──────────────────────────────────────────────────────────
@@ -149,7 +170,8 @@ try {
     };
     const base = measure(argOf(playArgs(tone, [], { volumeDb: 0, muted: false, bassDb: 0, trebleDb: 0 }), '-af'));
     const at6 = measure(argOf(playArgs(tone, [], { volumeDb: -6, muted: false }), '-af'));
-    const at20 = measure(argOf(playArgs(tone, [], { volumeDb: -20, muted: false }), '-af'));
+    const at20 = measure(argOf(playArgs(tone, [], { volumeDb: -12, muted: false }), '-af'));
+    const up6 = measure(argOf(playArgs(tone, [], { volumeDb: 6, muted: false }), '-af'));
     const withCut = measure(argOf(playArgs(tone, [{ startMs: 1000, endMs: 2000 }], { volumeDb: -6, muted: false }), '-af'));
     check('ffmpeg принял фильтр громкости', base !== null && at6 !== null && at20 !== null, `${base} / ${at6} / ${at20}`);
     check(
@@ -158,9 +180,14 @@ try {
       `${base} → ${at6} дБ`,
     );
     check(
-      '«−20 дБ» — это −20 дБ',
-      base !== null && at20 !== null && Math.abs(base - at20 - 20) < 0.2,
+      '«−12 дБ» — это −12 дБ',
+      base !== null && at20 !== null && Math.abs(base - at20 - 12) < 0.2,
       `${base} → ${at20} дБ`,
+    );
+    check(
+      '«+6 дБ» — это +6 дБ (тихий тон ограничитель не трогает)',
+      base !== null && up6 !== null && Math.abs(up6 - base - 6) < 0.3,
+      `${base} → ${up6} дБ`,
     );
     check('громкость с вырезками монтажа — ffmpeg принял всю цепочку', withCut !== null && at6 !== null && Math.abs(withCut - at6) < 0.2, `${withCut}`);
 
@@ -168,7 +195,7 @@ try {
     const low = path.join(dir, 'low.wav');
     const high = path.join(dir, 'high.wav');
     const loud = path.join(dir, 'loud.wav');
-    spawnSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=40:duration=3', low]);
+    spawnSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=60:duration=3', low]);
     spawnSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=12000:duration=3', high]);
     spawnSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'aevalsrc=0.95*sin(2*PI*50*t):d=3', loud]);
     const levelOf = (file: string, af: string | undefined): number | null => {
@@ -188,7 +215,8 @@ try {
       const m = /Peak level dB:\s*(-?[\d.]+)/.exec(err);
       return { peak: r.status === 0 && m ? Number(m[1]) : null, clipped: /clipping/i.test(err) };
     };
-    const af = (bassDb: number, trebleDb: number): string | undefined => argOf(playArgs('x', [], { volumeDb: 0, muted: false, bassDb, trebleDb }), '-af');
+    const af = (lowDb: number, highDb: number): string | undefined =>
+      argOf(playArgs('x', [], { volumeDb: 0, muted: false, eq: eqWith({ 60: lowDb, 12000: highDb }) }), '-af');
     const low0 = levelOf(low, undefined);
     const lowCut = levelOf(low, af(-6, 0));
     const mid0 = base;
@@ -197,7 +225,7 @@ try {
     const highCut = levelOf(high, af(0, -6));
     const midTrebleCut = levelOf(tone, af(0, -6));
     check(
-      '«Низкие −6 дБ» убирает бас (40 Гц) почти на 6 дБ',
+      '«60 Гц −6 дБ» убирает бас (60 Гц) почти на 6 дБ',
       low0 !== null && lowCut !== null && low0 - lowCut > 4,
       `${low0} → ${lowCut} дБ`,
     );
@@ -207,7 +235,7 @@ try {
       `${mid0} → ${midBassCut} дБ`,
     );
     check(
-      '«Высокие −6 дБ» убирает верха (12 кГц) почти на 6 дБ',
+      '«12 кГц −6 дБ» убирает верха (12 кГц) почти на 6 дБ',
       high0 !== null && highCut !== null && high0 - highCut > 4,
       `${high0} → ${highCut} дБ`,
     );
@@ -218,6 +246,9 @@ try {
     );
     // Громкий бас почти в потолок + подъём низов: без ограничителя ушёл бы за 0 дБ.
     const ours = peakOf(loud, af(6, 0) ?? 'anull');
+    // Все полосы вверх и громкость +12 — худший случай; ограничитель держит.
+    const worst = peakOf(loud, argOf(playArgs('x', [], { volumeDb: 12, muted: false, eq: EQ_BANDS_HZ.map(() => 12) }), '-af') ?? 'anull');
+    check('всё на +12 и громкость +12 — пик всё равно ниже потолка', worst.peak !== null && worst.peak < 0.1, `${worst.peak} дБ`);
     const raw = peakOf(loud, 'aformat=sample_fmts=fltp,bass=g=6:f=100');
     const naive = peakOf(loud, 'bass=g=6:f=100');
     check(

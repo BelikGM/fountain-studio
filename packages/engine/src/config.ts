@@ -1,4 +1,4 @@
-import { clampToneDb, clampVolumeDb, levelFromPercent } from '@fountain-studio/shared';
+import { clampEq, clampVolumeDb, EQ_CUSTOM_ID, EQ_PRESETS, eqPresetOf, levelFromPercent } from '@fountain-studio/shared';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -64,9 +64,15 @@ export interface EngineConfig {
     volumeDb: number;
     /** Звук выключен совсем. */
     muted: boolean;
-    /** Тембр: низкие и высокие частоты, дБ (см. shared/audiovolume.ts). */
-    bassDb: number;
-    trebleDb: number;
+    /** Эквалайзер: десять полос EQ_BANDS_HZ, дБ (см. shared/audiovolume.ts). */
+    eq?: number[];
+    /** Какой пресет выбран (id из EQ_PRESETS или «custom»). */
+    eqPreset?: string;
+    /** Последняя СВОЯ настройка — чтобы «Своя настройка» возвращала её после пресета. */
+    eqCustom?: number[];
+    /** Старый тембр (до 24.09.2026): читается только для перевода в полосы. */
+    bassDb?: number;
+    trebleDb?: number;
   };
   universes: UniverseConfig[];
   /** Авто-бэкапы проекта (§27 доработки, УХ п.5) — именованные снимки по расписанию. */
@@ -157,7 +163,7 @@ export interface EngineConfig {
 const DEFAULTS: EngineConfig = {
   server: { port: 9520 },
   timing: { tickMs: 50, spinMs: 10, uiFrameMs: 100 },
-  audio: { player: 'auto', ffplayPath: 'ffplay', volumeDb: 0, muted: false, bassDb: 0, trebleDb: 0 },
+  audio: { player: 'auto', ffplayPath: 'ffplay', volumeDb: 0, muted: false, eq: EQ_PRESETS[0]!.gains.slice(), eqPreset: 'flat' },
   universes: [],
   backup: { enabled: true, intervalMin: 10 },
 };
@@ -225,12 +231,20 @@ export function sanitizeAudio(raw: (Partial<EngineConfig['audio']> & { volume?: 
   const { volume, ...rest } = raw ?? {};
   const a = { ...DEFAULTS.audio, ...rest };
   const fromPercent = rest.volumeDb === undefined && volume !== undefined ? levelFromPercent(Number(volume)) : null;
+  // Полосы — только из самого файла: умолчание (ровный массив) иначе
+  // перекрыло бы старый тембр, и он бы молча пропал.
+  const eq = clampEq(rest.eq, a.bassDb, a.trebleDb);
   return {
     ...a,
     volumeDb: fromPercent ? fromPercent.volumeDb : clampVolumeDb(a.volumeDb),
     muted: fromPercent ? fromPercent.muted : a.muted === true,
-    bassDb: clampToneDb(a.bassDb),
-    trebleDb: clampToneDb(a.trebleDb),
+    // Полосы; старые настройки (низкие/высокие) переводятся в полосы.
+    eq,
+    eqPreset:
+      typeof rest.eqPreset === 'string' && (rest.eqPreset === EQ_CUSTOM_ID || EQ_PRESETS.some((p) => p.id === rest.eqPreset))
+        ? rest.eqPreset
+        : eqPresetOf(eq),
+    eqCustom: Array.isArray(rest.eqCustom) ? clampEq(rest.eqCustom) : eq,
   };
 }
 

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useCollapsiblePanels } from '../collapsiblePanels';
+import { KeyArrowIcon } from '../components/Icons';
+import { requestTab } from '../navigate';
 import {
   FRAME_MODE_ABOUT,
   FRAME_MODE_CONFIRM,
@@ -22,10 +24,16 @@ import {
   storedUniverseLabel,
   universeTitle,
   clampVolumeDb,
-  clampToneDb,
+  clampEq,
+  EQ_BANDS_HZ,
+  EQ_CUSTOM_ID,
+  EQ_DB_MAX,
+  EQ_DB_MIN,
+  EQ_PRESETS,
+  eqBandLabel,
+  eqIsFlat,
+  eqPresetOf,
   toneDbLabel,
-  TONE_DB_MAX,
-  TONE_DB_MIN,
   VOLUME_DB_MAX,
   VOLUME_DB_MIN,
   num,
@@ -34,6 +42,9 @@ import {
   type WindLimitConfig,
   type WindSensorModbus,
   type WindSource,
+  profileMap,
+  type Project,
+  type Scene,
 } from '@fountain-studio/shared';
 import { askConfirm } from '../components/ConfirmDialog';
 import { TOUR_STORAGE_KEY } from '../tour';
@@ -66,6 +77,20 @@ import { ComPortPicker, useUsbScan } from '../components/ComPortPicker';
  * живёт отдельной вкладкой). Хранится в localStorage — предпочтение этого
  * компьютера, не часть проекта.
  */
+/** Подпись комбинации; стрелки — значками (см. KeyArrowIcon). */
+function ComboText({ combo }: { combo: string }) {
+  const arrow = /Arrow(Up|Down|Left|Right)$/.exec(combo);
+  if (!arrow) return <>{comboLabel(combo)}</>;
+  const prefix = comboLabel(combo.slice(0, arrow.index));
+  const dir = arrow[1]!.toLowerCase() as 'up' | 'down' | 'left' | 'right';
+  return (
+    <>
+      {prefix}
+      <KeyArrowIcon dir={dir} />
+    </>
+  );
+}
+
 function HotkeyRow({ id }: { id: HotkeyId }) {
   const def = HOTKEY_DEFS.find((d) => d.id === id)!;
   const combo = useHotkey(id);
@@ -103,13 +128,13 @@ function HotkeyRow({ id }: { id: HotkeyId }) {
       </td>
       <td>
         <button
-          className={capturing ? 'btn active' : 'btn'}
+          className={capturing ? 'btn active btn-combo' : 'btn btn-combo'}
           onClick={() => {
             setConflict(null);
             setCapturing(!capturing);
           }}
         >
-          {capturing ? 'нажмите комбинацию… (Esc — отмена)' : comboLabel(combo)}
+          {capturing ? 'нажмите комбинацию… (Esc — отмена)' : <ComboText combo={combo} />}
         </button>
         {conflict && (
           <span className="error-text">
@@ -439,8 +464,19 @@ function AppSettingsBackupPanel({ engine }: { engine: EngineConnection }) {
       <h2>Резервная копия настроек программы</h2>
       <p className="dim">
         Проект и настройки программы лежат врозь: копия проекта не содержит ни лицензии, ни бота. Здесь — всё о самой
-        программе одним файлом: лицензия, токен Telegram-бота, настройки движка и список недавних проектов. Сделайте
-        такую копию сразу после наладки и держите её не на том же диске.
+        программе одним файлом. Сделайте такую копию сразу после наладки и держите её не на том же диске.
+      </p>
+      {/* Точный состав — чтобы не гадать, «всё-всё» там или нет (вопрос заказчика 24.09.2026). */}
+      <ul className="dim backup-list">
+        <li>лицензия этого компьютера;</li>
+        <li>токен Telegram-бота и пароль почты для уведомлений;</li>
+        <li>настройки движка: громкость и эквалайзер, автосохранение, режим отладки, расчёт и отправка данных, внешние пульты (OSC, MQTT);</li>
+        <li>список недавних проектов;</li>
+        <li>настройки окна редактора: горячие клавиши, камера 3D, скрытое в 3D, свёрнутые панели, тема.</li>
+      </ul>
+      <p className="dim">
+        Не входят: сами проекты (приборы, сцены, шоу, расписание, музыка — для них «Перенос проекта одним файлом») и
+        блокировка режима оператора с паролем — она про этот компьютер.
       </p>
       <div className="form-row">
         <button className="btn" onClick={() => void doExport()} disabled={saving}>
@@ -499,7 +535,7 @@ function AutosavePanel({ engine }: { engine: EngineConnection }) {
   const savedAt = projectDirty.savedAtMs ? new Date(projectDirty.savedAtMs).toLocaleTimeString('ru-RU') : null;
   return (
     <section className="panel">
-      <h2>Сохранение проекта</h2>
+      <h2>Автосохранение проекта</h2>
       <p className="dim">
         Правки проекта сразу работают в движке, а на диск записываются автосохранением или по Ctrl+S. Без
         автосохранения при переключении на другой проект программа спросит, сохранить ли правки. При закрытии
@@ -1295,12 +1331,14 @@ function FailsafePanel({ engine }: { engine: EngineConnection }) {
 }
 
 /**
- * Звук вечерней программы: громкость в децибелах, «звук выключен» и видно ли,
- * чем играть.
+ * Звук музыки, которую играет движок: громкость в децибелах, «звук выключен»,
+ * эквалайзер на десять полос с готовыми пресетами и видно ли, чем играть.
  *
  * Децибелы — как в FontanPlay (заказчик прислал снимок её окна как образец) и
  * как на усилителе; почему не проценты и почему нет ползунка «Friq» — в
- * shared/audiovolume.ts.
+ * shared/audiovolume.ts. Эквалайзер — как в настройках наушников и музыкальных
+ * программ (заказчик 24.09.2026, с образцом списка пресетов): вертикальные
+ * ползунки по полосам и список «По умолчанию / Классическая / Клубная…».
  *
  * Зачем панелью, а не в файле: на объекте программой пользуется не тот, кто
  * её ставил, а громкость подкручивают на месте, по живому звуку из колонок.
@@ -1311,53 +1349,56 @@ function AudioPanel({ engine }: { engine: EngineConnection }) {
   const { engineConfig, send } = engine;
   /*
    * Пока тянут ползунок, показываем своё значение: ответ движка приходит
-   * через сеть и рывками возвращал бы ручку назад.
+   * через сеть и рывками возвращал бы ручку назад. Движку отправляем, когда
+   * ползунок отпустили: каждое движение — это запись настроек на диск.
    */
-  const [local, setLocal] = useState<number | null>(null);
+  const [localVol, setLocalVol] = useState<number | null>(null);
+  const [localEq, setLocalEq] = useState<number[] | null>(null);
   if (!engineConfig) return null;
   const muted = engineConfig.audioMuted;
-  const volumeDb = local ?? engineConfig.audioVolumeDb;
+  const volumeDb = localVol ?? engineConfig.audioVolumeDb;
+  const eq = localEq ?? engineConfig.audioEq;
+  const presetId = eqPresetOf(eq);
 
-  const bassDb = engineConfig.audioBassDb;
-  const trebleDb = engineConfig.audioTrebleDb;
-
-  const commit = (db: number, mute = muted, bass = bassDb, treble = trebleDb): void => {
-    const v = clampVolumeDb(db);
-    setLocal(v);
-    send({ type: 'setAudioVolume', volumeDb: v, muted: mute, bassDb: clampToneDb(bass), trebleDb: clampToneDb(treble) });
+  const commit = (next: { volumeDb?: number; muted?: boolean; eq?: number[]; custom?: boolean }): void => {
+    const v = clampVolumeDb(next.volumeDb ?? volumeDb);
+    const bands = clampEq(next.eq ?? eq);
+    const preset = eqPresetOf(bands);
+    setLocalVol(null);
+    setLocalEq(null);
+    send({
+      type: 'setAudioVolume',
+      volumeDb: v,
+      muted: next.muted ?? muted,
+      eq: bands,
+      eqPreset: preset,
+      // Своя настройка запоминается отдельно: выбрали пресет, потом «Своя
+      // настройка» — вернулось накрученное руками, а не ровный ноль.
+      eqCustom: preset === EQ_CUSTOM_ID ? bands : engineConfig.audioEqCustom,
+    });
   };
-
-  /** Ручка тембра: число со знаком — видно, подъём это или срез. */
-  const tone = (label: string, hint: string, value: number, set: (v: number) => void): JSX.Element => (
-    <label className="field" data-hint={hint}>
-      {label}:{' '}
-      <input
-        type="range"
-        min={TONE_DB_MIN}
-        max={TONE_DB_MAX}
-        step={1}
-        value={value}
-        disabled={muted}
-        onChange={(e) => set(Number(e.target.value))}
-      />{' '}
-      <span className="tone-value">{toneDbLabel(value)}</span>
-    </label>
-  );
+  const choosePreset = (id: string): void => {
+    if (id === EQ_CUSTOM_ID) commit({ eq: engineConfig.audioEqCustom });
+    else commit({ eq: EQ_PRESETS.find((p) => p.id === id)?.gains ?? eq });
+  };
+  const release = (): void => {
+    if (localVol !== null || localEq !== null) commit({});
+  };
 
   return (
     <section className="panel">
-      <h2>Громкость и тембр музыки</h2>
+      <h2>Громкость и эквалайзер</h2>
       <p className="dim">
-        Музыка шоу, которую движок играет сам — когда шоу запускает плейлист или расписание, в том числе
-        при закрытом редакторе. Громкость и тембр меняются с ближайшего следующего трека: обрывать
-        уже идущий нельзя — вода уйдёт из-под музыки.
+        Музыка шоу, которую движок играет сам — когда шоу запускает плейлист или расписание, в том числе при
+        закрытом редакторе. Громкость и эквалайзер меняются с ближайшего следующего трека: обрывать уже идущий
+        нельзя — вода уйдёт из-под музыки.
       </p>
       <div className="form-row">
         <label
           className="field"
           data-hint={
-            '0 дБ — как записано в файле. −6 дБ — заметно тише, −10 дБ — на слух примерно вдвое тише, −20 дБ — фоном.\n' +
-            'Громче 0 дБ программа не делает: треки сведены почти в потолок, и усиление даёт хрип в колонках. Громче — ручкой усилителя.'
+            '0 дБ — как записано в файле. −6 дБ — заметно тише, −10 дБ — на слух примерно вдвое тише.\n' +
+            'Выше 0 дБ — громче файла: тихий трек можно поднять. Громкие места при этом мягко прижимает ограничитель, чтобы колонки не хрипели.'
           }
         >
           Громкость:{' '}
@@ -1368,56 +1409,76 @@ function AudioPanel({ engine }: { engine: EngineConnection }) {
             step={0.5}
             value={volumeDb}
             disabled={muted}
-            onChange={(e) => setLocal(Number(e.target.value))}
-            onMouseUp={(e) => commit(Number((e.target as HTMLInputElement).value))}
-            onKeyUp={(e) => commit(Number((e.target as HTMLInputElement).value))}
-            onTouchEnd={(e) => commit(Number((e.target as HTMLInputElement).value))}
+            onChange={(e) => setLocalVol(Number(e.target.value))}
+            onPointerUp={release}
+            onKeyUp={release}
+            onBlur={release}
           />
         </label>
-        <label className="field">
-          <input
-            className="input input-num"
-            type="number"
-            min={VOLUME_DB_MIN}
-            max={VOLUME_DB_MAX}
-            step={0.5}
-            value={volumeDb}
-            disabled={muted}
-            onChange={(e) => commit(Number(e.target.value))}
-          />{' '}
-          дБ
-        </label>
-        <span className="dim">0 дБ — как в файле</span>
+        <span className="tone-value">{toneDbLabel(volumeDb)}</span>
+        <span className="dim">0 дБ — как в файле, от −12 до +12</span>
         <label className="field" data-hint="Трек не звучит вовсе; вода и свет при этом работают по шоу.">
-          <input type="checkbox" checked={muted} onChange={(e) => commit(volumeDb, e.target.checked)} /> звук выключен
+          <input type="checkbox" checked={muted} onChange={(e) => commit({ muted: e.target.checked })} /> звук выключен
         </label>
       </div>
       {/*
-        Тембр — как ручки «Bass» и «Treble» на усилителе: подстроить звук под колонки
-        конкретного места. На синхронизацию с водой не влияет.
+        Эквалайзер — подстроить звук под колонки конкретного места: где-то
+        бубнит низ, где-то режут верха. На синхронизацию с водой не влияет.
       */}
       <div className="form-row">
-        {tone(
-          'Низкие',
-          'Бас, ниже 100 Гц. Колонки бубнят — убавьте; звук плоский — добавьте. 0 — как в файле.',
-          bassDb,
-          (v) => commit(volumeDb, muted, v, trebleDb),
-        )}
-        {tone(
-          'Высокие',
-          'Верха, выше 6 кГц. Режут уши — убавьте; звук глухой — добавьте. 0 — как в файле.',
-          trebleDb,
-          (v) => commit(volumeDb, muted, bassDb, v),
-        )}
-        {(bassDb !== 0 || trebleDb !== 0) && (
-          <button className="btn btn-small" onClick={() => commit(volumeDb, muted, 0, 0)}>
-            Тембр как в файле
+        <label className="field" data-hint="Готовые настройки, как в музыкальных программах. Сдвинули любой ползунок — станет «Своя настройка».">
+          Эквалайзер:{' '}
+          <select value={presetId} disabled={muted} onChange={(e) => choosePreset(e.target.value)}>
+            <option value={EQ_CUSTOM_ID}>Своя настройка</option>
+            {EQ_PRESETS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        {!eqIsFlat(eq) && (
+          <button className="btn btn-small" disabled={muted} onClick={() => choosePreset('flat')}>
+            Сбросить
           </button>
         )}
-        <span className="dim" data-hint="Подъём больше +6 дБ не даём: громкий трек начнёт хрипеть. Пики при подъёме срезаются мягко.">
-          от −12 до +6 дБ
-        </span>
       </div>
+      <div className={muted ? 'eq eq-disabled' : 'eq'}>
+        <div className="eq-scale" aria-hidden="true">
+          <span>+12</span>
+          <span>0</span>
+          <span>−12</span>
+        </div>
+        {EQ_BANDS_HZ.map((hz, i) => (
+          <label key={hz} className="eq-band" data-hint={`${hz >= 1000 ? `${hz / 1000} кГц` : `${hz} Гц`}: ${toneDbLabel(eq[i] ?? 0)}`}>
+            <span className="eq-value">{toneDbLabel(eq[i] ?? 0).replace(' дБ', '')}</span>
+            <input
+              className="eq-slider"
+              type="range"
+              min={EQ_DB_MIN}
+              max={EQ_DB_MAX}
+              step={0.5}
+              value={eq[i] ?? 0}
+              disabled={muted}
+              onChange={(e) => {
+                const next = eq.slice();
+                next[i] = Number(e.target.value);
+                setLocalEq(next);
+              }}
+              onPointerUp={release}
+              onKeyUp={release}
+              onBlur={release}
+              onDoubleClick={() => {
+                const next = eq.slice();
+                next[i] = 0;
+                commit({ eq: next });
+              }}
+            />
+            <span className="eq-hz">{eqBandLabel(hz)}</span>
+          </label>
+        ))}
+      </div>
+      <p className="dim">Гц · двойной щелчок по ползунку — вернуть полосу в 0.</p>
       {muted && (
         <p className="warn">Звук выключен — плейлисты и расписание отыграют в тишине, вода и свет при этом работают.</p>
       )}
@@ -1425,8 +1486,8 @@ function AudioPanel({ engine }: { engine: EngineConnection }) {
         <p className="dim">✔ Проигрыватель найден — звук будет.</p>
       ) : (
         <p className="error-text">
-          Проигрывателя нет: движку нечем открыть аудиофайл, и плейлисты с расписанием отыграют в тишине —
-          вода и свет при этом работают. Лечится установкой ffmpeg: в командной строке{" "}
+          Проигрывателя нет: движку нечем открыть аудиофайл, и плейлисты с расписанием отыграют в тишине — вода
+          и свет при этом работают. Лечится установкой ffmpeg: в командной строке{' '}
           <code>winget install Gyan.FFmpeg</code>, потом перезапустить программу.
         </p>
       )}
@@ -1473,7 +1534,7 @@ function FrameModePanel({ engine }: { engine: EngineConnection }) {
 
   return (
     <section className="panel">
-      <h2>Подготовка значений для приборов</h2>
+      <h2>Расчёт и отправка данных</h2>
       <div className="form-row">
         <span>
           Сейчас: <b>{frameModeLabel(chosen)}</b>
@@ -2084,45 +2145,95 @@ function WindLimitPanel({ engine }: { engine: EngineConnection }) {
 }
 
 /**
+ * Из чего состоит сцена — «насосы 2, клапаны 2, свет 2». Нужна, чтобы из
+ * списка было понятно, что сцена сделает с фонтаном, а не только её имя
+ * (замечание 24.09.2026: «что значит „Максимум“, как „Радуга“ действует на
+ * насосы?»).
+ */
+function sceneSummary(project: Project, scene: Scene): string {
+  const profiles = profileMap(project);
+  const byId = new Map(project.devices.map((d) => [d.id, d]));
+  const counts = { pump: 0, valve: 0, lamp: 0, other: 0 };
+  for (const id of Object.keys(scene.values)) {
+    const d = byId.get(id);
+    const kind = d ? profiles.get(d.profileId)?.kind : undefined;
+    if (kind === 'pump' || kind === 'valve' || kind === 'lamp') counts[kind]++;
+    else counts.other++;
+  }
+  const parts = [
+    counts.pump ? `насосы — ${counts.pump}` : '',
+    counts.valve ? `клапаны — ${counts.valve}` : '',
+    counts.lamp ? `свет — ${counts.lamp}` : '',
+    counts.other ? `прочее — ${counts.other}` : '',
+  ].filter(Boolean);
+  return parts.length === 0 ? 'в сцене нет ни одного прибора — всё погашено' : `задаёт приборы: ${parts.join(', ')}`;
+}
+
+/**
  * Холостая сцена (§27 доработки, по примеру прежнего приложения —
  * «Color Form») — что держится на выходе, когда ничего не играет, вместо
  * гашения в чёрное. Пауза между элементами плейлиста — исключение (см.
  * Playback.tick), туда холостая сцена не подставляется.
+ *
+ * В списке — СЦЕНЫ ПРОЕКТА с вкладки «Сцены», а не режимы программы. Раньше
+ * это не было сказано, и сцены демо-проекта («Всё выключено», «Максимум»,
+ * «Радуга») читались как встроенные варианты с непонятным смыслом.
  */
 function IdleScenePanel({ engine }: { engine: EngineConnection }) {
   const { project, updateProject } = engine;
   if (!project) return null;
+  const chosen = project.scenes.find((s) => s.id === project.idleSceneId) ?? null;
   return (
     <section className="panel">
       <h2>Сцена, когда ничего не играет</h2>
       <p className="dim">
         Горит, когда не играет ни сцена, ни секвенсор, ни шоу, — вместо полной темноты. В паузах между песнями
-        плейлиста не включается: там темнота нужна.
+        плейлиста не включается: там темнота нужна. Выбирается одна из сцен вашего проекта (вкладка «Сцены»).
       </p>
       <div className="form-row">
-        <label className="field">
-          Сцена:{' '}
+        <label className="field" data-hint="Список — сцены этого проекта с вкладки «Сцены». Что делает сцена, написано под списком.">
+          Сцена проекта:{' '}
           <select
             value={project.idleSceneId ?? ''}
             onChange={(e) => updateProject({ ...project, idleSceneId: e.target.value || null })}
           >
-            <option value="">— нет (всё погашено) —</option>
-            {project.scenes.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
+            <option value="">не нужна — темнота</option>
+            {project.scenes.length > 0 && (
+              <optgroup label="Сцены проекта">
+                {project.scenes.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </label>
+        {chosen && (
+          <button className="btn btn-small" onClick={() => requestTab('scenes')} data-hint="Открыть вкладку «Сцены», чтобы посмотреть или поменять значения">
+            Открыть сцены
+          </button>
+        )}
       </div>
+      <p className="dim">
+        {chosen
+          ? `«${chosen.name}» ${sceneSummary(project, chosen)} — значения такие, как записаны в сцене.`
+          : 'Сейчас, когда ничего не играет, все приборы погашены.'}
+      </p>
     </section>
   );
 }
 
 /**
  * Служебное освещение (§27 доработки, по примеру прежнего приложения —
- * «Switches») — простое вкл/выкл по времени суток для выбранных приборов
- * (периметральная подсветка и т.п.), независимо от расписания шоу/плейлистов.
+ * «Switches») — простое вкл/выкл по времени суток для приборов, которыми шоу
+ * не управляет: подсветка периметра, фонари, прожекторы на здание.
+ *
+ * Вне окна времени прибор НЕ трогается (движок, см. engine.ts) — раньше его
+ * держали в 0, и прибор, который участвует ещё и в шоу, гас посреди шоу.
+ *
+ * Приборов на объекте бывают сотни, поэтому список разложен по видам с
+ * галочкой «все» у каждого (заказчик 24.09.2026).
  */
 function UtilityLightPanel({ engine }: { engine: EngineConnection }) {
   const { project, updateProject } = engine;
@@ -2130,32 +2241,53 @@ function UtilityLightPanel({ engine }: { engine: EngineConnection }) {
   const cfg = project.utilityLight;
   const update = (patch: Partial<typeof cfg>): void =>
     updateProject({ ...project, utilityLight: { ...cfg, ...patch } });
-  const toggleDevice = (id: string): void => {
-    const has = cfg.deviceIds.includes(id);
-    update({ deviceIds: has ? cfg.deviceIds.filter((x) => x !== id) : [...cfg.deviceIds, id] });
+  const profiles = profileMap(project);
+  const groups: { kind: string; title: string; ids: string[] }[] = [
+    { kind: 'lamp', title: 'Свет', ids: [] },
+    { kind: 'pump', title: 'Насосы', ids: [] },
+    { kind: 'valve', title: 'Клапаны', ids: [] },
+    { kind: 'other', title: 'Прочее', ids: [] },
+  ];
+  for (const d of project.devices) {
+    const kind = profiles.get(d.profileId)?.kind;
+    (groups.find((g) => g.kind === kind) ?? groups[3]!).ids.push(d.id);
+  }
+  const selected = new Set(cfg.deviceIds);
+  const setMany = (ids: string[], on: boolean): void => {
+    const next = new Set(selected);
+    for (const id of ids) {
+      if (on) next.add(id);
+      else next.delete(id);
+    }
+    update({ deviceIds: project.devices.map((d) => d.id).filter((id) => next.has(id)) });
   };
+  const byId = new Map(project.devices.map((d) => [d.id, d]));
+  const waterPicked = groups.filter((g) => g.kind === 'pump' || g.kind === 'valve').some((g) => g.ids.some((id) => selected.has(id)));
+
   return (
     <section className="panel">
       <h2>Служебное освещение</h2>
       <p className="dim">
-        Включает и выключает выбранные приборы по времени суток (например, подсветку периметра) —
-        независимо от расписания шоу и плейлистов. Пока включено, перекрывает сцены и шоу на этих приборах.
+        Для приборов, которыми шоу не управляет: подсветка периметра, фонари, прожекторы на здание. В заданное время
+        выбранные приборы горят на полную — на все их адреса уходит 255 (цветной светильник — белым), поверх сцен и
+        шоу. Вне этого времени программа их не трогает: горят так, как велит сцена или шоу, а если никто не велит — не
+        горят.
       </p>
       <div className="form-row">
         <label className="field">
-          <input type="checkbox" checked={cfg.enabled} onChange={(e) => update({ enabled: e.target.checked })} />{' '}
-          Включено
+          <input type="checkbox" checked={cfg.enabled} onChange={(e) => update({ enabled: e.target.checked })} /> Служебное
+          освещение
         </label>
-        <label className="field" data-hint="Держать включённым всегда, не глядя на время">
+        <label className="field" data-hint="Гореть круглые сутки, не глядя на время ниже">
           <input
             type="checkbox"
             checked={cfg.always}
             disabled={!cfg.enabled}
             onChange={(e) => update({ always: e.target.checked })}
           />{' '}
-          Всегда включено
+          Круглосуточно
         </label>
-        <label className="field">
+        <label className={cfg.enabled && !cfg.always ? 'field' : 'field dim'}>
           Включать в:{' '}
           <input
             className="input"
@@ -2165,7 +2297,7 @@ function UtilityLightPanel({ engine }: { engine: EngineConnection }) {
             onChange={(e) => update({ onTime: e.target.value })}
           />
         </label>
-        <label className="field">
+        <label className={cfg.enabled && !cfg.always ? 'field' : 'field dim'}>
           Выключать в:{' '}
           <input
             className="input"
@@ -2179,19 +2311,48 @@ function UtilityLightPanel({ engine }: { engine: EngineConnection }) {
       {project.devices.length === 0 ? (
         <p className="dim">Приборов пока нет — добавьте их на вкладке «Оборудование».</p>
       ) : (
-        <div className="utility-device-list">
-          {project.devices.map((d) => (
-            <label key={d.id} className="field">
-              <input
-                type="checkbox"
-                checked={cfg.deviceIds.includes(d.id)}
-                disabled={!cfg.enabled}
-                onChange={() => toggleDevice(d.id)}
-              />{' '}
-              {d.name}
-            </label>
-          ))}
-        </div>
+        <>
+          {groups
+            .filter((g) => g.ids.length > 0)
+            .map((g) => {
+              const picked = g.ids.filter((id) => selected.has(id)).length;
+              return (
+                <div key={g.kind} className="utility-group">
+                  <label className="field utility-group-head">
+                    <input
+                      type="checkbox"
+                      checked={picked === g.ids.length}
+                      ref={(el) => {
+                        if (el) el.indeterminate = picked > 0 && picked < g.ids.length;
+                      }}
+                      disabled={!cfg.enabled}
+                      onChange={(e) => setMany(g.ids, e.target.checked)}
+                    />{' '}
+                    <b>{g.title}</b> <span className="dim">({picked} из {g.ids.length})</span>
+                  </label>
+                  <div className="utility-device-list">
+                    {g.ids.map((id) => (
+                      <label key={id} className="field">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(id)}
+                          disabled={!cfg.enabled}
+                          onChange={(e) => setMany([id], e.target.checked)}
+                        />{' '}
+                        {byId.get(id)?.name}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          {waterPicked && (
+            <p className="warn">
+              ⚠ Выбраны насосы или клапаны: в заданное время они включатся на полную, поверх шоу. Обычно сюда ставят
+              только свет.
+            </p>
+          )}
+        </>
       )}
     </section>
   );
@@ -2455,10 +2616,13 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
   return (
     <main className="view view-settings" ref={rootRef}>
       <section className="panel">
-        <h2>Вселенные DMX</h2>
+        {/* «DMX и RDM»: RDM — обратная связь с приборами по тому же кабелю DMX и в
+            той же вселенной; отдельных «RDM-вселенных» не бывает. */}
+        <h2>Вселенные (DMX и RDM)</h2>
         <p className="dim">
           Вселенная — это 512 адресов DMX, которые уходят в один выход: разъём интерфейса или
-          номер Art-Net. Заводите столько, сколько выходов реально подключено на объекте. Приборы
+          номер Art-Net. RDM (ответы приборов: адрес, датчики, «мигни») идёт по тому же кабелю и в той
+          же вселенной — отдельных вселенных для него нет. Заводите столько, сколько выходов реально подключено на объекте. Приборы
           привязываются к вселенной по её номеру на вкладке «Оборудование».
         </p>
         <table className="table">
@@ -2670,15 +2834,11 @@ function ViewControlsPanel() {
     setViewPrefs(patch);
     setPrefs(viewPrefs());
   };
-  const row = (
-    label: string,
-    hint: string,
-    key: 'rotateSpeed' | 'panSpeed',
-  ): JSX.Element => {
+  const row = (label: string, hint: string, key: 'rotateSpeed' | 'panSpeed'): JSX.Element => {
     const [lo, hi, step] = VIEW_PREF_LIMITS[key];
     return (
-      <label className="field" data-hint={hint}>
-        {label}
+      <label className="view-pref-row" data-hint={hint}>
+        <span className="view-pref-label">{label}</span>
         <input
           type="range"
           min={lo}
@@ -2687,22 +2847,26 @@ function ViewControlsPanel() {
           value={prefs[key]}
           onChange={(e) => apply({ [key]: Number(e.target.value) })}
         />
-        <span className="dim">×{num(prefs[key], 2)}</span>
+        <span className="view-pref-value">×{num(prefs[key], 2)}</span>
       </label>
     );
   };
   return (
     <section className="panel">
       <h2>Управление камерой в 3D</h2>
-      <p className="dim">Насколько быстро вид отзывается на мышь на вкладке «3D».</p>
-      {row('Вращение', 'Поворот камеры вокруг схемы — левой кнопкой мыши по пустому месту', 'rotateSpeed')}
-      {row('Сдвиг вида', 'Сдвиг схемы без поворота — правой кнопкой мыши', 'panSpeed')}
-      <button
-        className="btn btn-small"
-        onClick={() => apply({ ...VIEW_PREF_DEFAULTS })}
-      >
-        Вернуть значения по умолчанию
-      </button>
+      <p className="dim">
+        Насколько быстро вид отзывается на мышь на вкладке «3D». Больше — быстрее. «Перемещение» — это когда тянут
+        правой кнопкой мыши: схема едет вбок и вверх-вниз, не поворачиваясь (как карта на экране).
+      </p>
+      <div className="view-prefs">
+        {row('Вращение (левая кнопка)', 'Поворот камеры вокруг схемы — тянуть левой кнопкой мыши по пустому месту', 'rotateSpeed')}
+        {row('Перемещение (правая кнопка)', 'Перемещение вида без поворота — тянуть правой кнопкой мыши: схема едет вбок и вверх-вниз', 'panSpeed')}
+      </div>
+      <div className="view-prefs-reset">
+        <button className="btn btn-small" onClick={() => apply({ ...VIEW_PREF_DEFAULTS })}>
+          Вернуть значения по умолчанию
+        </button>
+      </div>
     </section>
   );
 }

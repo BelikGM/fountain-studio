@@ -94,7 +94,7 @@ check('без изменений — пусто', describeLinesChange(before, be
 
 // ══ 2. Движок: применение на ходу ════════════════════════════════════════
 const project = sanitizeProject(createDemoProject());
-const maxScene = project.scenes.find((s) => s.name === 'Максимум')!;
+const maxScene = project.scenes.find((s) => s.name === 'Всё на полную')!;
 const show = project.shows[0]!;
 
 async function live(mode: 'worker' | 'inline'): Promise<void> {

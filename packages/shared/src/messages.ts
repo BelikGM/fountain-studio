@@ -20,7 +20,7 @@ import type { WindLimitConfig, WindSensorStatus } from './windlimit';
  * выглядело выключенным (заказчик 23.09.2026). Теперь редактор сверяет номер
  * и прямо говорит: движок старый, перезапустите его.
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 export type TestPatternMode =
   | 'off'
@@ -499,7 +499,12 @@ export type ClientMessage =
   // Резервная копия настроек САМОЙ ПРОГРАММЫ (не объекта): лицензия, токен
   // бота, настройки движка и список недавних объектов. Копия объекта их не
   // содержит — они лежат в папке данных приложения.
-  | { type: 'exportAppSettings' }
+  /**
+   * uiPrefs — настройки самого окна редактора (горячие клавиши, скорость
+   * камеры 3D, скрытое в 3D, свёрнутые панели, тема): они живут в браузере
+   * окна, движок их не видит, поэтому редактор кладёт их в запрос сам.
+   */
+  | { type: 'exportAppSettings'; uiPrefs?: Record<string, string> }
   | { type: 'importAppSettings'; dataBase64: string }
   // Лицензия (§27 доработки) — активация содержимым файла fountain.license.json,
   // проверка целиком на движке (см. engine/license.ts).
@@ -569,7 +574,16 @@ export type ClientMessage =
    * она про усилитель и колонки на месте, а не про шоу. Уже играющий трек не
    * трогает — подхватит следующий.
    */
-  | { type: 'setAudioVolume'; volumeDb: number; muted: boolean; bassDb: number; trebleDb: number }
+  | {
+      type: 'setAudioVolume';
+      volumeDb: number;
+      muted: boolean;
+      /** Десять полос эквалайзера, дБ (EQ_BANDS_HZ). */
+      eq: number[];
+      /** Выбранный пресет или «custom»; eqCustom — последняя своя настройка. */
+      eqPreset: string;
+      eqCustom: number[];
+    }
   /**
    * Внешние пульты: включить/выключить OSC и MQTT, порт, брокер. Применяется на
    * ходу. mqttPassword: не передан — пароль не меняется, пустая строка — убрать.
@@ -676,8 +690,10 @@ export type ServerMessage =
       /** Звук вечерней программы выключен. */
       audioMuted: boolean;
       /** Тембр вечерней программы, дБ. */
-      audioBassDb: number;
-      audioTrebleDb: number;
+      /** Эквалайзер музыки: полосы, выбранный пресет и последняя своя настройка. */
+      audioEq: number[];
+      audioEqPreset: string;
+      audioEqCustom: number[];
       /**
        * Нашёлся ли ffplay. Без него вода и свет играют, а звука нет —
        * человеку это надо видеть до вечера, а не выяснять по тишине.
@@ -749,7 +765,7 @@ export type ServerMessage =
   /** Ответ на exportAppSettings — .zip с настройками программы. */
   | { type: 'appSettingsExport'; filename: string; dataBase64: string }
   /** Ответ на importAppSettings — что восстановлено и что делать дальше. */
-  | { type: 'appSettingsImportResult'; ok: boolean; message: string }
+  | { type: 'appSettingsImportResult'; ok: boolean; message: string; uiPrefs?: Record<string, string> }
   /** Статус лицензии — при подключении и после activateLicense. */
   | { type: 'license'; status: LicenseStatus }
   /** Ответ на getDmxCapture: последний кадр внешнего ArtDMX; data = '' — захвата нет. */

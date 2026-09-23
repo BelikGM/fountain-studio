@@ -133,3 +133,19 @@ export function UploadIcon() {
     </svg>
   );
 }
+
+/**
+ * Стрелка клавиши (↑ ↓ ← →) — значком, а не буквой шрифта. Символ стрелки в
+ * Arial сидит на базовой линии текста и при масштабе экрана Windows 125–150 %
+ * уезжал ниже середины кнопки и обрезался снизу (замечание 24.09.2026).
+ * Значок центрируется по кнопке точно при любом масштабе.
+ */
+export function KeyArrowIcon({ dir }: { dir: 'up' | 'down' | 'left' | 'right' }) {
+  const rot = { up: 0, right: 90, down: 180, left: 270 }[dir];
+  return (
+    <svg {...ICON_PROPS} width={13} height={13} aria-label={{ up: 'вверх', down: 'вниз', left: 'влево', right: 'вправо' }[dir]} style={{ transform: `rotate(${rot}deg)`, display: 'block' }}>
+      <path d="M12 20V4" />
+      <path d="M6 10l6-6 6 6" />
+    </svg>
+  );
+}

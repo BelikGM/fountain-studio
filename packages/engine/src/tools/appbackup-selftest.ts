@@ -111,7 +111,8 @@ function send(st: Conn, msg: AnyMsg): void {
   await sleep(1500);
 
   // --- 1. Выгрузка: в файле всё, ради чего копия и делается ----------------
-  send(st, { type: 'exportAppSettings' });
+  // Редактор присылает и настройки своего окна (они в браузере, движок их не видит).
+  send(st, { type: 'exportAppSettings', uiPrefs: { 'fs-hotkeys': '{"blackout":"F12"}', 'fountain.view.prefs': '{"rotateSpeed":0.3}' } });
   const exp = await waitFor(st, 'appSettingsExport');
   check('движок отдал файл копии', exp !== undefined && typeof exp.dataBase64 === 'string');
   const zip = Buffer.from(String(exp?.dataBase64 ?? ''), 'base64');
@@ -121,6 +122,7 @@ function send(st: Conn, msg: AnyMsg): void {
   check('в копии настройки движка', names.includes('app-config.json'), names.join(', '));
   check('в копии список недавних объектов', names.includes('app-settings.json'), names.join(', '));
   check('в копии есть объяснение для человека', names.includes('ЧТО-ЭТО.txt'), names.join(', '));
+  check('в копии настройки окна редактора (горячие клавиши, камера)', names.includes('ui-prefs.json'), names.join(', '));
   check('имя файла с датой', /^fountain-настройки-\d{4}-\d{2}-\d{2}\.zip$/u.test(String(exp?.filename)), String(exp?.filename));
   const secretsInZip = readZip(zip).find((e) => e.name === 'fountain.secrets.json');
   check('токен внутри копии настоящий', secretsInZip?.data.toString('utf8').includes('секрет-123') === true);
@@ -134,6 +136,8 @@ function send(st: Conn, msg: AnyMsg): void {
   const imp = await waitFor(st, 'appSettingsImportResult');
   check('восстановление прошло', imp?.ok === true, String(imp?.message));
   check('в ответе сказано про перезапуск', String(imp?.message).includes('ерезапуст'), String(imp?.message));
+  const back = (imp as { uiPrefs?: Record<string, string> } | undefined)?.uiPrefs;
+  check('настройки окна редактора вернулись редактору', back?.['fs-hotkeys'] === '{"blackout":"F12"}', JSON.stringify(back));
   const secrets = fs.readFileSync(path.join(appDataDir, 'fountain.secrets.json'), 'utf8');
   check('токен бота вернулся', secrets.includes('секрет-123'), secrets);
   const lic = fs.readFileSync(path.join(appDataDir, 'fountain.license.json'), 'utf8');

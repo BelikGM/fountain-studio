@@ -692,13 +692,14 @@ export class Engine {
             }
           }
         }
-        // Служебное освещение по времени (§27 доработки, «Switches») —
-        // безусловный оверрайд поверх сцен/шоу, не зависит от воспроизведения.
+        // Служебное освещение по времени (§27 доработки, «Switches») — в своё
+        // время приборы на полную поверх сцен/шоу. ВНЕ окна не трогаем
+        // (24.09.2026): раньше держали 0, и прибор, который участвует ещё и в
+        // шоу, гас посреди шоу.
         if (this.utilityLightConfig.enabled) {
           const idx = this.utilityChannels.get(u.id);
-          if (idx) {
-            const on = isUtilityLightOn(this.utilityLightConfig, new Date());
-            for (const i of idx) u.out[i] = on ? 255 : 0;
+          if (idx && isUtilityLightOn(this.utilityLightConfig, new Date())) {
+            for (const i of idx) u.out[i] = 255;
           }
         }
       }
