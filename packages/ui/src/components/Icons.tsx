@@ -122,3 +122,14 @@ export function EyeIcon({ off = false }: { off?: boolean }) {
     </svg>
   );
 }
+
+/** Загрузить из файла: стрелка вверх над лотком — как в проводнике и браузерах. */
+export function UploadIcon() {
+  return (
+    <svg {...ICON_PROPS} width={12} height={12} aria-hidden="true">
+      <path d="M12 15V4" />
+      <path d="M7 9l5-5 5 5" />
+      <path d="M4 17v3h16v-3" />
+    </svg>
+  );
+}

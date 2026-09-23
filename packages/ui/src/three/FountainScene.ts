@@ -308,6 +308,13 @@ const MAX_PARTICLES = 120000;
  * капли и лучи. То, что НИЖЕ зеркала, не рисуется вовсе: капли гаснут на
  * зеркале своей чаши, струя обрезается по нему (см. surfaceZAt).
  */
+/**
+ * Капли ПОД зеркалом (сопло утоплено, вода ещё не вышла на поверхность)
+ * рисуются ДО зеркала — оно ложится поверх и тонирует их, как корпус самой
+ * форсунки под водой. Раньше их не рисовали вовсе, и между утопленным соплом и
+ * поверхностью зияла «дырка» (замечание 23.09.2026, моторная форсунка).
+ */
+const ORDER_UNDER = -2;
 const ORDER_WATER = -1;
 const ORDER_JET = 2;
 const ORDER_DROPS = 3;
@@ -324,6 +331,14 @@ const ORDER_BEAM = 4;
  * шаг около 3 см при вылете 11 м/с (струя 6 м): шнур читается сплошным.
  */
 const ORBIT_CORD_PER_SEC = 400;
+
+/*
+ * FRESH_BACKSTEP. Капли, рождённые в кадре, в том же кадре проходят общий шаг
+ * движения (цикл интеграции идёт ПОСЛЕ выпуска). Раньше это не учитывалось, и
+ * самая свежая капля оказывалась на v·dt впереди сопла: у струй это прятала
+ * «труба» сплошной части, а у моторной (трубы нет) между соплом и шнуром
+ * зиял просвет. Поэтому при выпуске доля кадра передаётся как subDt − dt.
+ */
 /** Шаг истории скорости на срезе, с. */
 const SPEED_HIST_STEP = 1 / 60;
 /**
@@ -535,6 +550,10 @@ export class FountainScene {
 
   // Частицы: параллельные массивы, компактирование свопом с хвостом.
   private particles: THREE.Points;
+  /** Те же атрибуты, другой диапазон: капли под зеркалом воды (см. ORDER_UNDER). */
+  private particlesUnder: THREE.Points;
+  /** Под водой ли капля — на кадр, чтобы не считать surfaceZAt дважды. */
+  private underFlag = new Uint8Array(MAX_PARTICLES);
   private posAttr: THREE.BufferAttribute;
   private colAttr: THREE.BufferAttribute;
   private sizeAttr: THREE.BufferAttribute;
@@ -880,6 +899,17 @@ export class FountainScene {
     this.particles.frustumCulled = false;
     this.particles.renderOrder = ORDER_DROPS;
     this.scene.add(this.particles);
+    // Вторая геометрия на ТЕХ ЖЕ атрибутах: в начале массива лежат капли под
+    // водой, за ними — над водой; каждому облаку свой диапазон и свой порядок.
+    const underGeo = new THREE.BufferGeometry();
+    underGeo.setAttribute('position', this.posAttr);
+    underGeo.setAttribute('color', this.colAttr);
+    underGeo.setAttribute('size', this.sizeAttr);
+    underGeo.setDrawRange(0, 0);
+    this.particlesUnder = new THREE.Points(underGeo, this.particles.material);
+    this.particlesUnder.frustumCulled = false;
+    this.particlesUnder.renderOrder = ORDER_UNDER;
+    this.scene.add(this.particlesUnder);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -2030,9 +2060,38 @@ export class FountainScene {
     this.applySelection();
   }
 
+  /** До какого момента элемент показывается без подсветки выбора (см. revealTrueColor). */
+  private revealUntil = new Map<string, number>();
+
+  /**
+   * Показать элемент как есть на ms миллисекунд — без оранжевой подсветки
+   * выбора. Нужно, когда человек меняет цвет выбранного: иначе поверх нового
+   * цвета остаётся подсветка, и понять, что выбрано, можно, только щёлкнув
+   * по другому элементу (замечание 23.09.2026).
+   */
+  revealTrueColor(key: string, ms = 4000): void {
+    const until = performance.now() + ms;
+    this.revealUntil.set(key, until);
+    this.applySelection();
+    window.setTimeout(() => {
+      if ((this.revealUntil.get(key) ?? 0) === until) {
+        this.revealUntil.delete(key);
+        this.applySelection();
+      }
+    }, ms + 30);
+  }
+
   private applySelection(): void {
     const key = this.selected ? this.selected.type + ':' + this.selected.id : '';
+    const now = performance.now();
     for (const [k, parts] of this.highlightMats) {
+      if ((this.revealUntil.get(k) ?? 0) > now) {
+        for (const p of parts) {
+          p.mat.color.set(p.color);
+          p.mat.emissive.set(0x000000);
+        }
+        continue;
+      }
       // Активный — ярко, остальные отмеченные — той же краской, но приглушённо:
       // по яркости сразу видно, свойства какого элемента открыты справа, и при
       // этом не теряется, что выделена вся группа.
@@ -3401,7 +3460,8 @@ export class FountainScene {
           v0,
           color,
           dropM,
-          subDt,
+          // FRESH_BACKSTEP: рождённые в кадре ещё пройдут общий шаг dt ниже.
+          subDt - dt,
           spray,
           maxAgeSec,
           ringOverrideDeg,
@@ -3428,7 +3488,9 @@ export class FountainScene {
           const jet = i % jets;
           const subDt = (i / Math.max(1, cordCount)) * dt;
           const at = this.orbitNozzleAgo(n, heading, jet, subDt);
-          this.spawn(n, phys, spreadDeg * 0.08, at.headingDeg, v0, color, cordDrop, subDt, 0, cordLife, undefined, at.origin, 0);
+          // subDt − dt: см. FRESH_BACKSTEP — иначе между соплом и началом
+          // шнура оставался просвет в v·dt (15–30 см), замечание 23.09.2026.
+          this.spawn(n, phys, spreadDeg * 0.08, at.headingDeg, v0, color, cordDrop, subDt - dt, 0, cordLife, undefined, at.origin, 0);
         }
       }
 
@@ -3639,28 +3701,37 @@ export class FountainScene {
     const pos = this.posAttr.array as Float32Array;
     const col = this.colAttr.array as Float32Array;
     const siz = this.sizeAttr.array as Float32Array;
+    // Сначала — какие капли под водой: они ложатся в начало массива, чтобы
+    // нарисоваться до зеркала (см. ORDER_UNDER), остальные — следом.
+    let underCount = 0;
     for (let j = 0; j < this.alive; j++) {
-      pos[j * 3] = this.px[j]!;
-      pos[j * 3 + 1] = this.py[j]!;
-      pos[j * 3 + 2] = this.pz[j]!;
-      col[j * 3] = this.pr[j]!;
-      col[j * 3 + 1] = this.pg[j]!;
-      col[j * 3 + 2] = this.pb[j]!;
+      const u = this.pz[j]! < this.surfaceZAt(this.px[j]!, this.py[j]!) ? 1 : 0;
+      this.underFlag[j] = u;
+      underCount += u;
+    }
+    let wUnder = 0;
+    let wAbove = underCount;
+    for (let j = 0; j < this.alive; j++) {
+      const w = this.underFlag[j] ? wUnder++ : wAbove++;
+      pos[w * 3] = this.px[j]!;
+      pos[w * 3 + 1] = this.py[j]!;
+      pos[w * 3 + 2] = this.pz[j]!;
+      col[w * 3] = this.pr[j]!;
+      col[w * 3 + 1] = this.pg[j]!;
+      col[w * 3 + 2] = this.pb[j]!;
       // Туман не падает, а растворяется: к концу срока жизни капля уходит в
       // ноль, и облако тает по краям, а не обрывается ровной кромкой.
       const max = this.maxAge[j]!;
       const fade = max > 0 ? Math.min(1, (1 - this.age[j]! / max) / 0.35) : 1;
-      // Сопло бывает утоплено — торчит только срез. Вода под зеркалом не видна:
-      // капля появляется, когда выходит из воды.
-      const under = this.pz[j]! < this.surfaceZAt(this.px[j]!, this.py[j]!);
       const own = this.pnoz[j]!;
       const hid = own >= 0 && own < this.hiddenNoz.length && this.hiddenNoz[own] === 1;
-      siz[j] = under || hid ? 0 : this.psize[j]! * fade;
+      siz[w] = hid ? 0 : this.psize[j]! * fade;
     }
     this.posAttr.needsUpdate = true;
     this.colAttr.needsUpdate = true;
     this.sizeAttr.needsUpdate = true;
-    this.particles.geometry.setDrawRange(0, this.alive);
+    this.particlesUnder.geometry.setDrawRange(0, underCount);
+    this.particles.geometry.setDrawRange(underCount, this.alive - underCount);
   }
 
   /**
@@ -3717,6 +3788,40 @@ export class FountainScene {
       const hit = ray.intersectObject(model, true)[0];
       return hit ? hit.point.z : ground;
     };
+    /**
+     * Профиль наружной стенки для плёнки перелива: на каждой высоте от кромки
+     * вниз — самый дальний от центра край модели (горизонтальные лучи с
+     * 16 сторон, МАКСИМУМ). Плёнка идёт чуть снаружи него.
+     *
+     * Раньше плёнка была цилиндром по «среднему» радиусу — и проходила
+     * сквозь рёбра и выступы стенки: вода виднелась полосами, между ними —
+     * камень (замечание 23.09.2026). Ниже края, где стенка уходит внутрь
+     * (дно верхней чаши), вода отрывается и падает отвесно — радиус вниз
+     * не уменьшается.
+     */
+    const wallProfile = (startR: number, zTop: number, zBottom: number): THREE.Vector2[] => {
+      const pts: THREE.Vector2[] = [];
+      const steps = 28;
+      let rPrev = 0;
+      for (let i = 0; i <= steps; i++) {
+        const z = zTop - ((zTop - zBottom) * i) / steps;
+        let rMax = 0;
+        for (let k = 0; k < 16; k++) {
+          const a = (k * Math.PI) / 8;
+          const dx = Math.cos(a);
+          const dy = Math.sin(a);
+          ray.set(new THREE.Vector3(c.x + dx * startR, c.y + dy * startR, z), new THREE.Vector3(-dx, -dy, 0));
+          ray.far = startR;
+          const hit = ray.intersectObject(model, true)[0];
+          ray.far = Infinity;
+          if (hit) rMax = Math.max(rMax, Math.hypot(hit.point.x - c.x, hit.point.y - c.y));
+        }
+        rPrev = Math.max(rPrev, rMax);
+        if (rPrev > 0) pts.push(new THREE.Vector2(rPrev + SPILL_FILM_M, z));
+      }
+      // LatheGeometry строит поверхность снизу вверх.
+      return pts.reverse();
+    };
     const N = 180;
     /** Профиль высоты вдоль направлений (медиана по ним — мелкий декор не сбивает). */
     const profile = (dirs: [number, number][], len: number): { r: number[]; h: number[] } => {
@@ -3763,8 +3868,18 @@ export class FountainScene {
           // Где вода стекает за кромку: первая точка снаружи, где верх заметно ниже.
           let m = k + 1;
           while (m < N && h[m]! > h[k]! - Math.max(0.03, H * 0.05)) m++;
+          /*
+           * Всё, что ближе к центру, стоит ВЫШЕ воды (верхняя чаша на
+           * пьедестале у двухъярусной)? Тогда вода заходит и под него: сверху
+           * луч видит верхнюю чашу, но под ней та же нижняя вода. Раньше она
+           * начиналась от края верхней чаши, и под падающей плёнкой было
+           * пусто (замечание 23.09.2026). Закрытое непрозрачным всё равно не
+           * видно, поэтому наливаем сплошным кругом.
+           */
+          let covered = first > 0;
+          for (let j = 0; j < first && covered; j++) if (h[j]! < level) covered = false;
           out.push({
-            rIn: first === 0 ? 0 : r[first]!,
+            rIn: first === 0 || covered ? 0 : r[first]!,
             rOut: r[Math.min(k, last + 1)]!,
             floor,
             crest: h[k]!,
@@ -3819,11 +3934,18 @@ export class FountainScene {
           surfaces.push({ id: b.id, x: c.x, y: c.y, circle: true, r: bs.rOut, hw: 0, hl: 0, z });
         }
         if (spill) {
-          const drop = Math.max(0.02, bs.crest - bs.fallTo);
-          const film = new THREE.Mesh(new THREE.CylinderGeometry(bs.wallR + SPILL_FILM_M, bs.wallR + SPILL_FILM_M, drop, 96, 1, true), filmMat);
-          film.rotation.x = Math.PI / 2;
-          film.position.set(lx, ly, bs.crest - drop / 2);
-          add(film);
+          const bottom = Math.max(bs.fallTo, bs.crest - Math.max(0.02, b.spilloverDropM ?? 0.6));
+          // Лучи идут снаружи внутрь; у верхней чаши — от кромки следующей
+          // чаши, чтобы не упереться в её наружную стенку.
+          const next = basins[basins.indexOf(bs) + 1];
+          const startR = next ? Math.max(bs.rOut + 0.02, next.rOut - 0.02) : len + 1;
+          const profilePts = wallProfile(startR, bs.crest, bottom);
+          if (profilePts.length >= 2) {
+            const film = new THREE.Mesh(new THREE.LatheGeometry(profilePts, 96), filmMat);
+            film.rotation.x = Math.PI / 2;
+            film.position.set(lx, ly, 0);
+            add(film);
+          }
           if (bulge > 0.002) {
             const lip = new THREE.Mesh(new THREE.TorusGeometry(bs.rOut, bulge, 8, 96), lipMat);
             lip.position.set(lx, ly, bs.crest);
@@ -3848,9 +3970,18 @@ export class FountainScene {
         add(surf);
         surfaces.push({ id: b.id, x: c.x, y: c.y, circle: false, r: 0, hw: ax.rOut, hl: ay.rOut, z });
         if (spill) {
-          const drop = Math.max(0.02, bs.crest - bs.fallTo);
-          const outer = roundedRectShape(ax.wallR * 2, ay.wallR * 2, corner);
-          const shell = roundedRectShape((ax.wallR + SPILL_FILM_M) * 2, (ay.wallR + SPILL_FILM_M) * 2, corner + SPILL_FILM_M);
+          const drop = Math.max(0.02, Math.min(bs.crest - bs.fallTo, b.spilloverDropM ?? 0.6));
+          // Край стенки — самый дальний выступ чуть ниже кромки (лучи снаружи):
+          // плёнка по «среднему» краю проходила сквозь выступы полосами.
+          const edge = (dx: number, dy: number, far: number): number => {
+            ray.set(new THREE.Vector3(c.x + dx * far, c.y + dy * far, bs.crest - 0.02), new THREE.Vector3(-dx, -dy, 0));
+            const hit = ray.intersectObject(model, true)[0];
+            return hit ? Math.abs(dx !== 0 ? hit.point.x - c.x : hit.point.y - c.y) : 0;
+          };
+          const wx = Math.max(ax.wallR, edge(1, 0, lenX + 1), edge(-1, 0, lenX + 1));
+          const wy = Math.max(ay.wallR, edge(0, 1, lenY + 1), edge(0, -1, lenY + 1));
+          const outer = roundedRectShape(wx * 2, wy * 2, corner);
+          const shell = roundedRectShape((wx + SPILL_FILM_M) * 2, (wy + SPILL_FILM_M) * 2, corner + SPILL_FILM_M);
           shell.holes = [new THREE.Path(outer.getPoints(24))];
           const film = new THREE.Mesh(new THREE.ExtrudeGeometry(shell, { depth: drop, bevelEnabled: false, steps: 1 }), filmMat);
           film.position.set(lx, ly, bs.crest - drop);
@@ -4014,7 +4145,10 @@ export class FountainScene {
     }
     // Доводим частицу на её долю кадра: положение по скорости, скорость — по
     // гравитации. Без этого весь кадр рождается в одной точке.
-    if (subDt > 0) {
+    // Доля бывает и отрицательной (см. FRESH_BACKSTEP у вызова): тогда капля
+    // стоит «позади» среза ровно на тот шаг, которым её сдвинет общий расчёт
+    // этого же кадра, — и после него оказывается у самого сопла.
+    if (subDt !== 0) {
       // Тяжесть — своя у типа (у взвеси ослаблена) и по точной дуге, как в
       // основном шаге: иначе капли рождаются чуть ниже тела струи.
       const g = G * (phys.gScale ?? 1);

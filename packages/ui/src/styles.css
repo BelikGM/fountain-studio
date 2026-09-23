@@ -2251,9 +2251,10 @@ input[type='range']:disabled { opacity: 0.4; cursor: default; }
 .eye-btn:hover { opacity: 1; color: var(--fg); }
 .eye-btn.eye-off { opacity: 1; color: var(--warn); }
 .eye-btn:disabled { visibility: hidden; }
-.list-item > .eye-btn + .list-item-label { flex: 1; }
+.list-item > .list-item-label { flex: 1; }
 .list-item-hidden .list-item-label { opacity: 0.45; }
-.list-head .eye-btn { margin-right: 4px; vertical-align: -2px; }
+/* Глаз раздела — в одну колонку с глазами строк: справа, с тем же отступом. */
+.list-head .eye-btn { margin-left: auto; margin-right: 11px; }
 
 /* Облицовка борта чаши: выбранный цвет или картинка — в рамке акцента;
    слот «из файла» — маленькая кнопка с картинкой рядом со своим цветом. */
@@ -2269,3 +2270,52 @@ input[type='range']:disabled { opacity: 0.4; cursor: default; }
 /* Общий ползунок «Все насосы» тянется по месту: в узкой панели 3D он не
    должен распирать строку, на «Отладке» — растягиваться на весь экран. */
 .quick-row input[type='range'] { flex: 1 1 auto; min-width: 60px; max-width: 220px; width: 0; }
+
+/* Сворачиваемые панели «Настроек» (см. collapsiblePanels.ts): щелчок по
+   заголовку сворачивает панель до плашки. Стрелка справа — тусклая, ярче
+   при наведении; смотрит вниз у раскрытой панели и вправо у свёрнутой. */
+.panel-toggle {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+}
+.panel-toggle:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+.panel-chevron {
+  margin-left: auto;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--fg-dim);
+  border-bottom: 2px solid var(--fg-dim);
+  transform: translateY(-2px) rotate(45deg);
+  opacity: 0.4;
+  transition: transform 0.22s ease, opacity 0.15s ease;
+}
+.panel-toggle:hover .panel-chevron { opacity: 0.9; }
+section.panel-collapsed > h2 .panel-chevron { transform: rotate(-45deg); }
+section.panel-collapsed > :not(h2) { display: none !important; }
+section.panel-collapsed > h2 { margin-bottom: 0; }
+section.panel-animating { transition: max-height 0.22s ease; }
+/* Панель, к которой перешли кнопкой «Перейти», коротко подсвечивается. */
+section.panel-flash { box-shadow: 0 0 0 1px var(--accent); transition: box-shadow 1.4s ease; }
+
+/* «Свой цвет» облицовки — бело-серая шахматка: сразу понятно, что цвет на
+   выбор. Выбранный свой цвет — квадратик посередине. */
+.color-swatch-pick {
+  position: relative;
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, #c4c4c4 25%, transparent 25%),
+    linear-gradient(-45deg, #c4c4c4 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #c4c4c4 75%),
+    linear-gradient(-45deg, transparent 75%, #c4c4c4 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+}
+.color-swatch-pick input[type='color'] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.color-swatch-pick-dot { position: absolute; inset: 4px; border-radius: 2px; pointer-events: none; }
+.color-swatch-file { display: inline-flex; align-items: center; justify-content: center; color: var(--fg-dim); }
+.color-swatch-file:hover { color: var(--fg); }
+.field-grid .color-presets { flex-wrap: nowrap; }

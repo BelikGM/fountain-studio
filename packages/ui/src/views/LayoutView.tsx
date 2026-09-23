@@ -48,7 +48,7 @@ import { SmartSearch } from '../components/SmartSearch';
 import { noteManual } from '../manualActivity';
 import { hexToRgb } from '../colorPresets';
 import { askConfirm, type ConfirmOptions } from '../components/ConfirmDialog';
-import { EyeIcon, PencilIcon, TrashIcon, WindIcon } from '../components/Icons';
+import { EyeIcon, PencilIcon, TrashIcon, UploadIcon, WindIcon } from '../components/Icons';
 import { loadHidden, saveHidden } from '../three/hiddenElements';
 import { H } from '../propHints';
 import { comboFromEvent, getCombo } from '../hotkeys';
@@ -640,6 +640,7 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
             )}
             {selected?.type === 'bowl' && (
               <BowlProps
+                onReveal={() => sceneRef.current?.revealTrueColor('bowl:' + selected.id)}
                 bowl={layout.bowls.find((b) => b.id === selected.id)}
                 layout={layout}
                 setLayout={setLayout}
@@ -807,8 +808,8 @@ function ElementList({
         className={rowClass(type, id) + (isHidden(keys) ? ' list-item-hidden' : '')}
         onClick={(e) => click(type, id, e)}
       >
-        {eye(keys, type === 'group' ? 'форсунки контура' : 'элемент')}
         <span className="list-item-label">{label}</span>
+        {eye(keys, type === 'group' ? 'форсунки контура' : 'элемент')}
       </li>
     );
   };
@@ -824,7 +825,6 @@ function ElementList({
     const sectionKeys = type === 'group' ? all.flatMap((id) => hideKeys('group', id)) : all.map((id) => type + ':' + id);
     return (
       <h3 className="list-head">
-        {count > 0 && eye(sectionKeys, `весь раздел «${title}»`)}
         {title} ({count})
         {count > 0 && (
           <button
@@ -845,6 +845,7 @@ function ElementList({
             все
           </button>
         )}
+        {count > 0 && eye(sectionKeys, `весь раздел «${title}»`)}
       </h3>
     );
   };
@@ -2673,13 +2674,16 @@ function LightProps({
  * правку — фото с телефона на 5 МБ сделало бы из каждого щелчка мышью
  * пятимегабайтную пересылку.
  */
+/**
+ * Четыре частых цвета: вместе со «своим цветом» и загрузкой картинки ряд
+ * должен влезать в узкую панель свойств одной строкой (замечание 23.09.2026:
+ * шесть образцов переносились во вторую строку).
+ */
 const RIM_PRESETS: { name: string; hex: string }[] = [
   { name: 'Серый бетон', hex: '#6b6f75' },
   { name: 'Светлый камень', hex: '#b9b2a4' },
   { name: 'Песчаник', hex: '#c2a27a' },
   { name: 'Красный гранит', hex: '#8a4b3f' },
-  { name: 'Тёмный гранит', hex: '#3b3d42' },
-  { name: 'Белый мрамор', hex: '#e4e2dc' },
 ];
 const RIM_TEXTURE_MAX_PX = 512;
 
@@ -2703,10 +2707,29 @@ async function imageFileToDataUrl(file: File): Promise<string> {
   }
 }
 
-function RimFinish({ bowl, patch }: { bowl: Bowl; patch: (p: Partial<Bowl>) => void }) {
+function RimFinish({
+  bowl,
+  patch: patchBowl,
+  onReveal,
+}: {
+  bowl: Bowl;
+  patch: (p: Partial<Bowl>) => void;
+  /** Показать настоящий цвет чаши, сняв на время оранжевую подсветку выбора. */
+  onReveal?: () => void;
+}) {
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const color = bowl.rimColor ?? '#6b6f75';
+  const custom = !bowl.rimTexture && !RIM_PRESETS.some((p) => p.hex === color.toLowerCase());
+  /*
+   * Выбранная чаша подсвечена оранжевым — и сменённый цвет было не
+   * разглядеть, пока не щёлкнешь по другому элементу. Поэтому после смены
+   * облицовки чаша на несколько секунд показывается как есть.
+   */
+  const patch = (p: Partial<Bowl>): void => {
+    patchBowl(p);
+    onReveal?.();
+  };
   return (
     <>
       <div className="field">
@@ -2722,22 +2745,24 @@ function RimFinish({ bowl, patch }: { bowl: Bowl; patch: (p: Partial<Bowl>) => v
               onClick={() => patch({ rimColor: p.hex, rimTexture: null })}
             />
           ))}
+          {/* Свой цвет — бело-серая шахматка («цвет на выбор»); выбранный
+              свой цвет виден квадратиком посередине. */}
           <label
-            className="color-swatch color-swatch-custom"
-            style={bowl.rimTexture ? undefined : { background: color }}
+            className={custom ? 'color-swatch color-swatch-pick active' : 'color-swatch color-swatch-pick'}
             data-hint="Свой цвет — нажмите, чтобы выбрать"
           >
+            {custom && <span className="color-swatch-pick-dot" style={{ background: color }} />}
             <input type="color" value={color} onChange={(e) => patch({ rimColor: e.target.value, rimTexture: null })} />
           </label>
-          {/* Картинка — маленькой кнопкой рядом со своим цветом. */}
+          {/* Картинка из файла — значок загрузки; загруженная видна миниатюрой. */}
           <button
             type="button"
             className={bowl.rimTexture ? 'color-swatch color-swatch-file active' : 'color-swatch color-swatch-file'}
             style={bowl.rimTexture ? { backgroundImage: `url(${bowl.rimTexture})`, backgroundSize: 'cover' } : undefined}
-            data-hint="Картинка облицовки из файла (фото камня, плитки) — повторяется по борту плитками"
+            data-hint="Загрузить картинку облицовки из файла (фото камня, плитки) — повторяется по борту плитками"
             onClick={() => fileRef.current?.click()}
           >
-            {bowl.rimTexture ? '' : '🖼'}
+            {bowl.rimTexture ? null : <UploadIcon />}
           </button>
           <input
             ref={fileRef}
@@ -2787,14 +2812,23 @@ function BowlProps({
   setLayout,
   onSelect,
   ask,
+  onReveal,
 }: {
   bowl: Bowl | undefined;
   layout: FountainLayout;
   setLayout: (l: FountainLayout) => void;
   onSelect: (s: Selected) => void;
   ask: Ask;
+  /** Показать настоящий вид чаши на несколько секунд (без подсветки выбора). */
+  onReveal?: () => void;
 }) {
   if (!bowl) return null;
+  /**
+   * Своя 3D-модель — у неё борт, дно и облицовка свои, и свойства встроенной
+   * чаши к ней не применимы. Раньше они показывались и молча ничего не
+   * меняли (замечание 23.09.2026); теперь показываем только то, что работает.
+   */
+  const model = bowl.modelFile !== null;
   const patch = (p: Partial<Bowl>): void =>
     setLayout({ ...layout, bowls: layout.bowls.map((b) => (b.id === bowl.id ? { ...b, ...p } : b)) });
   /** Толщина борта не больше половины меньшего размера: иначе внутри не остаётся места. */
@@ -2809,19 +2843,49 @@ function BowlProps({
           <FieldName label="Имя" hint={H.name('bowl')} />{' '}
           <input className="input" value={bowl.name} onChange={(e) => patch({ name: e.target.value })} />
         </label>
-        <label className="field">
-          <FieldName label="Форма" hint={H.bowlShape} />{' '}
-          <select className="input" value={bowl.shape} onChange={(e) => patch({ shape: e.target.value as Bowl['shape'] })}>
-            <option value="circle">Круглая</option>
-            <option value="rect">Прямоугольная</option>
-          </select>
-        </label>
+        {/* Модель — сверху: от неё зависит, какие свойства ниже вообще есть. */}
+        <ModelSelect
+          slot="bowl"
+          file={bowl.modelFile}
+          scale={bowl.modelScale}
+          onFile={(f) => patch({ modelFile: f })}
+          onScale={(v) => patch({ modelScale: v })}
+        />
+        {model && (
+          <p className="dim">
+            У готовой модели борт, дно и облицовка — её собственные: меняются только размер и масштаб. Вода и перелив
+            наливаются по её форме.
+          </p>
+        )}
+        {!model && (
+          <label className="field">
+            <FieldName label="Форма" hint={H.bowlShape} />{' '}
+            <select className="input" value={bowl.shape} onChange={(e) => patch({ shape: e.target.value as Bowl['shape'] })}>
+              <option value="circle">Круглая</option>
+              <option value="rect">Прямоугольная</option>
+            </select>
+          </label>
+        )}
         <NumField label="X, м" hint={H.x('bowl')} value={bowl.x} onChange={(x) => patch({ x })} />
         <NumField label="Y, м" hint={H.y('bowl')} value={bowl.y} onChange={(y) => patch({ y })} />
         {/* Z — отметка дна. Раньше поле называлось «Отметка дна» и стояло
             ниже, и его не узнавали: у форсунок и прожекторов высота — это Z. */}
         <NumField label="Z (дно), м" hint={H.bowlElevation} value={bowl.elevationM ?? 0} step={0.1} onChange={(v) => patch({ elevationM: v })} />
-        {bowl.shape === 'circle' ? (
+        {model ? (
+          /* Модель подгоняется по НАИБОЛЬШЕМУ размеру в плане (см. attachModel):
+             одно поле вместо радиуса или ширины с длиной. */
+          <NumField
+            label="Размер, м"
+            hint="Наибольший размер модели в плане (диаметр круглой, длинная сторона прямоугольной), м. Высота модели меняется вместе с ним; тоньше — «Масштаб модели»."
+            value={bowl.shape === 'circle' ? bowl.radius * 2 : Math.max(bowl.width, bowl.length)}
+            step={0.5}
+            min={0.2}
+            onChange={(v) => {
+              const d = Math.max(0.2, v);
+              patch({ radius: d / 2, width: d, length: d });
+            }}
+          />
+        ) : bowl.shape === 'circle' ? (
           <NumField label="Радиус, м" hint={H.bowlRadius} value={bowl.radius} step={0.5} min={0.1} onChange={(v) => patch({ radius: Math.max(0.1, v) })} />
         ) : (
           <>
@@ -2837,29 +2901,28 @@ function BowlProps({
             />
           </>
         )}
-        <NumField label="Высота борта, м" hint={H.bowlRim} value={bowl.height} step={0.1} min={0} onChange={(v) => patch({ height: Math.max(0, v) })} />
-        <NumField
-          label="Толщина борта, м"
-          hint={H.bowlWall}
-          value={bowl.wallThicknessM ?? 0.15}
-          step={0.05}
-          min={0.01}
-          max={maxWall}
-          onChange={(v) => patch({ wallThicknessM: Math.min(maxWall, Math.max(0.01, v)) })}
-        />
-        <RimFinish bowl={bowl} patch={patch} />
-        <ModelSelect
-          slot="bowl"
-          file={bowl.modelFile}
-          scale={bowl.modelScale}
-          onFile={(f) => patch({ modelFile: f })}
-          onScale={(v) => patch({ modelScale: v })}
-        />
+        {!model && (
+          <>
+            <NumField label="Высота борта, м" hint={H.bowlRim} value={bowl.height} step={0.1} min={0} onChange={(v) => patch({ height: Math.max(0, v) })} />
+            <NumField
+              label="Толщина борта, м"
+              hint={H.bowlWall}
+              value={bowl.wallThicknessM ?? 0.15}
+              step={0.05}
+              min={0.01}
+              max={maxWall}
+              onChange={(v) => patch({ wallThicknessM: Math.min(maxWall, Math.max(0.01, v)) })}
+            />
+            <RimFinish bowl={bowl} patch={patch} onReveal={onReveal} />
+          </>
+        )}
         <h3>Что показывать</h3>
-        <label className="field">
-          <input type="checkbox" checked={bowl.showRim !== false} onChange={(e) => patch({ showRim: e.target.checked })} />{' '}
-          <span className="field-name has-hint" data-hint={H.showRim}>Борт</span>
-        </label>
+        {!model && (
+          <label className="field">
+            <input type="checkbox" checked={bowl.showRim !== false} onChange={(e) => patch({ showRim: e.target.checked })} />{' '}
+            <span className="field-name has-hint" data-hint={H.showRim}>Борт</span>
+          </label>
+        )}
         <label className="field">
           <input type="checkbox" checked={bowl.showWater !== false} onChange={(e) => patch({ showWater: e.target.checked })} />{' '}
           <span className="field-name has-hint" data-hint={H.showWater}>Зеркало воды</span>
@@ -2870,19 +2933,25 @@ function BowlProps({
             <p className="dim">Уровень воды — вровень с бортом: чаша переливается.</p>
           ) : (
             <NumField
-              label="Уровень воды от дна, м"
-              hint={H.bowlDepth}
+              label="Уровень воды, м"
+              hint={
+                model
+                  ? 'Уровень воды от дна модели, м. Выше её кромки вода не встанет — для этого есть перелив.'
+                  : H.bowlDepth
+              }
               value={bowl.waterDepthM ?? 0.25}
               step={0.05}
               min={0}
-              max={bowl.height}
-              onChange={(v) => patch({ waterDepthM: Math.min(bowl.height, Math.max(0, v)) })}
+              max={model ? 5 : bowl.height}
+              onChange={(v) => patch({ waterDepthM: Math.min(model ? 5 : bowl.height, Math.max(0, v)) })}
             />
           ))}
-        <label className="field">
-          <input type="checkbox" checked={bowl.showFloor !== false} onChange={(e) => patch({ showFloor: e.target.checked })} />{' '}
-          <span className="field-name has-hint" data-hint={H.showFloor}>Дно</span>
-        </label>
+        {!model && (
+          <label className="field">
+            <input type="checkbox" checked={bowl.showFloor !== false} onChange={(e) => patch({ showFloor: e.target.checked })} />{' '}
+            <span className="field-name has-hint" data-hint={H.showFloor}>Дно</span>
+          </label>
+        )}
         <h3>Перелив</h3>
         <label className="field">
           <input type="checkbox" checked={bowl.spillover === true} onChange={(e) => patch({ spillover: e.target.checked })} />{' '}
@@ -2891,16 +2960,16 @@ function BowlProps({
         {bowl.spillover && (
           <>
             <NumField
-              label="Плёнка стекает на, м"
-              hint={H.spillDrop}
-              value={Math.min(bowl.spilloverDropM ?? 0.6, wallTop)}
+              label="Плёнка вниз, м"
+              hint={model ? 'На сколько метров плёнка спускается по наружной стенке модели, м. Не ниже того, куда вода падает (земля или нижняя чаша).' : H.spillDrop}
+              value={model ? (bowl.spilloverDropM ?? 0.6) : Math.min(bowl.spilloverDropM ?? 0.6, wallTop)}
               step={0.1}
               min={0.02}
-              max={wallTop}
-              onChange={(v) => patch({ spilloverDropM: Math.min(wallTop, Math.max(0.02, v)) })}
+              max={model ? 20 : wallTop}
+              onChange={(v) => patch({ spilloverDropM: Math.min(model ? 20 : wallTop, Math.max(0.02, v)) })}
             />
             <NumField
-              label="Бугорок над кромкой, м"
+              label="Бугорок, м"
               hint={H.spillBulge}
               value={bowl.spilloverBulgeM ?? 0.03}
               step={0.01}
