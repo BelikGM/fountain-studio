@@ -294,6 +294,35 @@ const MAX_SLUGS_PER_NOZZLE = 6;
 // Туман живёт секундами и висит в воздухе — частиц нужно заметно больше, чем
 // прежние 60 000, иначе облако редеет до отдельных точек.
 const MAX_PARTICLES = 120000;
+
+/**
+ * Порядок отрисовки ПРОЗРАЧНОГО — задан явно, а не сортировкой по расстоянию.
+ *
+ * Three.js сортирует прозрачные объекты по удалению их ЦЕНТРА от камеры. У
+ * зеркала воды центр — середина чаши, у облака капель — начало координат, у
+ * струи — сопло. При облёте камеры порядок то и дело менялся, и зеркало воды
+ * рисовалось ПОВЕРХ брызг и струи: на части оборота вода над чашей выглядела
+ * тусклой, «как под водой», а на другой половине — нормальной (замечание
+ * 23.09.2026, со снимками). Теперь зеркало воды всегда первым, дальше струи,
+ * капли и лучи. То, что НИЖЕ зеркала, не рисуется вовсе: капли гаснут на
+ * зеркале своей чаши, струя обрезается по нему (см. surfaceZAt).
+ */
+const ORDER_WATER = -1;
+const ORDER_JET = 2;
+const ORDER_DROPS = 3;
+const ORDER_BEAM = 4;
+
+/**
+ * Моторная насадка: вместо трубы — плотный «шнур» из мелких капель, сколько
+ * их выпускать в секунду на одно сопло при полном напоре.
+ *
+ * Трубу моторной строили по следу каретки, но на быстрой каретке она всё равно
+ * расходилась с каплями (замечание 23.09.2026, заметно уже с 15 °/с): труба —
+ * это отдельный рисунок, а капли летят сами. Капли шнура летят той же физикой,
+ * что и остальные, поэтому совпадают с ними всегда. 400 в секунду — это
+ * шаг около 3 см при вылете 11 м/с (струя 6 м): шнур читается сплошным.
+ */
+const ORBIT_CORD_PER_SEC = 400;
 /** Шаг истории скорости на срезе, с. */
 const SPEED_HIST_STEP = 1 / 60;
 /**
@@ -583,6 +612,13 @@ export class FountainScene {
   /** Сглаженное значение струи и накопитель эмиссии по id форсунки. */
   private smoothed = new Map<string, number>();
   private emitAcc = new Map<string, number>();
+  /** Накопитель капель «шнура» моторной насадки (см. ORBIT_CORD_PER_SEC). */
+  private cordAcc = new Map<string, number>();
+  /**
+   * Зеркала воды чаш — где гасить капли и обрезать струю. Круг (r) или
+   * прямоугольник (hw, hl — половины сторон), z — отметка зеркала.
+   */
+  private waterSurfaces: { x: number; y: number; circle: boolean; r: number; hw: number; hl: number; z: number }[] = [];
   private rotPhase = new Map<string, number>();
   /**
    * Номер сборки сцены. Модели грузятся асинхронно, а схема за это время может
@@ -719,6 +755,13 @@ export class FountainScene {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.domElement.style.display = 'block';
+    // Струю обрезаем по зеркалу воды своей чаши (плоскость отсечения у
+    // материала струи) — нужен локальный режим отсечения.
+    this.renderer.localClippingEnabled = true;
+    // Только в сборке разработчика: сценарии проверки (scripts/ui-shot.cjs)
+    // облетают сцену камерой и снимают одну и ту же струю с разных сторон —
+    // так и ловятся ошибки вида «с этой стороны вода тусклая».
+    if (import.meta.env.DEV) (window as unknown as { __fountainScene?: FountainScene }).__fountainScene = this;
     container.appendChild(this.renderer.domElement);
 
     this.scene.background = new THREE.Color(0x0b0e13);
@@ -825,6 +868,7 @@ export class FountainScene {
       }),
     );
     this.particles.frustumCulled = false;
+    this.particles.renderOrder = ORDER_DROPS;
     this.scene.add(this.particles);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -880,6 +924,17 @@ export class FountainScene {
   /** Полная пересборка статичных мешей под новую схему (элементов немного — дёшево). */
   syncLayout(layout: FountainLayout): void {
     this.layout = layout;
+    this.waterSurfaces = layout.bowls
+      .filter((b) => b.showWater !== false)
+      .map((b) => ({
+        x: b.x,
+        y: b.y,
+        circle: b.shape === 'circle',
+        r: b.radius,
+        hw: b.width / 2,
+        hl: b.length / 2,
+        z: (b.elevationM ?? 0) + Math.min(b.height, b.waterDepthM ?? 0.25),
+      }));
     this.nozzleIndex = new Map(layout.nozzles.map((n, k) => [n.id, k]));
     this.bodiesAtSec = -10;
     // Ядра струй живут вне staticGroup (их геометрия зависит от напора, а не от
@@ -953,6 +1008,7 @@ export class FountainScene {
         if (b.showWater !== false) {
           const surf = new THREE.Mesh(new THREE.CircleGeometry(b.radius * 0.995, 96), water);
           surf.position.z = base + depth;
+          surf.renderOrder = ORDER_WATER;
           group.add(surf);
         }
         if (b.spillover) {
@@ -964,6 +1020,7 @@ export class FountainScene {
           );
           film.rotation.x = Math.PI / 2;
           film.position.z = base + b.height - drop / 2;
+          film.renderOrder = ORDER_WATER;
           group.add(film);
         }
       } else {
@@ -986,6 +1043,7 @@ export class FountainScene {
         if (b.showWater !== false) {
           const surf = new THREE.Mesh(new THREE.ShapeGeometry(plate), water);
           surf.position.z = base + depth;
+          surf.renderOrder = ORDER_WATER;
           group.add(surf);
         }
       }
@@ -1172,6 +1230,7 @@ export class FountainScene {
       // Луч рисуется в общем прозрачном проходе, после непрозрачной геометрии,
       // иначе корпус и борта чаши его не перекроют.
       beam.raycast = () => {};
+      beam.renderOrder = ORDER_BEAM;
       // Поворот +90° вокруг X переводит местную ось +Y в +Z: широкий конец
       // (radiusTop) уходит вперёд по лучу, узкий (radiusBottom = радиус линзы)
       // остаётся у прибора. Сдвиг на +beamLen/2 сажает узкий торец ровно на
@@ -2077,6 +2136,23 @@ export class FountainScene {
     return { x: Math.cos(ph) * r, y: Math.sin(ph) * r };
   }
 
+  /**
+   * Сопло моторной насадки agoSec секунд назад: где стояла каретка и куда
+   * смотрело сопло. Нужно каплям, родившимся в середине кадра: раньше все
+   * капли кадра вылетали из ОДНОЙ точки каретки, и шнур на быстрой каретке
+   * шёл «бусами» — группа капель на кадр с просветом между группами.
+   */
+  private orbitNozzleAgo(n: Nozzle, baseHeading: number, jet: number, agoSec: number): { origin: { x: number; y: number }; headingDeg: number } {
+    const headingNow = this.jetHeading(n, baseHeading, jet);
+    if (n.kind !== 'orbit') return { origin: this.orbitOffset(n, jet), headingDeg: headingNow };
+    const speed = n.spinCcw ? -n.rotationSpeedDegPerSec : n.rotationSpeedDegPerSec;
+    const facesOut = n.orbitFaceOut !== false && (n.orbitRadiusM ?? 0) > 0.001;
+    return {
+      origin: this.orbitOffsetAgo(n, jet, agoSec),
+      headingDeg: facesOut ? headingNow - speed * agoSec : headingNow,
+    };
+  }
+
   /** То же, но от заданной фазы (для оторвавшегося столба: фаза на момент закрытия). */
   private orbitOffsetFrom(n: Nozzle, phaseDeg: number, agoSec: number): { x: number; y: number } {
     const r = n.orbitRadiusM ?? 0;
@@ -2582,10 +2658,12 @@ export class FountainScene {
     let mesh = old;
     if (!mesh) {
       mesh = new THREE.Mesh(new THREE.BufferGeometry(), makeJetMaterial());
+      mesh.renderOrder = ORDER_JET;
       this.scene.add(mesh);
       this.jetCores.set(coreKey, mesh);
     }
     mesh.visible = true;
+    this.clipJetAtWater(mesh, n.x, n.y);
     {
       const m = mesh.material as THREE.MeshBasicMaterial;
       m.color.setRGB(color[0], color[1], color[2]);
@@ -2689,10 +2767,12 @@ export class FountainScene {
       let mesh = this.slugMeshes.get(s.key);
       if (!mesh) {
         mesh = new THREE.Mesh(new THREE.BufferGeometry(), makeJetMaterial());
+        mesh.renderOrder = ORDER_JET;
         this.scene.add(mesh);
         this.slugMeshes.set(s.key, mesh);
       }
       mesh.visible = true;
+      this.clipJetAtWater(mesh, nozzle.x, nozzle.y);
       (mesh.material as THREE.MeshBasicMaterial).color.setRGB(s.color[0], s.color[1], s.color[2]);
       const heading = (s.headingDeg * Math.PI) / 180;
       const dir = new THREE.Vector3(0, 0, 1);
@@ -3216,11 +3296,12 @@ export class FountainScene {
         const subDt = count > 0 ? (i / count) * dt : 0;
         const jet = jets > 1 ? cursor % jets : 0;
         cursor = (cursor + 1) % jets;
+        const at = this.orbitNozzleAgo(n, heading, jet, subDt);
         this.spawn(
           n,
           phys,
           spreadDeg,
-          this.jetHeading(n, heading, jet),
+          at.headingDeg,
           v0,
           color,
           dropM,
@@ -3228,11 +3309,32 @@ export class FountainScene {
           spray,
           maxAgeSec,
           ringOverrideDeg,
-          this.orbitOffset(n, jet),
+          at.origin,
           fillK,
         );
       }
       this.jetCursor.set(n.id, cursor);
+
+      if (n.kind === 'orbit' && !cut) {
+        /*
+         * Шнур моторной насадки — плотная цепочка капель у основания струи
+         * вместо трубы. Живёт столько, сколько держался бы цельный столб
+         * (coreSpanSec), дальше струю продолжают обычные брызги. Капли
+         * выпускаются с того места, где каретка СЕЙЧАС, и летят сами — след
+         * по кольцу получается сам и совпадает с брызгами при любой скорости.
+         */
+        const cordAcc = (this.cordAcc.get(n.id) ?? 0) + ORBIT_CORD_PER_SEC * jets * level * dt;
+        const cordCount = Math.floor(cordAcc);
+        this.cordAcc.set(n.id, cordAcc - cordCount);
+        const cordLife = this.coreSpanSec(n, phys, v0, spray);
+        const cordDrop = Math.max(0.01, n.widthM * 0.9);
+        for (let i = 0; i < cordCount && this.alive < MAX_PARTICLES; i++) {
+          const jet = i % jets;
+          const subDt = (i / Math.max(1, cordCount)) * dt;
+          const at = this.orbitNozzleAgo(n, heading, jet, subDt);
+          this.spawn(n, phys, spreadDeg * 0.08, at.headingDeg, v0, color, cordDrop, subDt, 0, cordLife, undefined, at.origin, 0);
+        }
+      }
 
       if (valveMoved && cut) {
         // Клапан закрылся. Раньше труба здесь рассыпалась в облако капель, и
@@ -3268,7 +3370,9 @@ export class FountainScene {
         );
         // Оторвавшийся столб живёт своей жизнью, отдельно от трубы новой струи,
         // и НЕ затирает предыдущие: в воздухе их одновременно несколько.
-        if (st.coreAgeTop > 0.015) {
+        // Моторной оторвавшийся столб не нужен: шнур — это капли, и после
+        // закрытия клапана они долетают сами.
+        if (st.coreAgeTop > 0.015 && n.kind !== 'orbit') {
           const slugOff = this.orbitOffset(n);
           this.slugs.push({
             nozzleId: n.id,
@@ -3305,6 +3409,13 @@ export class FountainScene {
       // Клапан закрыт — новой воды нет, трубу не рисуем: то, что уже
       // вылетело, показывает updateSlugs.
       for (let j = 0; j < Math.max(1, n.jetCount ?? 1); j++) {
+        // У моторной трубы нет вовсе — её заменяет шнур из капель (см.
+        // ORBIT_CORD_PER_SEC): прячем трубу, если осталась с другого типа.
+        if (n.kind === 'orbit') {
+          const core = this.jetCores.get(`${n.id}#${j}`);
+          if (core) core.visible = false;
+          continue;
+        }
         this.updateJetCore(
           n,
           phys,
@@ -3412,7 +3523,15 @@ export class FountainScene {
       if (d <= 0) this.pz[i]! += 0.5 * G * this.gscale[i]! * dt * dt;
       const age = (this.age[i]! += dt);
       const max = this.maxAge[i]!;
-      if (this.pz[i]! < 0 || (max > 0 && age >= max)) {
+      // Капля, упавшая до зеркала воды своей чаши, в нём и пропадает: под
+      // водой брызг нет. Раньше капли гасли только у земли (z < 0) и
+      // последние сантиметры пролетали «сквозь» воду.
+      const falling = this.vz[i]! < 0;
+      if (
+        this.pz[i]! < 0 ||
+        (falling && this.pz[i]! < this.surfaceZAt(this.px[i]!, this.py[i]!)) ||
+        (max > 0 && age >= max)
+      ) {
         this.kill(i);
       } else {
         i++;
@@ -3435,12 +3554,38 @@ export class FountainScene {
       // ноль, и облако тает по краям, а не обрывается ровной кромкой.
       const max = this.maxAge[j]!;
       const fade = max > 0 ? Math.min(1, (1 - this.age[j]! / max) / 0.35) : 1;
-      siz[j] = this.psize[j]! * fade;
+      // Сопло бывает утоплено — торчит только срез. Вода под зеркалом не видна:
+      // капля появляется, когда выходит из воды.
+      const under = this.pz[j]! < this.surfaceZAt(this.px[j]!, this.py[j]!);
+      siz[j] = under ? 0 : this.psize[j]! * fade;
     }
     this.posAttr.needsUpdate = true;
     this.colAttr.needsUpdate = true;
     this.sizeAttr.needsUpdate = true;
     this.particles.geometry.setDrawRange(0, this.alive);
+  }
+
+  /** Обрезать тело струи по зеркалу воды под соплом. */
+  private clipJetAtWater(mesh: THREE.Mesh, x: number, y: number): void {
+    const plane = (mesh.material as THREE.MeshBasicMaterial).clippingPlanes?.[0];
+    if (plane) plane.constant = -this.surfaceZAt(x, y);
+  }
+
+  /**
+   * Отметка зеркала воды под точкой плана: самое высокое зеркало из чаш, над
+   * которыми точка стоит (у многоярусного фонтана верхняя чаша лежит над
+   * нижней). Вне чаш — земля, 0.
+   */
+  private surfaceZAt(x: number, y: number): number {
+    let z = 0;
+    for (const w of this.waterSurfaces) {
+      if (w.z <= z) continue;
+      const dx = x - w.x;
+      const dy = y - w.y;
+      const inside = w.circle ? dx * dx + dy * dy <= w.r * w.r : Math.abs(dx) <= w.hw && Math.abs(dy) <= w.hl;
+      if (inside) z = w.z;
+    }
+    return z;
   }
 
   private nozzleColor(n: Nozzle, foam: boolean, haze = false): [number, number, number] {
@@ -3639,6 +3784,9 @@ function makeJetMaterial(): THREE.MeshBasicMaterial {
     transparent: true,
     opacity: 0.55,
     depthWrite: false,
+    // Всё, что ниже зеркала воды, не рисуем: утопленное сопло не должно
+    // «просвечивать» струёй сквозь воду. Отметку ставит кадр (см. clipJetAtWater).
+    clippingPlanes: [new THREE.Plane(new THREE.Vector3(0, 0, 1), 0)],
     // Струя — тонкостенное тело, видное с обеих сторон: без DoubleSide при
     // взгляде «изнутри» (снизу, из-под наклона) она пропадала.
     side: THREE.DoubleSide,
