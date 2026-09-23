@@ -41,7 +41,7 @@ export function eqBandLabel(hz: number): string {
 }
 
 export interface AudioLevel {
-  /** −12…+12 дБ, шаг 0,5. 0 — как в файле. */
+  /** −12…+12 дБ, шаг 0,1. 0 — как в файле. */
   volumeDb: number;
   /** Звук выключен совсем — как «Volume is OFF» в FontanPlay. */
   muted: boolean;
@@ -79,10 +79,15 @@ export const EQ_PRESETS: EqPreset[] = [
 /** Не пресет, а своё — так подписываем, когда полосы накручены руками. */
 export const EQ_CUSTOM_ID = 'custom';
 
+/**
+ * Шаг 0,1 дБ — и у громкости, и у полос эквалайзера (заказчик 24.09.2026:
+ * 0,5 дБ грубо для подстройки под колонки). Мельче десятой ухо не различит,
+ * а длинные дроби в настройках и в фильтре ffmpeg ни к чему.
+ */
 function clampDb(raw: unknown, lo: number, hi: number): number {
   const v = Number(raw);
   if (!Number.isFinite(v)) return 0;
-  return Math.max(lo, Math.min(hi, Math.round(v * 2) / 2));
+  return Math.max(lo, Math.min(hi, Math.round(v * 10) / 10));
 }
 
 /**
@@ -132,7 +137,7 @@ export function clampToneDb(raw: unknown): number {
 
 /** «+3 дБ», «−6 дБ», «0 дБ» — со знаком: важно, подъём это или срез. */
 export function toneDbLabel(db: number): string {
-  const v = Math.round(Number(db) * 2) / 2;
+  const v = Math.round(Number(db) * 10) / 10;
   if (!Number.isFinite(v) || v === 0) return '0 дБ';
   const txt = Math.abs(v).toLocaleString('ru-RU', { maximumFractionDigits: 1 });
   return v > 0 ? `+${txt} дБ` : `−${txt} дБ`;

@@ -56,7 +56,10 @@ check('поднять можно: +6 дБ остаётся +6', clampVolumeDb(6)
 check('выше +12 дБ не поднимаем', clampVolumeDb(30) === 12, String(clampVolumeDb(30)));
 check('ниже −12 дБ не опускаем — дальше только «выключен»', clampVolumeDb(-90) === -12, String(clampVolumeDb(-90)));
 check('подпись подъёма со знаком «+3 дБ»', volumeDbLabel({ volumeDb: 3, muted: false }) === '+3 дБ', volumeDbLabel({ volumeDb: 3, muted: false }));
-check('шаг 0,5 дБ', clampVolumeDb(-6.3) === -6.5, String(clampVolumeDb(-6.3)));
+check('шаг 0,1 дБ: −6,3 остаётся −6,3', clampVolumeDb(-6.3) === -6.3, String(clampVolumeDb(-6.3)));
+check('мельче десятой округляется: −6,34 → −6,3', clampVolumeDb(-6.34) === -6.3, String(clampVolumeDb(-6.34)));
+check('подпись десятых — с запятой «+2,7 дБ»', volumeDbLabel({ volumeDb: 2.7, muted: false }) === '+2,7 дБ', volumeDbLabel({ volumeDb: 2.7, muted: false }));
+check('полоса эквалайзера — тоже шаг 0,1: 3,26 → 3,3', clampEq([3.26, -0.04], 0, 0)[0] === 3.3 && clampEq([3.26, -0.04], 0, 0)[1] === 0, JSON.stringify(clampEq([3.26, -0.04], 0, 0).slice(0, 2)));
 check('мусор вместо числа → 0 дБ', clampVolumeDb(Number.NaN) === 0);
 check('подпись «−6 дБ»', volumeDbLabel({ volumeDb: -6, muted: false }) === '−6 дБ', volumeDbLabel({ volumeDb: -6, muted: false }));
 check('подпись дробная — с запятой', volumeDbLabel({ volumeDb: -2.5, muted: false }) === '−2,5 дБ', volumeDbLabel({ volumeDb: -2.5, muted: false }));

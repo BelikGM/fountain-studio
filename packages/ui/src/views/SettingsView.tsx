@@ -1406,7 +1406,7 @@ function AudioPanel({ engine }: { engine: EngineConnection }) {
             type="range"
             min={VOLUME_DB_MIN}
             max={VOLUME_DB_MAX}
-            step={0.5}
+            step={0.1}
             value={volumeDb}
             disabled={muted}
             onChange={(e) => setLocalVol(Number(e.target.value))}
@@ -1457,7 +1457,7 @@ function AudioPanel({ engine }: { engine: EngineConnection }) {
               type="range"
               min={EQ_DB_MIN}
               max={EQ_DB_MAX}
-              step={0.5}
+              step={0.1}
               value={eq[i] ?? 0}
               disabled={muted}
               onChange={(e) => {
