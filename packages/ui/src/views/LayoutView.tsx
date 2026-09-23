@@ -674,7 +674,11 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
           В 3D она нужна не меньше: здесь видно результат, и бегать на другую
           вкладку ради «поднять все насосы» незачем.
         */}
-        <QuickAll project={project} send={send} where="layout" />
+        <section className="panel">
+          <h2>Проверка приборов</h2>
+          <p className="dim">Команды прямо приборам на линии. На свойства чаш и форсунок не влияют.</p>
+          <QuickAll project={project} send={send} where="layout" />
+        </section>
       </aside>
       </main>
     </>
@@ -2661,6 +2665,122 @@ function LightProps({
   );
 }
 
+/**
+ * Облицовка борта: частые цвета камня и бетона, свой цвет и картинка из файла.
+ *
+ * Картинку уменьшаем здесь же, до 512 px по большей стороне и в JPEG: для
+ * плитки на борту больше не нужно, а проект ходит по сети целиком на каждую
+ * правку — фото с телефона на 5 МБ сделало бы из каждого щелчка мышью
+ * пятимегабайтную пересылку.
+ */
+const RIM_PRESETS: { name: string; hex: string }[] = [
+  { name: 'Серый бетон', hex: '#6b6f75' },
+  { name: 'Светлый камень', hex: '#b9b2a4' },
+  { name: 'Песчаник', hex: '#c2a27a' },
+  { name: 'Красный гранит', hex: '#8a4b3f' },
+  { name: 'Тёмный гранит', hex: '#3b3d42' },
+  { name: 'Белый мрамор', hex: '#e4e2dc' },
+];
+const RIM_TEXTURE_MAX_PX = 512;
+
+async function imageFileToDataUrl(file: File): Promise<string> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('не картинка или файл повреждён'));
+      el.src = url;
+    });
+    const k = Math.min(1, RIM_TEXTURE_MAX_PX / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * k));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * k));
+    canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.85);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function RimFinish({ bowl, patch }: { bowl: Bowl; patch: (p: Partial<Bowl>) => void }) {
+  const [error, setError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const color = bowl.rimColor ?? '#6b6f75';
+  return (
+    <>
+      <div className="field">
+        <FieldName label="Облицовка борта" hint={H.bowlRimColor} />
+        <div className="color-presets">
+          {RIM_PRESETS.map((p) => (
+            <button
+              key={p.hex}
+              type="button"
+              className={!bowl.rimTexture && color.toLowerCase() === p.hex ? 'color-swatch active' : 'color-swatch'}
+              style={{ background: p.hex }}
+              data-hint={p.name}
+              onClick={() => patch({ rimColor: p.hex, rimTexture: null })}
+            />
+          ))}
+          <label
+            className="color-swatch color-swatch-custom"
+            style={bowl.rimTexture ? undefined : { background: color }}
+            data-hint="Свой цвет — нажмите, чтобы выбрать"
+          >
+            <input type="color" value={color} onChange={(e) => patch({ rimColor: e.target.value, rimTexture: null })} />
+          </label>
+          {/* Картинка — маленькой кнопкой рядом со своим цветом. */}
+          <button
+            type="button"
+            className={bowl.rimTexture ? 'color-swatch color-swatch-file active' : 'color-swatch color-swatch-file'}
+            style={bowl.rimTexture ? { backgroundImage: `url(${bowl.rimTexture})`, backgroundSize: 'cover' } : undefined}
+            data-hint="Картинка облицовки из файла (фото камня, плитки) — повторяется по борту плитками"
+            onClick={() => fileRef.current?.click()}
+          >
+            {bowl.rimTexture ? '' : '🖼'}
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              if (!file) return;
+              setError(null);
+              imageFileToDataUrl(file)
+                .then((dataUrl) => patch({ rimTexture: dataUrl }))
+                .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+            }}
+          />
+        </div>
+      </div>
+      {error && <p className="error-text">✖ Картинка не загрузилась: {error}</p>}
+      {/* Пара «подпись + поле» и строка на всю ширину — так, как ждёт сетка
+          панели свойств: обёртка-строка ломала её, и поля сжимались в ноль. */}
+      {bowl.rimTexture && (
+        <>
+          <NumField
+            label="Размер плитки, м"
+            hint={H.bowlTile}
+            value={bowl.rimTileM ?? 0.5}
+            step={0.05}
+            min={0.05}
+            max={20}
+            onChange={(v) => patch({ rimTileM: Math.min(20, Math.max(0.05, v)) })}
+          />
+          <p>
+            <button className="btn btn-small" onClick={() => patch({ rimTexture: null })}>
+              Убрать картинку
+            </button>
+          </p>
+        </>
+      )}
+    </>
+  );
+}
+
 function BowlProps({
   bowl,
   layout,
@@ -2677,6 +2797,10 @@ function BowlProps({
   if (!bowl) return null;
   const patch = (p: Partial<Bowl>): void =>
     setLayout({ ...layout, bowls: layout.bowls.map((b) => (b.id === bowl.id ? { ...b, ...p } : b)) });
+  /** Толщина борта не больше половины меньшего размера: иначе внутри не остаётся места. */
+  const maxWall = Math.max(0.01, (bowl.shape === 'circle' ? bowl.radius : Math.min(bowl.width, bowl.length) / 2) - 0.05);
+  /** Плёнка перелива не спускается ниже земли. */
+  const wallTop = Math.max(0.02, (bowl.elevationM ?? 0) + bowl.height);
   return (
     <section className="panel">
       <h2>Чаша</h2>
@@ -2694,38 +2818,36 @@ function BowlProps({
         </label>
         <NumField label="X, м" hint={H.x('bowl')} value={bowl.x} onChange={(x) => patch({ x })} />
         <NumField label="Y, м" hint={H.y('bowl')} value={bowl.y} onChange={(y) => patch({ y })} />
+        {/* Z — отметка дна. Раньше поле называлось «Отметка дна» и стояло
+            ниже, и его не узнавали: у форсунок и прожекторов высота — это Z. */}
+        <NumField label="Z (дно), м" hint={H.bowlElevation} value={bowl.elevationM ?? 0} step={0.1} onChange={(v) => patch({ elevationM: v })} />
         {bowl.shape === 'circle' ? (
-          <NumField label="Радиус, м" hint={H.bowlRadius} value={bowl.radius} step={0.5} onChange={(v) => patch({ radius: Math.max(0.1, v) })} />
+          <NumField label="Радиус, м" hint={H.bowlRadius} value={bowl.radius} step={0.5} min={0.1} onChange={(v) => patch({ radius: Math.max(0.1, v) })} />
         ) : (
           <>
-            <NumField label="Ширина (X), м" hint={H.bowlWidth} value={bowl.width} step={0.5} onChange={(v) => patch({ width: Math.max(0.1, v) })} />
-            <NumField label="Длина (Y), м" hint={H.bowlLength} value={bowl.length} step={0.5} onChange={(v) => patch({ length: Math.max(0.1, v) })} />
+            <NumField label="Ширина (X), м" hint={H.bowlWidth} value={bowl.width} step={0.5} min={0.1} onChange={(v) => patch({ width: Math.max(0.1, v) })} />
+            <NumField label="Длина (Y), м" hint={H.bowlLength} value={bowl.length} step={0.5} min={0.1} onChange={(v) => patch({ length: Math.max(0.1, v) })} />
+            <NumField
+              label="Скругление углов, м"
+              hint={H.bowlCorner}
+              value={bowl.cornerRadiusM ?? 0}
+              step={0.1}
+              min={0}
+              onChange={(v) => patch({ cornerRadiusM: Math.max(0, v) })}
+            />
           </>
         )}
-        <NumField label="Борт, м" hint={H.bowlRim} value={bowl.height} step={0.1} onChange={(v) => patch({ height: Math.max(0, v) })} />
+        <NumField label="Высота борта, м" hint={H.bowlRim} value={bowl.height} step={0.1} min={0} onChange={(v) => patch({ height: Math.max(0, v) })} />
         <NumField
-          label="Отметка дна, м"
-          hint={H.bowlElevation}
-          value={bowl.elevationM ?? 0}
-          step={0.1}
-          onChange={(v) => patch({ elevationM: v })}
-        />
-        <NumField
-          label="Глубина воды, м"
-          hint={H.bowlDepth}
-          value={bowl.waterDepthM ?? 0.25}
+          label="Толщина борта, м"
+          hint={H.bowlWall}
+          value={bowl.wallThicknessM ?? 0.15}
           step={0.05}
-          onChange={(v) => patch({ waterDepthM: Math.max(0, v) })}
+          min={0.01}
+          max={maxWall}
+          onChange={(v) => patch({ wallThicknessM: Math.min(maxWall, Math.max(0.01, v)) })}
         />
-        {bowl.shape === 'rect' && (
-          <NumField
-            label="Скругление углов, м"
-            hint={H.bowlCorner}
-            value={bowl.cornerRadiusM ?? 0}
-            step={0.1}
-            onChange={(v) => patch({ cornerRadiusM: Math.max(0, v) })}
-          />
-        )}
+        <RimFinish bowl={bowl} patch={patch} />
         <ModelSelect
           slot="bowl"
           file={bowl.modelFile}
@@ -2742,6 +2864,21 @@ function BowlProps({
           <input type="checkbox" checked={bowl.showWater !== false} onChange={(e) => patch({ showWater: e.target.checked })} />{' '}
           <span className="field-name has-hint" data-hint={H.showWater}>Зеркало воды</span>
         </label>
+        {/* Уровень — только когда вода показана: без зеркала он ни на что не влияет. */}
+        {bowl.showWater !== false &&
+          (bowl.spillover ? (
+            <p className="dim">Уровень воды — вровень с бортом: чаша переливается.</p>
+          ) : (
+            <NumField
+              label="Уровень воды от дна, м"
+              hint={H.bowlDepth}
+              value={bowl.waterDepthM ?? 0.25}
+              step={0.05}
+              min={0}
+              max={bowl.height}
+              onChange={(v) => patch({ waterDepthM: Math.min(bowl.height, Math.max(0, v)) })}
+            />
+          ))}
         <label className="field">
           <input type="checkbox" checked={bowl.showFloor !== false} onChange={(e) => patch({ showFloor: e.target.checked })} />{' '}
           <span className="field-name has-hint" data-hint={H.showFloor}>Дно</span>
@@ -2752,13 +2889,26 @@ function BowlProps({
           <span className="field-name has-hint" data-hint={H.spillover}>Перелив через борт</span>
         </label>
         {bowl.spillover && (
-          <NumField
-            label="Высота плёнки, м"
-            hint={H.spillDrop}
-            value={bowl.spilloverDropM ?? 0.6}
-            step={0.1}
-            onChange={(v) => patch({ spilloverDropM: Math.max(0.02, v) })}
-          />
+          <>
+            <NumField
+              label="Плёнка стекает на, м"
+              hint={H.spillDrop}
+              value={Math.min(bowl.spilloverDropM ?? 0.6, wallTop)}
+              step={0.1}
+              min={0.02}
+              max={wallTop}
+              onChange={(v) => patch({ spilloverDropM: Math.min(wallTop, Math.max(0.02, v)) })}
+            />
+            <NumField
+              label="Бугорок над кромкой, м"
+              hint={H.spillBulge}
+              value={bowl.spilloverBulgeM ?? 0.03}
+              step={0.01}
+              min={0}
+              max={0.3}
+              onChange={(v) => patch({ spilloverBulgeM: Math.min(0.3, Math.max(0, v)) })}
+            />
+          </>
         )}
       </div>
       <div className="sidebar-actions">

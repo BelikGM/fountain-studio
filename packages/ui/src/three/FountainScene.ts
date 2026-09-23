@@ -22,6 +22,7 @@ import {
   nozzleLightIds,
   speedDropFactor,
   windGripPerSec,
+  type Bowl,
   type FountainLayout,
   type Nozzle,
   type NozzleKind,
@@ -625,7 +626,9 @@ export class FountainScene {
    * Зеркала воды чаш — где гасить капли и обрезать струю. Круг (r) или
    * прямоугольник (hw, hl — половины сторон), z — отметка зеркала.
    */
-  private waterSurfaces: { x: number; y: number; circle: boolean; r: number; hw: number; hl: number; z: number }[] = [];
+  private waterSurfaces: { id: string; x: number; y: number; circle: boolean; r: number; hw: number; hl: number; z: number }[] = [];
+  /** Вода и перелив, налитые в свою модель чаши (см. fitBowlWaterToModel), — по id чаши. */
+  private modelWater = new Map<string, { parts: THREE.Object3D[]; surfaces: { id: string; x: number; y: number; circle: boolean; r: number; hw: number; hl: number; z: number }[] }>();
   private rotPhase = new Map<string, number>();
   /**
    * Номер сборки сцены. Модели грузятся асинхронно, а схема за это время может
@@ -934,14 +937,16 @@ export class FountainScene {
     this.waterSurfaces = layout.bowls
       .filter((b) => b.showWater !== false && !this.hidden.has('bowl:' + b.id))
       .map((b) => ({
+        id: b.id,
         x: b.x,
         y: b.y,
         circle: b.shape === 'circle',
         r: b.radius,
         hw: b.width / 2,
         hl: b.length / 2,
-        z: (b.elevationM ?? 0) + Math.min(b.height, b.waterDepthM ?? 0.25),
-      }));
+        z: bowlWaterZ(b),
+      }))
+      .flatMap((w) => this.modelWater.get(w.id)?.surfaces ?? [w]);
     this.nozzleIndex = new Map(layout.nozzles.map((n, k) => [n.id, k]));
     this.bodiesAtSec = -10;
     // Ядра струй живут вне staticGroup (их геометрия зависит от напора, а не от
@@ -979,10 +984,25 @@ export class FountainScene {
     this.lightBeams.clear();
 
     for (const b of layout.bowls) {
-      // Чаша собирается из трёх независимых частей — борт, зеркало воды и дно.
-      // Каждую можно отключить: так собираются многоуровневые фонтаны (нижняя
-      // чаша без дна там, где её накрывает верхняя), разрезы и сухие площадки.
-      const wall = new THREE.MeshStandardMaterial({ color: 0x39424f, roughness: 0.8, side: THREE.DoubleSide });
+      /*
+       * Чаша: борт, дно, зеркало воды и перелив — каждую часть можно
+       * отключить (многоярусные фонтаны, разрезы, сухие площадки).
+       *
+       * Борт ТОЛСТЫЙ (wallThicknessM) и растёт ВНУТРЬ: радиус и размеры меряют
+       * по крайним точкам, значит снаружи чаша от толщины не меняется, а дно и
+       * зеркало становятся меньше. Раньше борт был стенкой нулевой толщины.
+       */
+      const rimMat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(b.rimColor ?? '#6b6f75'),
+        roughness: 0.85,
+        side: THREE.DoubleSide,
+      });
+      const rimTex = this.rimTexture(b.rimTexture ?? null, b.rimTileM ?? 0.5);
+      if (rimTex) {
+        // Картинка облицовки — своими цветами, без подкраски цветом борта.
+        rimMat.map = rimTex;
+        rimMat.color.set(0xffffff);
+      }
       const water = new THREE.MeshStandardMaterial({
         color: 0x1d3a4d,
         roughness: 0.25,
@@ -996,70 +1016,91 @@ export class FountainScene {
       });
       const floorMat = new THREE.MeshStandardMaterial({ color: 0x232a33, roughness: 0.95, side: THREE.DoubleSide });
       const base = b.elevationM ?? 0;
-      const depth = Math.min(b.height, b.waterDepthM ?? 0.25);
+      const wallTop = base + b.height;
+      const spill = b.spillover === true;
+      const t = Math.max(0.01, b.wallThicknessM ?? 0.15);
+      const outer = bowlOutline(b, 0);
+      const inner = bowlOutline(b, -t);
       const group = new THREE.Group();
       group.userData = { type: 'bowl', id: b.id };
+      /**
+       * Своя 3D-модель заменяет встроенное целиком, а вода и перелив
+       * наливаются уже по форме самой модели (fitBowlWaterToModel): у
+       * готовых моделей свои размеры борта и ярусы, и зеркало по параметрам
+       * чаши с ними не совпадало — торчало из-под модели.
+       */
+      const replacedByModel: THREE.Object3D[] = [];
+      this.modelWater.delete(b.id);
 
-      if (b.shape === 'circle') {
-        if (b.showRim !== false) {
-          const rim = new THREE.Mesh(new THREE.CylinderGeometry(b.radius, b.radius, b.height, 96, 1, true), wall);
-          rim.rotation.x = Math.PI / 2;
-          rim.position.z = base + b.height / 2;
-          group.add(rim);
-        }
-        if (b.showFloor !== false) {
-          const floor = new THREE.Mesh(new THREE.CircleGeometry(b.radius, 96), floorMat);
-          floor.position.z = base + 0.004;
-          group.add(floor);
-        }
-        if (b.showWater !== false) {
-          const surf = new THREE.Mesh(new THREE.CircleGeometry(b.radius * 0.995, 96), water);
-          surf.position.z = base + depth;
-          surf.renderOrder = ORDER_WATER;
-          group.add(surf);
-        }
-        if (b.spillover) {
-          // Перелив: плёнка воды по наружной стенке вниз от борта.
-          const drop = Math.max(0.02, b.spilloverDropM ?? 0.6);
-          const film = new THREE.Mesh(
-            new THREE.CylinderGeometry(b.radius * 1.015, b.radius * 1.03, drop, 96, 1, true),
-            water.clone(),
-          );
-          film.rotation.x = Math.PI / 2;
-          film.position.z = base + b.height - drop / 2;
-          film.renderOrder = ORDER_WATER;
-          group.add(film);
-        }
-      } else {
-        const r = Math.max(0, Math.min(b.cornerRadiusM ?? 0, Math.min(b.width, b.length) / 2 - 0.001));
-        const plate = roundedRectShape(b.width, b.length, r);
-        if (b.showRim !== false) {
-          // Борт прямоугольной чаши — выдавленный контур, поэтому скругление
-          // углов работает и на нём, а не только на зеркале воды.
-          const rimGeo = new THREE.ExtrudeGeometry(plate, { depth: b.height, bevelEnabled: false, steps: 1 });
-          const rim = new THREE.Mesh(rimGeo, wall);
-          rim.position.set(b.x, b.y, base);
-          rim.position.sub(new THREE.Vector3(b.x, b.y, 0));
-          group.add(rim);
-        }
-        if (b.showFloor !== false) {
-          const floor = new THREE.Mesh(new THREE.ShapeGeometry(plate), floorMat);
-          floor.position.z = base + 0.004;
-          group.add(floor);
-        }
-        if (b.showWater !== false) {
-          const surf = new THREE.Mesh(new THREE.ShapeGeometry(plate), water);
-          surf.position.z = base + depth;
-          surf.renderOrder = ORDER_WATER;
-          group.add(surf);
+      if (b.showRim !== false && b.height > 0.001) {
+        const ring = outer.clone();
+        ring.holes = [new THREE.Path(inner.getPoints(48))];
+        const rim = new THREE.Mesh(
+          new THREE.ExtrudeGeometry(ring, {
+            depth: b.height,
+            bevelEnabled: false,
+            steps: 1,
+            curveSegments: 48,
+            ...(b.shape === 'circle' ? { UVGenerator: ARC_UV } : {}),
+          }),
+          rimMat,
+        );
+        rim.position.z = base;
+        group.add(rim);
+        replacedByModel.push(rim);
+      }
+      if (b.showFloor !== false) {
+        const floor = new THREE.Mesh(new THREE.ShapeGeometry(inner, 48), floorMat);
+        floor.position.z = base + 0.004;
+        group.add(floor);
+        replacedByModel.push(floor);
+      }
+      if (b.showWater !== false) {
+        // При переливе вода стоит вровень с кромкой и накрывает её: воде,
+        // которая переливается, неоткуда взяться, если она ниже борта.
+        const surf = new THREE.Mesh(new THREE.ShapeGeometry(spill ? outer : inner, 48), water);
+        surf.position.z = bowlWaterZ(b);
+        surf.renderOrder = ORDER_WATER;
+        group.add(surf);
+        replacedByModel.push(surf);
+      }
+      if (spill) {
+        const filmMat = water.clone();
+        filmMat.opacity = 0.62;
+        // Плёнка — тонкая оболочка ВПЛОТНУЮ к наружной стенке, без зазора, и
+        // не ниже земли: вода стекает по стенке до самого низа.
+        const drop = Math.min(Math.max(0.02, b.spilloverDropM ?? 0.6), Math.max(0.02, wallTop));
+        const shell = bowlOutline(b, SPILL_FILM_M);
+        shell.holes = [new THREE.Path(outer.getPoints(48))];
+        const film = new THREE.Mesh(
+          new THREE.ExtrudeGeometry(shell, { depth: drop, bevelEnabled: false, steps: 1, curveSegments: 48 }),
+          filmMat,
+        );
+        film.position.z = wallTop - drop;
+        film.renderOrder = ORDER_WATER;
+        group.add(film);
+        replacedByModel.push(film);
+        // Бугорок: переваливая через кромку, вода вспухает и пенится.
+        const bulge = Math.max(0, b.spilloverBulgeM ?? 0.03);
+        if (bulge > 0.002) {
+          // Точки РАВНОМЕРНО по контуру: у прямоугольника без скругления
+          // getPoints даёт одни углы, и сплайн через них выстреливал петлями.
+          const pts = outer.getSpacedPoints(200).slice(0, -1).map((p) => new THREE.Vector3(p.x, p.y, wallTop));
+          const curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal');
+          const lipMat = water.clone();
+          lipMat.color.set(0x3f6478);
+          lipMat.opacity = 0.7;
+          const lip = new THREE.Mesh(new THREE.TubeGeometry(curve, Math.max(64, pts.length * 2), bulge, 8, true), lipMat);
+          lip.renderOrder = ORDER_WATER;
+          group.add(lip);
+          replacedByModel.push(lip);
         }
       }
       group.position.set(b.x, b.y, 0);
       this.highlightMats.set('bowl:' + b.id, [
-        { mat: wall, color: 0x39424f },
+        { mat: rimMat, color: rimMat.color.getHex() },
         { mat: floorMat, color: 0x232a33 },
       ]);
-      const builtInParts = [...group.children];
       for (const child of group.children) child.userData = group.userData;
       this.staticGroup.add(group);
       this.attachModel(
@@ -1067,9 +1108,10 @@ export class FountainScene {
         b.modelScale,
         b.shape === 'circle' ? b.radius * 2 : Math.max(b.width, b.length),
         group,
-        builtInParts,
+        replacedByModel,
         group.userData as Record<string, unknown>,
         'bowl:' + b.id,
+        (obj) => this.fitBowlWaterToModel(b, group, obj, water),
       );
     }
     for (const n of layout.nozzles) {
@@ -1272,14 +1314,16 @@ export class FountainScene {
     this.waterSurfaces = this.layout.bowls
       .filter((b) => b.showWater !== false && !this.hidden.has('bowl:' + b.id))
       .map((b) => ({
+        id: b.id,
         x: b.x,
         y: b.y,
         circle: b.shape === 'circle',
         r: b.radius,
         hw: b.width / 2,
         hl: b.length / 2,
-        z: (b.elevationM ?? 0) + Math.min(b.height, b.waterDepthM ?? 0.25),
-      }));
+        z: bowlWaterZ(b),
+      }))
+      .flatMap((w) => this.modelWater.get(w.id)?.surfaces ?? [w]);
     this.applyHidden();
   }
 
@@ -1598,6 +1642,8 @@ export class FountainScene {
     userData: Record<string, unknown>,
     /** Ключ «тип:id» — по нему модель встаёт на место встроенной в подсветке. */
     highlightKey: string,
+    /** Модель встала на место — например, чтобы налить в неё воду по её форме. */
+    onLoaded?: (obj: THREE.Object3D) => void,
   ): void {
     if (!file) return;
     const token = this.modelToken;
@@ -1618,6 +1664,7 @@ export class FountainScene {
           }
         });
         holder.add(obj);
+        onLoaded?.(obj);
         // Встроенные детали спрятаны — подсвечивать надо модель.
         if (parts.length > 0) this.highlightMats.set(highlightKey, parts);
         this.applySelection();
@@ -3616,6 +3663,211 @@ export class FountainScene {
     this.particles.geometry.setDrawRange(0, this.alive);
   }
 
+  /**
+   * Картинки облицовки борта, по одной на (картинка, размер плитки). Схема
+   * пересобирается на каждую правку объекта — грузить картинку каждый раз
+   * заново значило бы мигать бортом.
+   */
+  private rimTextures = new Map<string, THREE.Texture>();
+  private rimTexture(url: string | null, tileM: number): THREE.Texture | null {
+    if (!url) return null;
+    const key = tileM.toFixed(3) + '|' + url;
+    let tex = this.rimTextures.get(key);
+    if (!tex) {
+      tex = new THREE.TextureLoader().load(url);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.colorSpace = THREE.SRGBColorSpace;
+      // Развёртка борта — в метрах (так строит её ExtrudeGeometry), поэтому
+      // одна плитка на tileM метров.
+      tex.repeat.set(1 / Math.max(0.05, tileM), 1 / Math.max(0.05, tileM));
+      this.rimTextures.set(key, tex);
+    }
+    return tex;
+  }
+
+  /**
+   * Налить воду в СВОЮ модель чаши по её настоящей форме.
+   *
+   * Сверху вниз пускаем лучи вдоль радиусов (у прямоугольной — вдоль осей) и
+   * получаем профиль высоты верха модели. Кромки — это горбы профиля, чаши —
+   * впадины между ними: у двухъярусной их две, верхняя и нижняя. В каждую
+   * впадину наливаем зеркало; при переливе вода стоит вровень с кромкой и
+   * стекает плёнкой по наружной стенке — у двухъярусной из верхней чаши в
+   * нижнюю, из нижней на землю.
+   */
+  private fitBowlWaterToModel(b: Bowl, group: THREE.Group, model: THREE.Object3D, water: THREE.MeshStandardMaterial): void {
+    const old = this.modelWater.get(b.id);
+    for (const o of old?.parts ?? []) group.remove(o);
+    const spill = b.spillover === true;
+    const wantWater = b.showWater !== false;
+    if (!wantWater && !spill) {
+      this.modelWater.set(b.id, { parts: [], surfaces: [] });
+      this.setHidden(this.hidden);
+      return;
+    }
+    group.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(model);
+    const c = box.getCenter(new THREE.Vector3());
+    const ground = box.min.z;
+    const ray = new THREE.Raycaster();
+    const down = new THREE.Vector3(0, 0, -1);
+    const hAt = (x: number, y: number): number => {
+      ray.set(new THREE.Vector3(x, y, box.max.z + 1), down);
+      const hit = ray.intersectObject(model, true)[0];
+      return hit ? hit.point.z : ground;
+    };
+    const N = 180;
+    /** Профиль высоты вдоль направлений (медиана по ним — мелкий декор не сбивает). */
+    const profile = (dirs: [number, number][], len: number): { r: number[]; h: number[] } => {
+      const r: number[] = [];
+      const h: number[] = [];
+      for (let i = 0; i < N; i++) {
+        const rr = (len * i) / (N - 1);
+        const hs = dirs.map(([dx, dy]) => hAt(c.x + dx * rr, c.y + dy * rr)).sort((p, q) => p - q);
+        r.push(rr);
+        h.push(hs[Math.floor(hs.length / 2)]!);
+      }
+      return { r, h };
+    };
+    type Basin = { rIn: number; rOut: number; floor: number; crest: number; wallR: number; fallTo: number };
+    const basinsOf = ({ r, h }: { r: number[]; h: number[] }): Basin[] => {
+      const H = Math.max(...h) - ground;
+      // Кромки — горбы профиля, заметные на фоне соседей.
+      const crests: number[] = [];
+      for (let i = 1; i < N - 1; i++) {
+        let top = true;
+        for (let k = Math.max(0, i - 4); k <= Math.min(N - 1, i + 4); k++) if (h[k]! > h[i]!) top = false;
+        if (!top) continue;
+        let low = Infinity;
+        for (let k = Math.max(0, i - 20); k < i; k++) low = Math.min(low, h[k]!);
+        if (h[i]! - low < Math.max(0.01, H * 0.04)) continue;
+        if (crests.length > 0 && i - crests[crests.length - 1]! <= 4) continue;
+        crests.push(i);
+      }
+      const out: Basin[] = [];
+      let prev = -1;
+      for (const k of crests) {
+        const level = prev < 0 ? h[k]! : Math.min(h[prev]!, h[k]!);
+        let first = -1;
+        let last = -1;
+        let floor = Infinity;
+        for (let j = prev + 1; j < k; j++) {
+          if (h[j]! < level - 0.005) {
+            if (first < 0) first = j;
+            last = j;
+            floor = Math.min(floor, h[j]!);
+          }
+        }
+        if (first >= 0 && level - floor > 0.02) {
+          // Где вода стекает за кромку: первая точка снаружи, где верх заметно ниже.
+          let m = k + 1;
+          while (m < N && h[m]! > h[k]! - Math.max(0.03, H * 0.05)) m++;
+          out.push({
+            rIn: first === 0 ? 0 : r[first]!,
+            rOut: r[Math.min(k, last + 1)]!,
+            floor,
+            crest: h[k]!,
+            wallR: r[Math.min(N - 1, m - 1)]!,
+            fallTo: m < N ? h[m]! : ground,
+          });
+        }
+        prev = k;
+      }
+      return out;
+    };
+    const lx = c.x - group.position.x;
+    const ly = c.y - group.position.y;
+    const levelOf = (bs: Basin): number =>
+      spill ? bs.crest + 0.004 : Math.min(bs.crest - 0.01, Math.max(bs.floor + 0.01, bs.floor + (b.waterDepthM ?? 0.25)));
+    const parts: THREE.Object3D[] = [];
+    const surfaces: { id: string; x: number; y: number; circle: boolean; r: number; hw: number; hl: number; z: number }[] = [];
+    const add = (m: THREE.Mesh): void => {
+      m.userData = group.userData;
+      m.renderOrder = ORDER_WATER;
+      m.raycast = () => {};
+      group.add(m);
+      parts.push(m);
+    };
+    const filmMat = water.clone();
+    filmMat.opacity = 0.62;
+    const lipMat = water.clone();
+    lipMat.color.set(0x3f6478);
+    lipMat.opacity = 0.7;
+    const bulge = Math.max(0, b.spilloverBulgeM ?? 0.03);
+
+    /*
+     * Форму берём у МОДЕЛИ, а не из настройки чаши: человек выбирает
+     * прямоугольную модель, не переключив «Форму», — и получал круглую воду.
+     * У круглой модели в углах габарита пусто, у прямоугольной там борт.
+     */
+    const hx = (box.max.x - box.min.x) / 2;
+    const hy = (box.max.y - box.min.y) / 2;
+    const cornerH = hAt(c.x + hx * 0.9, c.y + hy * 0.9);
+    const rectLike = cornerH > ground + Math.max(0.01, (box.max.z - ground) * 0.05);
+    if (!rectLike) {
+      const len = Math.max(box.max.x - c.x, box.max.y - c.y) * 1.02;
+      const dirs: [number, number][] = [0, 1, 2, 3, 4, 5, 6, 7].map((k) => [Math.cos((k * Math.PI) / 4), Math.sin((k * Math.PI) / 4)]);
+      const basins = basinsOf(profile(dirs, len));
+      for (const bs of basins) {
+        const z = levelOf(bs);
+        if (wantWater || spill) {
+          const geo = bs.rIn < 0.01 ? new THREE.CircleGeometry(bs.rOut, 96) : new THREE.RingGeometry(bs.rIn, bs.rOut, 96);
+          const surf = new THREE.Mesh(geo, water);
+          surf.position.set(lx, ly, z);
+          add(surf);
+          surfaces.push({ id: b.id, x: c.x, y: c.y, circle: true, r: bs.rOut, hw: 0, hl: 0, z });
+        }
+        if (spill) {
+          const drop = Math.max(0.02, bs.crest - bs.fallTo);
+          const film = new THREE.Mesh(new THREE.CylinderGeometry(bs.wallR + SPILL_FILM_M, bs.wallR + SPILL_FILM_M, drop, 96, 1, true), filmMat);
+          film.rotation.x = Math.PI / 2;
+          film.position.set(lx, ly, bs.crest - drop / 2);
+          add(film);
+          if (bulge > 0.002) {
+            const lip = new THREE.Mesh(new THREE.TorusGeometry(bs.rOut, bulge, 8, 96), lipMat);
+            lip.position.set(lx, ly, bs.crest);
+            add(lip);
+          }
+        }
+      }
+    } else {
+      const lenX = (box.max.x - box.min.x) / 2;
+      const lenY = (box.max.y - box.min.y) / 2;
+      const bx = basinsOf(profile([[1, 0], [-1, 0]], lenX * 1.02));
+      const by = basinsOf(profile([[0, 1], [0, -1]], lenY * 1.02));
+      for (let i = 0; i < Math.min(bx.length, by.length); i++) {
+        const ax = bx[i]!;
+        const ay = by[i]!;
+        const bs = { ...ax, crest: Math.min(ax.crest, ay.crest), floor: Math.min(ax.floor, ay.floor), fallTo: Math.max(ax.fallTo, ay.fallTo) };
+        const z = levelOf(bs);
+        const corner = Math.max(0, Math.min(b.cornerRadiusM ?? 0, Math.min(ax.rOut, ay.rOut) - 0.01));
+        const plate = roundedRectShape(ax.rOut * 2, ay.rOut * 2, corner);
+        const surf = new THREE.Mesh(new THREE.ShapeGeometry(plate, 24), water);
+        surf.position.set(lx, ly, z);
+        add(surf);
+        surfaces.push({ id: b.id, x: c.x, y: c.y, circle: false, r: 0, hw: ax.rOut, hl: ay.rOut, z });
+        if (spill) {
+          const drop = Math.max(0.02, bs.crest - bs.fallTo);
+          const outer = roundedRectShape(ax.wallR * 2, ay.wallR * 2, corner);
+          const shell = roundedRectShape((ax.wallR + SPILL_FILM_M) * 2, (ay.wallR + SPILL_FILM_M) * 2, corner + SPILL_FILM_M);
+          shell.holes = [new THREE.Path(outer.getPoints(24))];
+          const film = new THREE.Mesh(new THREE.ExtrudeGeometry(shell, { depth: drop, bevelEnabled: false, steps: 1 }), filmMat);
+          film.position.set(lx, ly, bs.crest - drop);
+          add(film);
+          if (bulge > 0.002) {
+            const pts = plate.getSpacedPoints(200).slice(0, -1).map((p) => new THREE.Vector3(p.x + lx, p.y + ly, bs.crest));
+            const lip = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true, 'centripetal'), 128, bulge, 8, true), lipMat);
+            add(lip);
+          }
+        }
+      }
+    }
+    this.modelWater.set(b.id, { parts, surfaces });
+    // Зеркала для капель — уже по форме модели.
+    this.setHidden(this.hidden);
+  }
+
   /** Обрезать тело струи по зеркалу воды под соплом. */
   private clipJetAtWater(mesh: THREE.Mesh, x: number, y: number): void {
     const plane = (mesh.material as THREE.MeshBasicMaterial).clippingPlanes?.[0];
@@ -4054,6 +4306,63 @@ function filmSignature(holder: THREE.Object3D): string {
 }
 
 /** Контур прямоугольной чаши со скруглением углов (r = 0 — обычный прямоугольник). */
+/**
+ * Развёртка круглого борта по ДЛИНЕ ДУГИ: u — метры вдоль стенки, v — высота.
+ *
+ * Штатная развёртка ExtrudeGeometry берёт для стенки то X, то Y — смотря,
+ * какая ось ближе к направлению грани. На прямоугольнике это верно, а на
+ * круге на наклонных участках одна из осей почти не меняется, и плитка
+ * вытягивалась в полосы. Верх борта (кольцо) оставляем в плане — там X и Y честные.
+ */
+const ARC_UV = {
+  generateTopUV(_g: THREE.ExtrudeGeometry, v: number[], a: number, b: number, c: number): THREE.Vector2[] {
+    return [a, b, c].map((i) => new THREE.Vector2(v[i * 3]!, v[i * 3 + 1]!));
+  },
+  generateSideWallUV(_g: THREE.ExtrudeGeometry, v: number[], a: number, b: number, c: number, d: number): THREE.Vector2[] {
+    const ids = [a, b, c, d];
+    const ang = ids.map((i) => Math.atan2(v[i * 3 + 1]!, v[i * 3]!));
+    // Грань на стыке −π/π: разворачиваем углы относительно первой точки,
+    // иначе одна грань растянула бы на себя всю плитку по кругу.
+    for (let k = 1; k < 4; k++) {
+      while (ang[k]! - ang[0]! > Math.PI) ang[k]! -= Math.PI * 2;
+      while (ang[k]! - ang[0]! < -Math.PI) ang[k]! += Math.PI * 2;
+    }
+    return ids.map((i, k) => {
+      const r = Math.hypot(v[i * 3]!, v[i * 3 + 1]!);
+      return new THREE.Vector2(ang[k]! * r, v[i * 3 + 2]!);
+    });
+  },
+};
+
+/** Толщина плёнки перелива на наружной стенке, м — вплотную к борту. */
+const SPILL_FILM_M = 0.008;
+
+/**
+ * Контур чаши в плане, сдвинутый на offset (м): минус — внутрь (внутренняя
+ * кромка борта), плюс — наружу (плёнка перелива). Центр — в нуле.
+ */
+function bowlOutline(b: Bowl, offset: number): THREE.Shape {
+  if (b.shape === 'circle') {
+    return new THREE.Shape().absarc(0, 0, Math.max(0.02, b.radius + offset), 0, Math.PI * 2, false);
+  }
+  const r = Math.max(0, Math.min(b.cornerRadiusM ?? 0, Math.min(b.width, b.length) / 2 - 0.001));
+  return roundedRectShape(
+    Math.max(0.04, b.width + 2 * offset),
+    Math.max(0.04, b.length + 2 * offset),
+    Math.max(0, r + offset),
+  );
+}
+
+/**
+ * Отметка зеркала воды. При переливе вода стоит вровень с кромкой борта
+ * (иначе переливаться нечему), без него — на заданной глубине, не выше борта.
+ */
+function bowlWaterZ(b: Bowl): number {
+  const base = b.elevationM ?? 0;
+  if (b.spillover === true) return base + b.height + 0.004;
+  return base + Math.min(b.height, b.waterDepthM ?? 0.25);
+}
+
 function roundedRectShape(width: number, length: number, r: number): THREE.Shape {
   const w = width / 2;
   const l = length / 2;

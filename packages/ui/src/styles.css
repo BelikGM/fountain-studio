@@ -460,7 +460,7 @@ body {
 /* Подпись перед рядом кнопок: не уже 64 px, чтобы ряды выравнивались, и без
    переноса — «Вид приборов:» раньше ломалось на две строки. */
 .quick-row-label {
-  min-width: 64px;
+  min-width: 92px;
   white-space: nowrap;
   flex-shrink: 0;
   color: var(--fg-dim);
@@ -2254,3 +2254,18 @@ input[type='range']:disabled { opacity: 0.4; cursor: default; }
 .list-item > .eye-btn + .list-item-label { flex: 1; }
 .list-item-hidden .list-item-label { opacity: 0.45; }
 .list-head .eye-btn { margin-right: 4px; vertical-align: -2px; }
+
+/* Облицовка борта чаши: выбранный цвет или картинка — в рамке акцента;
+   слот «из файла» — маленькая кнопка с картинкой рядом со своим цветом. */
+.color-swatch.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.color-swatch-file {
+  background: var(--bg-track);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+}
+/* Облицовка борта в сетке свойств: образцы переносятся строкой и прижаты вправо, как поля. */
+.field-grid .color-presets { justify-self: end; flex-wrap: wrap; justify-content: flex-end; }
+/* Общий ползунок «Все насосы» тянется по месту: в узкой панели 3D он не
+   должен распирать строку, на «Отладке» — растягиваться на весь экран. */
+.quick-row input[type='range'] { flex: 1 1 auto; min-width: 60px; max-width: 220px; width: 0; }

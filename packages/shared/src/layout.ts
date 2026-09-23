@@ -19,8 +19,25 @@ export interface Bowl {
   /** Размеры для rect: width по X, length по Y, м. */
   width: number;
   length: number;
-  /** Высота борта над водой, м (только визуализация). */
+  /** Высота борта от дна, м (только визуализация). */
   height: number;
+  /**
+   * Толщина борта, м. Растёт ВНУТРЬ чаши: радиус и размеры меряют по крайним
+   * точкам, поэтому снаружи чаша от толщины не меняется, а зеркало воды и дно
+   * становятся меньше. Раньше борт был стенкой нулевой толщины — «жесть в
+   * миллиметр», которая воду не удержит и выглядит ненастояще.
+   */
+  wallThicknessM: number;
+  /** Цвет борта — камень, бетон, плитка бывают разные. */
+  rimColor: string;
+  /**
+   * Картинка облицовки борта (фото камня, плитки) — data URL уменьшенного
+   * JPEG, не больше 512 px по стороне: столько хватает на плитку, а проект
+   * остаётся лёгким (он ходит по сети целиком при каждой правке). null — просто цвет.
+   */
+  rimTexture: string | null;
+  /** Размер одной плитки картинки на борту, м: картинка повторяется, а не растягивается на всю чашу. */
+  rimTileM: number;
   /**
    * Отметка дна чаши над нулём площадки, м. Ради неё всё и затевалось:
    * многоуровневый фонтан — это несколько чаш на разных отметках, вода из
@@ -40,8 +57,13 @@ export interface Bowl {
    * многоуровневых чаш это основной видимый эффект между ярусами.
    */
   spillover: boolean;
-  /** Высота, на которую плёнка перелива спускается по стенке, м. */
+  /** Высота, на которую плёнка перелива спускается по стенке, м (не ниже земли). */
   spilloverDropM: number;
+  /**
+   * Бугорок перелива над кромкой борта, м: вода, переваливая через край,
+   * вспухает и чуть пенится. 0 — ровная плёнка.
+   */
+  spilloverBulgeM: number;
   /**
    * Своя 3D-модель вместо встроенной: имя файла из packages/ui/public/models.
    * null — рисуем встроенной геометрией. Хранится именно имя файла, а не путь:
@@ -59,6 +81,11 @@ export const BOWL_DEFAULTS = {
   elevationM: 0,
   waterDepthM: 0.25,
   cornerRadiusM: 0,
+  wallThicknessM: 0.15,
+  rimColor: '#6b6f75',
+  rimTexture: null as string | null,
+  rimTileM: 0.5,
+  spilloverBulgeM: 0.03,
   showRim: true,
   showWater: true,
   showFloor: true,
@@ -790,6 +817,11 @@ export function sanitizeLayout(raw: unknown, deviceIds: Set<string>): FountainLa
         width: round3(num(b.width, 10, 0.1, 1000)),
         length: round3(num(b.length, 6, 0.1, 1000)),
         height: round3(num(b.height, 0.3, 0, 5)),
+        wallThicknessM: round3(num(b.wallThicknessM, 0.15, 0.01, 5)),
+        rimColor: typeof b.rimColor === 'string' && /^#[0-9a-f]{6}$/i.test(b.rimColor) ? b.rimColor : '#6b6f75',
+        // Только картинка, вложенная в проект; ссылки на чужие адреса не принимаем.
+        rimTexture: typeof b.rimTexture === 'string' && /^data:image\/(jpeg|png|webp);base64,/.test(b.rimTexture) ? b.rimTexture : null,
+        rimTileM: round3(num(b.rimTileM, 0.5, 0.05, 20)),
         elevationM: round3(num(b.elevationM, 0, -20, 50)),
         waterDepthM: round3(num(b.waterDepthM, 0.25, 0, 5)),
         cornerRadiusM: round3(num(b.cornerRadiusM, 0, 0, 50)),
@@ -797,7 +829,8 @@ export function sanitizeLayout(raw: unknown, deviceIds: Set<string>): FountainLa
         showWater: b.showWater !== false,
         showFloor: b.showFloor !== false,
         spillover: b.spillover === true,
-        spilloverDropM: round3(num(b.spilloverDropM, 0.6, 0, 20)),
+        spilloverDropM: round3(num(b.spilloverDropM, 0.6, 0.02, 20)),
+        spilloverBulgeM: round3(num(b.spilloverBulgeM, 0.03, 0, 0.3)),
         modelFile: modelRef(b.modelFile),
         modelScale: round3(num(b.modelScale, 1, 0.05, 20)),
       });

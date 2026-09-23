@@ -90,12 +90,18 @@ export function QuickAll({
 
   return (
     <div className="quick-controls">
-      <div className="quick-controls-title" data-hint="Одно значение сразу всем приборам этого вида — для пусконаладки">
-        Сразу все приборы одного вида
+      {/* Раньше называлось «Сразу все приборы одного вида», и в 3D под свойствами
+          чаши это читалось как настройка чаши: выбрали свет — чаша не
+          поменялась. Это команды ПРИБОРАМ, и подпись говорит ровно это. */}
+      <div
+        className="quick-controls-title"
+        data-hint="Команда сразу всем приборам: весь свет (прожекторы и подсветка форсунок), все насосы, все клапаны. Для проверки на пусконаладке — на свойства чаш и форсунок не влияет"
+      >
+        Всем приборам сразу
       </div>
 
       <div className="quick-row">
-        <span className="quick-row-label">Свет:</span>
+        <span className="quick-row-label">Весь свет:</span>
         <div className="color-presets">
           {PURE_COLOR_PRESETS.map((p) => (
             <button
@@ -131,7 +137,7 @@ export function QuickAll({
       <hr className="quick-divider" />
 
       <div className="quick-row">
-        <span className="quick-row-label">Насосы:</span>
+        <span className="quick-row-label">Все насосы:</span>
         <input
           type="range"
           min={0}
@@ -149,7 +155,7 @@ export function QuickAll({
       <hr className="quick-divider" />
 
       <div className="quick-row">
-        <span className="quick-row-label">Клапаны:</span>
+        <span className="quick-row-label">Все клапаны:</span>
         <button
           className={valveNextOpen ? 'btn toggle-open' : 'btn toggle-closed'}
           disabled={!hasValves}

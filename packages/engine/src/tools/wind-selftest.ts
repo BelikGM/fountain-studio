@@ -357,6 +357,7 @@ console.log('— Расстояние до борта чаши —');
     width: 10, length: 10, height: 0.3, elevationM: 0, waterDepthM: 0.25, cornerRadiusM: 0,
     showRim: true, showWater: true, showFloor: true, spillover: false, spilloverDropM: 0.6,
     modelFile: null, modelScale: 1,
+    wallThicknessM: 0.15, rimColor: '#6b6f75', rimTexture: null, rimTileM: 0.5, spilloverBulgeM: 0.03,
   };
   const rect: Bowl = { ...round, id: 'b2', shape: 'rect', x: 20, y: 0, width: 8, length: 4 };
 
@@ -382,6 +383,7 @@ console.log('— Форсунка у борта режется сильнее ц
     width: 10, length: 10, height: 0.3, elevationM: 0, waterDepthM: 0.25, cornerRadiusM: 0,
     showRim: true, showWater: true, showFloor: true, spillover: false, spilloverDropM: 0.6,
     modelFile: null, modelScale: 1,
+    wallThicknessM: 0.15, rimColor: '#6b6f75', rimTexture: null, rimTileM: 0.5, spilloverBulgeM: 0.03,
   };
   const base: Nozzle = {
     id: 'n', name: 'Ф', kind: 'straight', x: 0, y: 0, z: 0, tiltDeg: 0, headingDeg: 0,
