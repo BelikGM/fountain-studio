@@ -26,7 +26,9 @@ const TASK_NAME = 'FountainStudioEngine';
  * не требует. Старую задачу планировщика, если её когда-то поставили
  * администратором, по-прежнему узнаём и снимаем.
  */
-const DEV_RUN_NAME = process.env.FOUNTAIN_AUTOSTART_NAME || TASK_NAME;
+// Имя читается в момент вызова, а не при загрузке модуля: смоук-тест движка
+// работает в одном процессе с ним и задаёт тестовое имя уже после импортов.
+const devRunName = (): string => process.env.FOUNTAIN_AUTOSTART_NAME || TASK_NAME;
 /** Команда запуска сторожа из репозитория: свёрнутым окном, чтобы не мешало. */
 function devRunCommand(): string {
   return `cmd /c start "Fountain Studio — движок" /min cmd /c "cd /d \"${REPO_ROOT}\" && npm run engine:watchdog"`;
@@ -41,7 +43,7 @@ function regHas(name: string): boolean {
 }
 function taskHas(): boolean {
   try {
-    execFileSync('schtasks', ['/Query', '/TN', TASK_NAME], { stdio: 'ignore' });
+    execFileSync('schtasks', ['/Query', '/TN', devRunName()], { stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -61,7 +63,7 @@ function taskHas(): boolean {
 const APP_CMD = process.env.FOUNTAIN_APP_CMD ?? '';
 const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 /** Имя записи; переменная — только для проверки, чтобы не трогать настоящую. */
-const RUN_NAME = process.env.FOUNTAIN_AUTOSTART_NAME || 'FountainStudio';
+const runName = (): string => process.env.FOUNTAIN_AUTOSTART_NAME || 'FountainStudio';
 
 /** Установленная программа (а не запуск из исходников). */
 export function isPackagedApp(): boolean {
@@ -127,13 +129,13 @@ export function isAutostartEnabled(): boolean {
   if (!isAutostartSupported()) return false;
   if (packagedApp()) {
     try {
-      execFileSync('reg', ['query', RUN_KEY, '/v', RUN_NAME], { stdio: 'ignore' });
+      execFileSync('reg', ['query', RUN_KEY, '/v', runName()], { stdio: 'ignore' });
       return true;
     } catch {
       return false; // записи нет — reg возвращает ненулевой код
     }
   }
-  return regHas(DEV_RUN_NAME) || taskHas();
+  return regHas(devRunName()) || taskHas();
 }
 
 export function setAutostart(enabled: boolean): { ok: boolean; error?: string } {
@@ -142,8 +144,8 @@ export function setAutostart(enabled: boolean): { ok: boolean; error?: string } 
   }
   if (packagedApp()) {
     try {
-      if (enabled) execFileSync('reg', ['add', RUN_KEY, '/v', RUN_NAME, '/t', 'REG_SZ', '/d', APP_CMD, '/f'], { stdio: 'ignore' });
-      else if (isAutostartEnabled()) execFileSync('reg', ['delete', RUN_KEY, '/v', RUN_NAME, '/f'], { stdio: 'ignore' });
+      if (enabled) execFileSync('reg', ['add', RUN_KEY, '/v', runName(), '/t', 'REG_SZ', '/d', APP_CMD, '/f'], { stdio: 'ignore' });
+      else if (isAutostartEnabled()) execFileSync('reg', ['delete', RUN_KEY, '/v', runName(), '/f'], { stdio: 'ignore' });
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -151,12 +153,12 @@ export function setAutostart(enabled: boolean): { ok: boolean; error?: string } 
   }
   try {
     if (enabled) {
-      execFileSync('reg', ['add', RUN_KEY, '/v', DEV_RUN_NAME, '/t', 'REG_SZ', '/d', devRunCommand(), '/f'], { stdio: 'ignore' });
+      execFileSync('reg', ['add', RUN_KEY, '/v', devRunName(), '/t', 'REG_SZ', '/d', devRunCommand(), '/f'], { stdio: 'ignore' });
     } else {
-      if (regHas(DEV_RUN_NAME)) execFileSync('reg', ['delete', RUN_KEY, '/v', DEV_RUN_NAME, '/f'], { stdio: 'ignore' });
+      if (regHas(devRunName())) execFileSync('reg', ['delete', RUN_KEY, '/v', devRunName(), '/f'], { stdio: 'ignore' });
       // Старая задача планировщика (ставилась администратором) — снимаем тоже;
       // без прав снять не выйдет — тогда честная ошибка ниже.
-      if (taskHas()) execFileSync('schtasks', ['/Delete', '/TN', TASK_NAME, '/F'], { stdio: 'ignore' });
+      if (taskHas()) execFileSync('schtasks', ['/Delete', '/TN', devRunName(), '/F'], { stdio: 'ignore' });
     }
     return { ok: true };
   } catch (err) {

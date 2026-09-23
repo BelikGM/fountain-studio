@@ -119,6 +119,9 @@ import { startServer } from '../server';
 import { createZip, readZip } from '../zip';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Автозапуск проверяем на тестовом имени записи: настоящая запись этой машины
+// (у заказчика автозапуск включён) тест не касается и на результат не влияет.
+process.env.FOUNTAIN_AUTOSTART_NAME = 'FountainStudioSMOKETEST';
 const PORT = 9521;
 const MOCK_NODE_PORT = 16454; // мок-нода Art-Net (не 6454, чтобы не мешать реальным)
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fountain-smoke-'));
@@ -2507,7 +2510,7 @@ async function main(): Promise<void> {
       autostartMsg!.supported === true,
       `autostart: репозиторий определён верно, платформа поддержана (supported=${autostartMsg!.supported})`,
     );
-    check(autostartMsg!.enabled === false, 'autostart: задачи планировщика ещё нет на этой машине');
+    check(autostartMsg!.enabled === false, 'autostart: тестовой записи автозапуска нет — чужая настоящая не мешает');
   }
 
   console.log('— Авто-бэкапы проекта (§27 доработки, УХ п.5) —');
