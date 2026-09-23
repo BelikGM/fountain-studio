@@ -42,7 +42,7 @@ export function NetworkView({ engine }: { engine: EngineConnection }) {
         <section className="panel">
           <h2>Art-Net ноды</h2>
           <p className="dim">
-            Опрос сети выключен: у объекта нет вселенных на Art-Net (интерфейсу FountanPlay он не нужен) —
+            Опрос сети выключен: у проекта нет вселенных на Art-Net (интерфейсу FountanPlay он не нужен) —
             или движок ещё не прислал данные.
           </p>
         </section>
@@ -231,7 +231,7 @@ function DmxStreamPanel({ engine, hasInputCapture }: { engine: EngineConnection;
             className={mode === 'in' ? 'btn active' : 'btn'}
             onClick={() => setMode('in')}
             disabled={!hasInputCapture}
-            data-hint={hasInputCapture ? 'Что приходит на этот компьютер по Art-Net от стороннего пульта или программы' : 'Вход доступен, когда у объекта есть хотя бы одна вселенная на Art-Net'}
+            data-hint={hasInputCapture ? 'Что приходит на этот компьютер по Art-Net от стороннего пульта или программы' : 'Вход доступен, когда у проекта есть хотя бы одна вселенная на Art-Net'}
           >
             Вход
           </button>

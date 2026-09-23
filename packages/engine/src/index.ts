@@ -78,6 +78,7 @@ fs.mkdirSync(idleDir, { recursive: true });
 const idle = projectPaths(idleDir);
 
 const store = new ProjectStore(idle.projectFile);
+store.setAutosave(config.autosave?.enabled !== false, config.autosave?.minutes ?? 5);
 const audio = new AudioStore(idle.audioDir);
 const player = new AudioPlayer(config.audio, idle.audioDir);
 const backups = new BackupStore(idle.projectFile, () => JSON.stringify(store.project, null, 2), config.backup);
@@ -208,7 +209,7 @@ export interface OpenResult {
  */
 function openProject(target: string): OpenResult {
   const dir = path.resolve(resolveProjectDir(target));
-  if (!isProjectDir(dir)) return { ok: false, error: `В папке «${path.basename(dir)}» нет файла объекта project.json — это не папка объекта` };
+  if (!isProjectDir(dir)) return { ok: false, error: `В папке «${path.basename(dir)}» нет файла проекта project.json — это не папка проекта` };
   const p = projectPaths(dir);
   const lines = readLines(dir);
   try {
@@ -310,7 +311,7 @@ const projects: ProjectsApi = {
    * на экране, а не последнее сохранённое состояние.
    */
   copy(newName: string, parentDir?: string): OpenResult & { dir?: string } {
-    if (!current) return { ok: false, error: 'Объект не открыт — копировать нечего' };
+    if (!current) return { ok: false, error: 'Проект не открыт — копировать нечего' };
     try {
       store.flush();
       const root = parentDir && parentDir.trim() !== '' ? parentDir : projectsRoot;

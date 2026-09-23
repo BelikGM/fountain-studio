@@ -483,7 +483,7 @@ export const BUILTIN_PROFILES: DeviceProfile[] = [
   },
 ];
 
-export function emptyProject(name = 'Новый объект'): Project {
+export function emptyProject(name = 'Новый проект'): Project {
   return {
     formatVersion: 1,
     name,
@@ -607,7 +607,7 @@ export function sanitizeProject(raw: unknown): Project {
   const r = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
   const project: Project = {
     formatVersion: 1,
-    name: typeof r.name === 'string' && r.name.trim() !== '' ? r.name : 'Новый объект',
+    name: typeof r.name === 'string' && r.name.trim() !== '' ? r.name : 'Новый проект',
     profiles: [],
     devices: [],
     scenes: [],

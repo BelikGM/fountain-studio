@@ -278,7 +278,7 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
    *
    * Раньше это был обычный эффект с пустыми зависимостями — он срабатывал один
    * раз при монтировании. Но пока движок не прислал проект, вместо схемы
-   * рисуется «Жду данные объекта от движка…», контейнера ещё нет, эффект уходит
+   * рисуется «Жду данные проекта от движка…», контейнера ещё нет, эффект уходит
    * ни с чем и больше не повторяется. Пока вкладка не запоминалась, это не
    * всплывало: на «3D» переходили руками, уже с проектом на руках. Стоило
    * приложению открываться сразу на «3D» — и вкладка оставалась пустой.
@@ -491,7 +491,7 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [project, selected, updateProject]);
 
-  if (!project) return <main className="view">Жду данные объекта от движка…</main>;
+  if (!project) return <main className="view">Жду данные проекта от движка…</main>;
   const layout = project.layout;
   const setLayout = (next: FountainLayout): void => updateProject({ ...project, layout: next });
 
@@ -787,7 +787,7 @@ function ElementList({
         type="button"
         className={off ? 'eye-btn eye-off' : 'eye-btn'}
         disabled={keys.length === 0}
-        data-hint={off ? `${what} скрыто в 3D — нажмите, чтобы показать` : `Скрыть ${what} в 3D. На объект и шоу не влияет — только на то, что видно здесь`}
+        data-hint={off ? `${what} скрыто в 3D — нажмите, чтобы показать` : `Скрыть ${what} в 3D. На проект и шоу не влияет — только на то, что видно здесь`}
         onClick={(e) => {
           // Щелчок по глазу не выбирает строку.
           e.stopPropagation();

@@ -44,7 +44,7 @@ export function KeysView({ engine }: { engine: EngineConnection }) {
     return () => window.removeEventListener('keydown', onKey, { capture: true });
   }, [captureId, project, updateProject]);
 
-  if (!project) return <main className="view">Жду данные объекта от движка…</main>;
+  if (!project) return <main className="view">Жду данные проекта от движка…</main>;
 
   const update = (keys: KeyBinding[]): void => updateProject({ ...project, keys });
 

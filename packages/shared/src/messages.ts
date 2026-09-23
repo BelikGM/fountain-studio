@@ -548,6 +548,11 @@ export type ClientMessage =
    */
   | { type: 'setBenchMode'; on: boolean }
   /**
+   * Автосохранение проекта: включено ли и как часто, мин. Настройка ПРОГРАММЫ
+   * (как работает этот человек на этом компьютере), а не проекта.
+   */
+  | { type: 'setAutosave'; enabled: boolean; minutes: number }
+  /**
    * Громкость вечерней программы, дБ (−40…0), и «звук выключен». Настройка ПРОГРАММЫ, не объекта:
    * она про усилитель и колонки на месте, а не про шоу. Уже играющий трек не
    * трогает — подхватит следующий.
@@ -661,7 +666,15 @@ export type ServerMessage =
       audioReady: boolean;
       /** Режим наладки на этом компьютере (см. setBenchMode). */
       benchMode: boolean;
+      /** Автосохранение проекта (см. setAutosave). */
+      autosaveEnabled: boolean;
+      autosaveMin: number;
     }
+  /**
+   * Есть ли в открытом проекте правки, ещё не записанные на диск. Приходит при
+   * подключении и при каждой смене — по нему шапка показывает «не сохранено».
+   */
+  | { type: 'projectDirty'; dirty: boolean; savedAtMs: number | null }
   | { type: 'stats'; stats: EngineStats }
   /**
    * Кадр вселенной. data — РАСЧЁТНЫЙ кадр по адресам проекта (по нему работают

@@ -61,7 +61,7 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
     }
   }, [scenes, selectedId]);
 
-  if (!project) return <main className="view">Жду данные объекта от движка…</main>;
+  if (!project) return <main className="view">Жду данные проекта от движка…</main>;
 
   const addScene = (): void => {
     const scene: Scene = { id: uid(), name: `Сцена ${project.scenes.length + 1}`, values: {} };

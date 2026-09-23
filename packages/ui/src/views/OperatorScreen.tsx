@@ -76,7 +76,7 @@ export function OperatorScreen({ engine, onUnlock }: { engine: EngineConnection;
       </header>
 
       {!project ? (
-        <p className="dim">Жду данные объекта от движка…</p>
+        <p className="dim">Жду данные проекта от движка…</p>
       ) : (
         <>
           <section className="operator-transport">

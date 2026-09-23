@@ -94,8 +94,8 @@ export function whyQuiet(f: QuietFacts): QuietAnswer {
   }
   if (!f.projectOpen) {
     items.push({
-      what: 'Объект не открыт',
-      fix: 'Приборам ничего не отправляется. Откройте объект кнопкой с его именем в шапке.',
+      what: 'Проект не открыт',
+      fix: 'Приборам ничего не отправляется. Откройте проект кнопкой с его именем в шапке.',
     });
   }
   if (!f.licensed) {
@@ -137,7 +137,7 @@ export function whyQuiet(f: QuietFacts): QuietAnswer {
   // --- Играть нечему ---------------------------------------------------------
   if (f.projectOpen && f.devices === 0) {
     items.push({
-      what: 'В объекте нет приборов',
+      what: 'В проекте нет приборов',
       fix: 'Добавьте приборы на «Оборудовании» — без них сцены и шоу не на чем показывать.',
       tab: 'patch',
     });
@@ -213,7 +213,7 @@ export function whyQuiet(f: QuietFacts): QuietAnswer {
   const headline = !f.connected
     ? 'Нет связи с движком'
     : !f.projectOpen
-      ? 'Объект не открыт'
+      ? 'Проект не открыт'
       : f.failsafe.active
         ? 'Работает аварийное отключение'
         : f.dark === 'off'

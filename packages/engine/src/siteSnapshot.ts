@@ -17,7 +17,7 @@ function mmss(ms: number): string {
 }
 
 function nameOf(list: { id: string; name: string }[], id: string): string {
-  return list.find((x) => x.id === id)?.name ?? 'удалено из объекта';
+  return list.find((x) => x.id === id)?.name ?? 'удалено из проекта';
 }
 
 /** Что делает запись расписания — словами, с именами из проекта. */

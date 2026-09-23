@@ -330,7 +330,7 @@ function ExportImportPanel({ engine }: { engine: EngineConnection }) {
   };
 
   const doImport = async (file: File): Promise<void> => {
-    const ok = await askConfirm('Заменить весь объект содержимым файла?', {
+    const ok = await askConfirm('Заменить весь проект содержимым файла?', {
       detail:
         'Импорт перезапишет приборы, сцены, шоу, расписание — всё. Текущие несохранённые правки будут потеряны.',
       okLabel: 'Импортировать',
@@ -351,9 +351,9 @@ function ExportImportPanel({ engine }: { engine: EngineConnection }) {
 
   return (
     <section className="panel">
-      <h2>Перенос объекта одним файлом</h2>
+      <h2>Перенос проекта одним файлом</h2>
       <p className="dim">
-        Один файл — весь объект (приборы, сцены, шоу, расписание) вместе с музыкой шоу. Удобно для переноса между ПК
+        Один файл — весь проект (приборы, сцены, шоу, расписание) вместе с музыкой шоу. Удобно для переноса между ПК
         или передачи заказчику.
       </p>
       <div className="form-row">
@@ -416,7 +416,7 @@ function AppSettingsBackupPanel({ engine }: { engine: EngineConnection }) {
   const doImport = async (file: File): Promise<void> => {
     const ok = await askConfirm('Восстановить настройки программы из файла?', {
       detail:
-        'Лицензия, токен бота и настройки движка на этом компьютере будут заменены тем, что в файле. Объекты не затрагиваются.',
+        'Лицензия, токен бота и настройки движка на этом компьютере будут заменены тем, что в файле. Проекты не затрагиваются.',
       okLabel: 'Восстановить',
     });
     if (!ok) return;
@@ -436,8 +436,8 @@ function AppSettingsBackupPanel({ engine }: { engine: EngineConnection }) {
     <section className="panel">
       <h2>Резервная копия настроек программы</h2>
       <p className="dim">
-        Объект и настройки программы лежат врозь: копия объекта не содержит ни лицензии, ни бота. Здесь — всё о самой
-        программе одним файлом: лицензия, токен Telegram-бота, настройки движка и список недавних объектов. Сделайте
+        Проект и настройки программы лежат врозь: копия проекта не содержит ни лицензии, ни бота. Здесь — всё о самой
+        программе одним файлом: лицензия, токен Telegram-бота, настройки движка и список недавних проектов. Сделайте
         такую копию сразу после наладки и держите её не на том же диске.
       </p>
       <div className="form-row">
@@ -479,6 +479,63 @@ function AppSettingsBackupPanel({ engine }: { engine: EngineConnection }) {
  * Смена интервала применяется сразу, без кнопки «Применить» и без остановки
  * воспроизведения — в отличие от вселенных/тика выше на этой же вкладке.
  */
+/**
+ * Сохранение проекта: автосохранение вкл/выкл и как часто (решение заказчика
+ * 23.09.2026: по умолчанию включено, раз в 5 минут).
+ *
+ * Это не «Резервные копии» ниже: копии — это СНИМКИ на случай ошибки, к ним
+ * возвращаются; сохранение — запись текущего состояния в файл проекта.
+ */
+function AutosavePanel({ engine }: { engine: EngineConnection }) {
+  const { engineConfig, send, projectDirty } = engine;
+  const [draftMin, setDraftMin] = useState<string | null>(null);
+  if (!engineConfig) return null;
+  const enabled = engineConfig.autosaveEnabled;
+  const minutes = engineConfig.autosaveMin;
+  const apply = (en: boolean, min: number): void =>
+    send({ type: 'setAutosave', enabled: en, minutes: Math.min(120, Math.max(1, Math.round(min))) });
+  const savedAt = projectDirty.savedAtMs ? new Date(projectDirty.savedAtMs).toLocaleTimeString('ru-RU') : null;
+  return (
+    <section className="panel">
+      <h2>Сохранение проекта</h2>
+      <p className="dim">
+        Правки проекта сразу работают в движке, а на диск записываются автосохранением или по Ctrl+S. Без
+        автосохранения при переключении на другой проект программа спросит, сохранить ли правки. При закрытии
+        программы несохранённое записывается всегда.
+      </p>
+      <div className="form-row">
+        <label className="field">
+          <input type="checkbox" checked={enabled} onChange={(e) => apply(e.target.checked, minutes)} /> Автосохранение
+        </label>
+        <label className={enabled ? 'field' : 'field dim'} data-hint="Как часто записывать правки на диск, минут (1–120)">
+          каждые{' '}
+          <input
+            className="input input-num"
+            type="number"
+            min={1}
+            max={120}
+            step={1}
+            disabled={!enabled}
+            value={draftMin ?? String(minutes)}
+            onChange={(e) => setDraftMin(e.target.value)}
+            onBlur={() => {
+              const v = Number(draftMin);
+              if (draftMin !== null && Number.isFinite(v) && v > 0) apply(true, v);
+              setDraftMin(null);
+            }}
+          />{' '}
+          мин
+        </label>
+      </div>
+      <p className={projectDirty.dirty ? 'warn' : 'ok-text'} style={{ marginLeft: 0 }}>
+        {projectDirty.dirty
+          ? `● Есть несохранённые правки${enabled ? ` — запишутся в течение ${minutes} мин` : ''}. Сохранить сейчас — Ctrl+S.`
+          : `✔ Всё сохранено${savedAt ? ` (последний раз в ${savedAt})` : ''}.`}
+      </p>
+    </section>
+  );
+}
+
 function BackupPanel({ engine }: { engine: EngineConnection }) {
   const { backupConfig, backups, send } = engine;
 
@@ -489,7 +546,7 @@ function BackupPanel({ engine }: { engine: EngineConnection }) {
   if (!backupConfig) {
     return (
       <section className="panel">
-        <h2>Резервные копии объекта</h2>
+        <h2>Резервные копии проекта</h2>
         <p className="dim">Жду данные от движка…</p>
       </section>
     );
@@ -498,7 +555,7 @@ function BackupPanel({ engine }: { engine: EngineConnection }) {
   const restore = async (b: BackupInfo): Promise<void> => {
     const ok = await askConfirm(`Восстановить копию от ${fmtBackupTime(b.atMs)}?`, {
       detail:
-        'Копия заменит текущий объект целиком — всё, что сделано после неё, будет потеряно.',
+        'Копия заменит текущий проект целиком — всё, что сделано после неё, будет потеряно.',
       okLabel: 'Восстановить',
     });
     if (!ok) return;
@@ -510,8 +567,8 @@ function BackupPanel({ engine }: { engine: EngineConnection }) {
     const had = backups.some((b) => b.reference);
     const ok = await askConfirm('Сделать нынешнее состояние эталоном?', {
       detail: had
-        ? 'Прежний эталон будет заменён. Эталон — это заведомо рабочее состояние объекта: он не прореживается и переписывается только этой кнопкой.'
-        : 'Эталон — заведомо рабочее состояние объекта. Он не прореживается со временем и переписывается только этой кнопкой.',
+        ? 'Прежний эталон будет заменён. Эталон — это заведомо рабочее состояние проекта: он не прореживается и переписывается только этой кнопкой.'
+        : 'Эталон — заведомо рабочее состояние проекта. Он не прореживается со временем и переписывается только этой кнопкой.',
       okLabel: 'Сделать эталоном',
       danger: false,
     });
@@ -521,9 +578,9 @@ function BackupPanel({ engine }: { engine: EngineConnection }) {
 
   return (
     <section className="panel">
-      <h2>Резервные копии объекта</h2>
+      <h2>Резервные копии проекта</h2>
       <p className="dim">
-        Копии объекта по расписанию — на случай, если в редакторе что-то испортили. Это отдельно от
+        Копии проекта по расписанию — на случай, если в редакторе что-то испортили. Это отдельно от
         автосохранения: оно работает всегда.
       </p>
       <div className="form-row">
@@ -555,14 +612,14 @@ function BackupPanel({ engine }: { engine: EngineConnection }) {
         </button>
         <button
           className="btn btn-small"
-          data-hint="Зафиксировать нынешнее состояние как ЭТАЛОН объекта. Эталон не прореживается и не переписывается автоматикой — к нему возвращаются, если кто-то всё переделал."
+          data-hint="Зафиксировать нынешнее состояние как ЭТАЛОН проекта. Эталон не прореживается и не переписывается автоматикой — к нему возвращаются, если кто-то всё переделал."
           onClick={() => void makeReference()}
         >
           Сделать эталоном
         </button>
       </div>
       <p className="dim">
-        Копия делается, только если в объекте что-то изменилось. Хранятся: за последние 6 часов — по одному на
+        Копия делается, только если в проекте что-то изменилось. Хранятся: за последние 6 часов — по одному на
         каждые 10 минут, за два месяца — по одному на день, дальше — по одному на месяц. Поэтому
         полчаса правок не вытесняют рабочую версию месячной давности.
       </p>
@@ -1158,7 +1215,7 @@ function FailsafePanel({ engine }: { engine: EngineConnection }) {
       <div className="form-row">
         <label
           className="field"
-          data-hint="Наладка на столе: на ЭТОМ компьютере гашение не срабатывает, и приборами можно управлять руками без интерфейса DMX. В объект настройка не попадает — на фонтане гашение останется включённым. Сохраняется в настройках программы: переживает перезагрузку страницы и перезапуск."
+          data-hint="Наладка на столе: на ЭТОМ компьютере гашение не срабатывает, и приборами можно управлять руками без интерфейса DMX. В проект настройка не попадает — на фонтане гашение останется включённым. Сохраняется в настройках программы: переживает перезагрузку страницы и перезапуск."
         >
           <input type="checkbox" checked={bench} onChange={(e) => send({ type: 'setBenchMode', on: e.target.checked })} />{' '}
           Режим наладки на этом компьютере
@@ -2554,6 +2611,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
       <AudioPanel engine={engine} />
 
 
+      <AutosavePanel engine={engine} />
       <ExportImportPanel engine={engine} />
       <AppSettingsBackupPanel engine={engine} />
       <BackupPanel engine={engine} />

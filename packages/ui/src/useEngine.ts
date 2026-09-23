@@ -86,6 +86,9 @@ export interface EngineConfigState {
   audioReady: boolean;
   /** Режим наладки: на этом компьютере аварийное гашение не срабатывает. */
   benchMode: boolean;
+  /** Автосохранение проекта: включено ли и раз во сколько минут. */
+  autosaveEnabled: boolean;
+  autosaveMin: number;
 }
 
 /** Внешние пульты: что задано и что сейчас на самом деле (порт открыт, брокер на связи). */
@@ -199,6 +202,8 @@ export interface EngineConnection {
   canRedo: boolean;
   /** Активация лицензии по содержимому файла — резолвится итоговым статусом. */
   activateLicense: (fileText: string) => Promise<LicenseStatus>;
+  /** Есть ли в проекте правки, ещё не записанные на диск, и когда он сохранён последний раз. */
+  projectDirty: { dirty: boolean; savedAtMs: number | null };
 }
 
 /** Сколько шагов истории Undo/Redo держим в памяти. */
@@ -257,6 +262,10 @@ export function useEngine(): EngineConnection {
   const [windState, setWindState] = useState<WindState | null>(null);
   const [licenseStatus, setLicenseStatus] = useState<LicenseStatus | null>(null);
   const [usbScan, setUsbScan] = useState<UsbDmxScan | null>(null);
+  const [projectDirty, setProjectDirty] = useState<{ dirty: boolean; savedAtMs: number | null }>({
+    dirty: false,
+    savedAtMs: null,
+  });
   const [playback, setPlayback] = useState<PlaybackState>({
     activeSceneId: null,
     running: [],
@@ -334,6 +343,8 @@ export function useEngine(): EngineConnection {
               audioTrebleDb: msg.audioTrebleDb,
               audioReady: msg.audioReady,
               benchMode: msg.benchMode,
+              autosaveEnabled: msg.autosaveEnabled,
+              autosaveMin: msg.autosaveMin,
             });
             break;
           case 'configResult':
@@ -381,17 +392,27 @@ export function useEngine(): EngineConnection {
              * пришедшая в этот момент, съедалась как своя: двое правили объект,
              * и один из них не видел работу другого вовсе.
              */
-            if (msg.by !== undefined) {
-              if (msg.by === clientIdRef.current) break;
-              setProject(msg.project);
-              pendingEditsRef.current = 0;
+            if (msg.by !== undefined && msg.by === clientIdRef.current) {
+              // Отклик на СВОЮ правку: у нас на экране уже она. Счётчик правок
+              // в пути уменьшаем — раньше этого не было, он только рос.
+              pendingEditsRef.current = Math.max(0, pendingEditsRef.current - 1);
               break;
             }
-            if (pendingEditsRef.current > 0) {
-              pendingEditsRef.current--;
-            } else {
-              setProject(msg.project);
-            }
+            /*
+             * Всё остальное — не эхо, а новое состояние движка: чужая правка,
+             * ДРУГОЙ ОТКРЫТЫЙ ПРОЕКТ, импорт, восстановление из копии. Его
+             * принимаем всегда.
+             *
+             * Раньше сообщение без автора считалось откликом на свою правку,
+             * пока счётчик «правок в пути» больше нуля, — а счётчик на своих
+             * откликах не уменьшался и копился с каждой правкой. После этого
+             * новый проект, присланный движком, выбрасывался как эхо, и на
+             * экране оставались приборы, 3D и пульт ПРЕДЫДУЩЕГО проекта
+             * (замечание 23.09.2026: «создал новый проект, а всё оборудование
+             * осталось от предыдущего»).
+             */
+            setProject(msg.project);
+            pendingEditsRef.current = 0;
             break;
           case 'clientId':
             clientIdRef.current = msg.id;
@@ -405,6 +426,9 @@ export function useEngine(): EngineConnection {
             break;
           case 'playback':
             setPlayback(msg.state);
+            break;
+          case 'projectDirty':
+            setProjectDirty({ dirty: msg.dirty, savedAtMs: msg.savedAtMs });
             break;
           case 'telegram':
             setTelegram(msg.state);
@@ -798,6 +822,7 @@ export function useEngine(): EngineConnection {
     canUndo: undoStackRef.current.length > 0,
     canRedo: redoStackRef.current.length > 0,
     activateLicense,
+    projectDirty,
   };
 }
 

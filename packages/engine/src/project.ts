@@ -11,6 +11,19 @@ export class ProjectStore {
   private current: Project;
   private saveTimer: NodeJS.Timeout | undefined;
   private dirty = false;
+  /**
+   * Как часто дописывать правки на диск, мс; null — автосохранение выключено
+   * (правки ждут «Сохранить»). По умолчанию — раз в 5 минут.
+   *
+   * Раньше каждая правка уходила на диск через полсекунды, и спрашивать при
+   * переключении проекта было не о чем. Заказчик просил управляемое
+   * автосохранение: включено по умолчанию, раз в N минут, можно выключить.
+   */
+  private autosaveMs: number | null = 5 * 60_000;
+  /** Когда проект последний раз записан на диск (unix-время, мс). */
+  private savedAt: number | null = null;
+  /** Правки появились или ушли на диск — для «не сохранено» в шапке. */
+  onDirtyChange: ((dirty: boolean) => void) | null = null;
 
   private currentFile: string;
 
@@ -33,7 +46,8 @@ export class ProjectStore {
     this.flush();
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
-    this.dirty = false;
+    this.setDirty(false);
+    this.savedAt = null;
     this.currentFile = file;
     this.current = this.load();
   }
@@ -52,6 +66,28 @@ export class ProjectStore {
     return this.dirty;
   }
 
+  get savedAtMs(): number | null {
+    return this.savedAt;
+  }
+
+  /**
+   * Включить или выключить автосохранение. Таймер не сбрасывается на каждую
+   * правку: при непрерывной работе он иначе не сработал бы никогда. Он
+   * взводится первой правкой после сохранения и пишет всё, что накопилось.
+   */
+  setAutosave(enabled: boolean, minutes: number): void {
+    this.autosaveMs = enabled ? Math.max(1, minutes) * 60_000 : null;
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
+    if (this.dirty && this.autosaveMs !== null) this.saveTimer = setTimeout(() => this.flush(), this.autosaveMs);
+  }
+
+  private setDirty(d: boolean): void {
+    if (this.dirty === d) return;
+    this.dirty = d;
+    this.onDirtyChange?.(d);
+  }
+
   /**
    * «Не сохранять»: забыть правки в памяти и вернуться к тому, что реально
    * лежит на диске. Таймер отложенной записи гасим ДО перечитывания —
@@ -60,7 +96,7 @@ export class ProjectStore {
   discard(): void {
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
-    this.dirty = false;
+    this.setDirty(false);
     this.current = this.load();
   }
 
@@ -88,18 +124,21 @@ export class ProjectStore {
   /** Заменяет проект целиком (уже прошедший sanitizeProject) и планирует сохранение. */
   update(project: Project): void {
     this.current = project;
-    this.dirty = true;
-    if (this.saveTimer) clearTimeout(this.saveTimer);
-    this.saveTimer = setTimeout(() => this.flush(), 500);
+    this.setDirty(true);
+    if (this.autosaveMs !== null && !this.saveTimer) {
+      this.saveTimer = setTimeout(() => this.flush(), this.autosaveMs);
+    }
   }
 
   flush(): void {
     if (!this.dirty) return;
-    this.dirty = false;
     if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
     const tmp = `${this.file}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(this.current, null, 2), 'utf8');
     fs.renameSync(tmp, this.file);
+    this.savedAt = Date.now();
+    this.setDirty(false);
     console.log(`[project] сохранён ${path.basename(this.file)}`);
   }
 }

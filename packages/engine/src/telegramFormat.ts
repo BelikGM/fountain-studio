@@ -198,10 +198,10 @@ function serviceLines(s: SiteSnapshot): Line[] {
   return [
     { mark: '•', text: `Работает без перезапуска ${duration(s.uptimeSec)}` },
     s.lastBackupAgoMin === null
-      ? { mark: '⚠️', text: 'Резервных копий объекта ещё нет' }
+      ? { mark: '⚠️', text: 'Резервных копий проекта ещё нет' }
       : {
           mark: s.lastBackupAgoMin > 48 * 60 ? '⚠️' : '✅',
-          text: `Резервная копия объекта: ${ago(s.lastBackupAgoMin)}`,
+          text: `Резервная копия проекта: ${ago(s.lastBackupAgoMin)}`,
         },
   ];
 }

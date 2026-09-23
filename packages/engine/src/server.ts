@@ -17,7 +17,7 @@ import {
   clampToneDb,
 } from '@fountain-studio/shared';
 import type { AudioStore } from './audio';
-import { saveAppConfigPatch } from './config';
+import { sanitizeAutosave, saveAppConfigPatch } from './config';
 import { isAutostartEnabled, isAutostartSupported, setAutostart, unsupportedReason } from './autostart';
 import type { BackupStore } from './backups';
 import type { MailNotifier } from './mailnotify';
@@ -71,7 +71,7 @@ const APP_BACKUP_FILES: [file: string, what: string][] = [
   ['fountain.license.json', 'лицензия'],
   ['fountain.secrets.json', 'токен Telegram-бота'],
   ['app-config.json', 'настройки движка'],
-  ['app-settings.json', 'недавние объекты'],
+  ['app-settings.json', 'недавние проекты'],
 ];
 
 /** WebSocket API движка: команды от редактора, поток статистики, кадров и состояния. */
@@ -142,7 +142,15 @@ export function startServer(
     audioTrebleDb: engine.config.audio.trebleDb,
     audioReady: player?.ready() ?? false,
     benchMode: engine.benchModeOn(),
+    autosaveEnabled: engine.config.autosave?.enabled !== false,
+    autosaveMin: engine.config.autosave?.minutes ?? 5,
   });
+  const dirtyMessage = (): Extract<ServerMessage, { type: 'projectDirty' }> => ({
+    type: 'projectDirty',
+    dirty: store.isDirty,
+    savedAtMs: store.savedAtMs,
+  });
+  store.onDirtyChange = () => broadcast(dirtyMessage());
   const broadcastNetwork = (): void => {
     if (net) broadcast({ type: 'network', state: net.state() });
   };
@@ -252,7 +260,7 @@ export function startServer(
     if (editors.size === 2) {
       eventLog.log(
         'server',
-        `объект открыт сразу в двух редакторах (${[...editors.values()].map((e) => e.ip).join(' и ')}) — правки могут спорить`,
+        `проект открыт сразу в двух редакторах (${[...editors.values()].map((e) => e.ip).join(' и ')}) — правки могут спорить`,
         'warn',
       );
     }
@@ -284,6 +292,7 @@ export function startServer(
     ws.send(JSON.stringify({ type: 'windState', ...engine.windState() } satisfies ServerMessage));
     ws.send(JSON.stringify(remoteStatus()));
     ws.send(JSON.stringify(licenseMessage()));
+    ws.send(JSON.stringify(dirtyMessage()));
 
     ws.on('message', (raw) => {
       let msg: ClientMessage;
@@ -328,7 +337,7 @@ export function startServer(
             ws.send(
               JSON.stringify({
                 type: 'projectRejected',
-                message: `Правка не принята: объект уже изменён в другом редакторе${other ? ` (${other.ip})` : ''}. На экране — то, что в движке сейчас; повторите правку.`,
+                message: `Правка не принята: проект уже изменён в другом редакторе${other ? ` (${other.ip})` : ''}. На экране — то, что в движке сейчас; повторите правку.`,
               } satisfies ServerMessage),
             );
             ws.send(JSON.stringify(projectMessage()));
@@ -443,7 +452,7 @@ export function startServer(
                 type: 'projectResult',
                 ok: false,
                 unsavedChanges: true,
-                message: `В объекте «${projects?.current()?.name ?? ''}» есть несохранённые изменения`,
+                message: `В проекте «${projects?.current()?.name ?? ''}» есть несохранённые изменения`,
                 ...(targetName ? { targetName } : {}),
               } satisfies ServerMessage),
             );
@@ -452,38 +461,38 @@ export function startServer(
           if (msg.discard) store.discard();
 
           if (msg.type === 'openProject') {
-            const r = projects?.open(msg.dir) ?? { ok: false, error: 'управление объектами недоступно' };
+            const r = projects?.open(msg.dir) ?? { ok: false, error: 'управление проектами недоступно' };
             ws.send(
               JSON.stringify({
                 type: 'projectResult',
                 ok: r.ok,
-                message: r.ok ? 'Объект открыт' : (r.error ?? 'Не удалось открыть объект'),
+                message: r.ok ? 'Проект открыт' : (r.error ?? 'Не удалось открыть проект'),
               } satisfies ServerMessage),
             );
             if (r.ok) broadcastProjectSwitched();
           } else if (msg.type === 'createProject') {
-            const r = projects?.create(msg.name, msg.parentDir) ?? { ok: false, error: 'управление объектами недоступно' };
+            const r = projects?.create(msg.name, msg.parentDir) ?? { ok: false, error: 'управление проектами недоступно' };
             ws.send(
               JSON.stringify({
                 type: 'projectResult',
                 ok: r.ok,
-                message: r.ok ? `Создан объект «${msg.name}»` : (r.error ?? 'Не удалось создать объект'),
+                message: r.ok ? `Создан проект «${msg.name}»` : (r.error ?? 'Не удалось создать проект'),
               } satisfies ServerMessage),
             );
             if (r.ok) broadcastProjectSwitched();
           } else if (msg.type === 'copyProject') {
-            const r = projects?.copy(msg.name, msg.parentDir) ?? { ok: false, error: 'управление объектами недоступно' };
+            const r = projects?.copy(msg.name, msg.parentDir) ?? { ok: false, error: 'управление проектами недоступно' };
             ws.send(
               JSON.stringify({
                 type: 'projectResult',
                 ok: r.ok,
-                message: r.ok ? `Сделана копия «${msg.name}», она и открыта` : (r.error ?? 'Не удалось скопировать объект'),
+                message: r.ok ? `Сделана копия «${msg.name}», она и открыта` : (r.error ?? 'Не удалось скопировать проект'),
               } satisfies ServerMessage),
             );
             if (r.ok) broadcastProjectSwitched();
           } else {
             projects?.close();
-            ws.send(JSON.stringify({ type: 'projectResult', ok: true, message: 'Объект закрыт' } satisfies ServerMessage));
+            ws.send(JSON.stringify({ type: 'projectResult', ok: true, message: 'Проект закрыт' } satisfies ServerMessage));
             broadcastProjectSwitched();
           }
           break;
@@ -594,6 +603,19 @@ export function startServer(
           saveAppConfigPatch(engine.config.configFile ?? '', frameModeToConfig(msg.mode));
           broadcast(configMessage());
           broadcastPlayback();
+          break;
+        }
+        case 'setAutosave': {
+          // Настройка программы — пишем сразу, как и режим наладки.
+          const next = sanitizeAutosave({ enabled: msg.enabled, minutes: msg.minutes });
+          engine.config.autosave = next;
+          store.setAutosave(next.enabled, next.minutes);
+          saveAppConfigPatch(engine.config.configFile ?? '', { autosave: next });
+          eventLog.log(
+            'server',
+            next.enabled ? `автосохранение проекта: раз в ${next.minutes} мин` : 'автосохранение проекта выключено — правки сохраняются по Ctrl+S',
+          );
+          broadcast(configMessage());
           break;
         }
         case 'setBenchMode': {
@@ -724,8 +746,8 @@ export function startServer(
                 'его как пароль и не выкладывайте никуда. Лицензия привязана к',
                 'компьютеру: на другом ПК её придётся выпустить заново.',
                 '',
-                'Объекты (приборы, сцены, шоу, расписание, музыка) сюда НЕ входят —',
-                'для них «Перенос объекта одним файлом» на той же вкладке.',
+                'Проекты (приборы, сцены, шоу, расписание, музыка) сюда НЕ входят —',
+                'для них «Перенос проекта одним файлом» на той же вкладке.',
               ].join('\r\n'),
               'utf8',
             ),
@@ -757,7 +779,7 @@ export function startServer(
               fs.writeFileSync(path.join(dir, e.name), e.data);
               restored.push(APP_BACKUP_FILES.find(([f]) => f === e.name)?.[1] ?? e.name);
             }
-            if (restored.length === 0) throw new Error('в файле нет настроек программы — это копия объекта или чужой архив');
+            if (restored.length === 0) throw new Error('в файле нет настроек программы — это копия проекта или чужой архив');
             ok = true;
             message = `Восстановлено: ${restored.join(', ')}. Перезапустите программу, чтобы настройки вступили в силу.`;
           } catch (err) {
@@ -770,7 +792,7 @@ export function startServer(
           try {
             const entries = readZip(Buffer.from(msg.dataBase64, 'base64'));
             const projectEntry = entries.find((e) => e.name === 'project.json');
-            if (!projectEntry) throw new Error('в архиве нет project.json — это не файл объекта Fountain Studio');
+            if (!projectEntry) throw new Error('в архиве нет project.json — это не файл проекта Fountain Studio');
             const project = sanitizeProject(JSON.parse(projectEntry.data.toString('utf8')));
             for (const e of entries) {
               if (!e.name.startsWith('audio/')) continue;
@@ -825,7 +847,7 @@ export function startServer(
               JSON.stringify({
                 type: 'importResult',
                 ok: true,
-                message: `Загружен объект «${project.name}»`
+                message: `Загружен проект «${project.name}»`
                   + (linesApplied > 0 ? `, вселенных DMX: ${linesApplied}` : ''),
               } satisfies ServerMessage),
             );
@@ -865,7 +887,7 @@ export function startServer(
         case 'setReferenceBackup':
           if (!backups) break;
           backups.setReference();
-          eventLog.log('server', 'эталонная резервная копия объекта обновлена');
+          eventLog.log('server', 'эталонная резервная копия проекта обновлена');
           broadcast(backupListMessage());
           break;
         case 'updateTelegram': {
@@ -955,7 +977,7 @@ export function startServer(
             bumpRev();
             broadcast(projectMessage(project));
             broadcastPlayback();
-            eventLog.log('server', `объект восстановлен из резервной копии ${msg.file}`);
+            eventLog.log('server', `проект восстановлен из резервной копии ${msg.file}`);
           } catch (err) {
             eventLog.log('server', `не удалось восстановить резервную копию: ${err instanceof Error ? err.message : String(err)}`, 'error');
           }

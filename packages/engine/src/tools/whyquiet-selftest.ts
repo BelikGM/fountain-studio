@@ -58,7 +58,7 @@ const with_ = (patch: Partial<QuietFacts>): QuietFacts => ({ ...ok, ...patch });
 }
 {
   const a = whyQuiet(with_({ projectOpen: false, sceneOn: false }));
-  check('объект не открыт — первым делом', a.headline === 'Объект не открыт', a.headline);
+  check('объект не открыт — первым делом', a.headline === 'Проект не открыт', a.headline);
   check('про пустое расписание при закрытом объекте не говорим', !a.items.some((i) => i.what.includes('расписание пустое')), JSON.stringify(a.items));
 }
 {

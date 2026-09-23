@@ -420,11 +420,31 @@ export function App() {
         <button
           className={projectsOpen || noProject ? 'btn btn-small active' : 'btn btn-small'}
           style={{ marginLeft: 10 }}
-          data-hint="Объекты: открыть другой фонтан, создать новый или посмотреть, где лежит папка текущего."
+          data-hint="Проекты: открыть другой фонтан, создать новый или посмотреть, где лежит папка текущего."
           onClick={() => setProjectsOpen(!projectsOpen)}
         >
-          {engine.projects?.current ? `🏛 ${engine.projects.current.name}` : '🏛 Объекты'}
+          {engine.projects?.current ? `🏛 ${engine.projects.current.name}` : '🏛 Проекты'}
         </button>
+        {/*
+          Правки ещё не на диске — видно сразу, в шапке, рядом с именем
+          проекта. Нажатие сохраняет (то же, что Ctrl+S). Пока автосохранение
+          писало всё через полсекунды, это было не нужно; теперь оно раз в
+          N минут или выключено (Настройки → «Сохранение проекта»).
+        */}
+        {engine.projects?.current && engine.projectDirty.dirty && (
+          <button
+            className="btn btn-small btn-warn"
+            style={{ marginLeft: 6 }}
+            data-hint={
+              engine.engineConfig?.autosaveEnabled
+                ? `Есть несохранённые правки. Автосохранение — раз в ${engine.engineConfig.autosaveMin} мин; нажмите, чтобы сохранить сейчас (Ctrl+S).`
+                : 'Есть несохранённые правки, автосохранение выключено. Нажмите, чтобы сохранить (Ctrl+S).'
+            }
+            onClick={() => send({ type: 'saveNow' })}
+          >
+            ● Сохранить
+          </button>
+        )}
         {/*
           Объект не открыт — переключать нечего: вкладки вели бы на пустые
           экраны. Оставляем только выбор объекта, лицензию и справку.
@@ -517,7 +537,7 @@ export function App() {
       {engine.editors.length > 1 && (
         <div className="license-banner">
           <span>
-            ⚠ Объект открыт ещё в {engine.editors.length === 2 ? 'одном редакторе' : `${engine.editors.length - 1} редакторах`} (
+            ⚠ Проект открыт ещё в {engine.editors.length === 2 ? 'одном редакторе' : `${engine.editors.length - 1} редакторах`} (
             {engine.editors
               .filter((e) => e.id !== engine.clientId)
               .map((e) => e.ip)
@@ -557,12 +577,12 @@ export function App() {
         <div className="modal-overlay" onClick={pendingProjectSwitch.cancel}>
           <div className="modal confirm-modal confirm-modal-wide" onClick={(e) => e.stopPropagation()}>
             <div className="confirm-text">
-              В объекте «{engine.projects?.current?.name ?? ''}» есть несохранённые изменения
+              В проекте «{engine.projects?.current?.name ?? ''}» есть несохранённые изменения
             </div>
             <p className="dim confirm-detail">
               {pendingProjectSwitch.targetName
                 ? `Что сделать перед тем, как открыть «${pendingProjectSwitch.targetName}»?`
-                : 'Что сделать перед тем, как закрыть объект?'}
+                : 'Что сделать перед тем, как закрыть проект?'}
             </p>
             <div className="confirm-actions confirm-actions-column">
               <button className="btn active" autoFocus onClick={pendingProjectSwitch.save}>
@@ -639,8 +659,8 @@ export function App() {
           фонтана и врали бы: приборам сейчас ничего не уходит.
         */}
         {noProject ? (
-          <span data-hint="Объект не открыт: приборам ничего не отправляется. Выберите объект в списке.">
-            объект не открыт — приборам ничего не уходит
+          <span data-hint="Проект не открыт: приборам ничего не отправляется. Выберите проект в списке.">
+            проект не открыт — приборам ничего не уходит
           </span>
         ) : stats ? (
           <>

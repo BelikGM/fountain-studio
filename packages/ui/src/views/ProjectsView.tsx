@@ -3,19 +3,19 @@ import { askConfirm } from '../components/ConfirmDialog';
 import type { EngineConnection } from '../useEngine';
 
 /**
- * Выбор объекта: то, с чего начинается работа, если проект ещё не открыт.
+ * Выбор проекта: то, с чего начинается работа, если проект ещё не открыт.
  *
  * Здесь же — создание нового, копия под другим именем и переключение между
- * объектами. Список недавних ведёт движок в данных программы, а сами объекты
+ * проектами. Список недавних ведёт движок в данных программы, а сами проекты
  * лежат папками: строка показывает путь, чтобы человек понимал, ГДЕ его фонтан,
  * и мог унести папку или прислать коллеге.
  *
- * Пропавшие папки из списка не прячем: человек должен видеть, что объект был,
+ * Пропавшие папки из списка не прячем: человек должен видеть, что проект был,
  * и сам решить — найти его или убрать строку.
  *
  * Диалог о несохранённых правках при переключении рисует не этот компонент, а
  * App.tsx — он должен появляться, даже если человек сейчас не на этом экране
- * (например, объект попросили открыть двойным щелчком по .fsproj, пока
+ * (например, проект попросили открыть двойным щелчком по .fsproj, пока
  * работали в «Пульте»). Здесь только вызываются engine.openProject и другие
  * такие методы — а решение «спросить или нет» принимает движок сам.
  */
@@ -33,12 +33,12 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
   const [name, setName] = useState('');
   const [creating, setCreating] = useState(false);
   const [copying, setCopying] = useState(false);
-  /** Куда положить новый объект (или копию) — пусто значит «папка по умолчанию». */
+  /** Куда положить новый проект (или копию) — пусто значит «папка по умолчанию». */
   const [destDir, setDestDir] = useState('');
   const [openPath, setOpenPath] = useState('');
   const firstOpenRef = useRef<HTMLButtonElement>(null);
 
-  // Открылся объект — формы больше не нужны.
+  // Открылся проект — формы больше не нужны.
   useEffect(() => {
     if (projects?.current) {
       setCreating(false);
@@ -48,7 +48,7 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
     }
   }, [projects?.current]);
 
-  // Самый свежий объект — под Enter: пришёл, нажал, работаешь.
+  // Самый свежий проект — под Enter: пришёл, нажал, работаешь.
   useEffect(() => {
     if (!creating && !copying) firstOpenRef.current?.focus();
   }, [creating, copying, projects?.recent.length]);
@@ -57,7 +57,7 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
     return (
       <main className="view">
         <section className="panel">
-          <h2>Объекты</h2>
+          <h2>Проекты</h2>
           <p className="dim">Ожидание ответа движка…</p>
         </section>
       </main>
@@ -68,7 +68,7 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
   const first = recent.find((r) => !r.missing && r.dir !== projects.current?.dir);
 
   /*
-   * Шоу играет — переключение объекта погасит фонтан на глазах у людей.
+   * Шоу играет — переключение проекта погасит фонтан на глазах у людей.
    * Спрашиваем, прежде чем даже пробовать переключиться: это как раз тот
    * случай, когда лишний вопрос дешевле неожиданно потухшего фонтана.
    * Несохранённые правки — отдельная проверка, её делает движок сам (см.
@@ -84,12 +84,12 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
     !playing ? Promise.resolve(true) : askConfirm(`${what}?`, { detail: 'Сейчас идёт воспроизведение — приборы перестанут получать значения.' });
 
   const open = async (dir: string): Promise<void> => {
-    if (await askIfPlaying('Открыть другой объект')) openProject(dir);
+    if (await askIfPlaying('Открыть другой проект')) openProject(dir);
   };
 
   const create = async (): Promise<void> => {
     const n = name.trim();
-    if (n === '' || !(await askIfPlaying('Создать новый объект'))) return;
+    if (n === '' || !(await askIfPlaying('Создать новый проект'))) return;
     createProject(n, destDir.trim());
   };
 
@@ -116,11 +116,11 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
   return (
     <main className="view">
       <section className="panel">
-        <h2>{projects.current ? 'Объекты' : 'С какого объекта начнём?'}</h2>
+        <h2>{projects.current ? 'Проекты' : 'С какого проекта начнём?'}</h2>
         <p className="dim">
-          Объект — это папка на диске: в ней схема и адреса, вселенные DMX, музыка шоу, журнал и
+          Проект — это папка на диске: в ней схема и адреса, вселенные DMX, музыка шоу, журнал и
           резервные копии. Папку можно унести на флешке или прислать коллеге — у него откроется то же
-          самое. Объектов может быть сколько угодно.
+          самое. Проектов может быть сколько угодно.
         </p>
 
         {projects.current && (
@@ -129,15 +129,15 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
               ✔ Открыт: <b>{projects.current.name}</b> <span className="dim">· {projects.current.dir}</span>
             </p>
             {/*
-              Действия над ТЕКУЩИМ объектом — отдельно и сразу сверху, а не
-              внизу вперемешку с формой создания НОВОГО: это разные объекты
-              разговора, и раньше «Закрыть объект» стояла рядом с «Новый
-              объект», хотя относится к тому, что уже открыто.
+              Действия над ТЕКУЩИМ проектом — отдельно и сразу сверху, а не
+              внизу вперемешку с формой создания НОВОГО: это разные проекты
+              разговора, и раньше «Закрыть проект» стояла рядом с «Новый
+              проект», хотя относится к тому, что уже открыто.
             */}
             <div className="form-row">
               <button
                 className="btn btn-small"
-                data-hint="Копия открытого объекта под другим именем: попробовать второй вариант шоу, не трогая рабочий."
+                data-hint="Копия открытого проекта под другим именем: попробовать второй вариант шоу, не трогая рабочий."
                 onClick={() => {
                   setName(`${projects.current?.name ?? ''} — вариант 2`);
                   setDestDir('');
@@ -148,14 +148,14 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
               </button>
               <button
                 className="btn btn-small"
-                data-hint="Закрыть объект: приборы перестанут получать значения, программа вернётся к выбору объекта."
+                data-hint="Закрыть проект: приборы перестанут получать значения, программа вернётся к выбору проекта."
                 onClick={() => {
                   void (async () => {
-                    if (await askIfPlaying('Закрыть объект')) closeProject();
+                    if (await askIfPlaying('Закрыть проект')) closeProject();
                   })();
                 }}
               >
-                Закрыть объект
+                Закрыть проект
               </button>
               {onClose && (
                 <button className="btn btn-small" onClick={onClose}>
@@ -175,12 +175,12 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
 
         <h3 style={{ marginBottom: 6 }}>Недавние</h3>
         {recent.length === 0 ? (
-          <p className="dim">Пока ни одного объекта — создайте первый.</p>
+          <p className="dim">Пока ни одного проекта — создайте первый.</p>
         ) : (
           <table className="table">
             <thead>
               <tr>
-                <th>Объект</th>
+                <th>Проект</th>
                 <th>Где лежит</th>
                 <th>Открывали</th>
                 <th></th>
@@ -205,7 +205,7 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
                         <button
                           {...(r.dir === first?.dir ? { ref: firstOpenRef } : {})}
                           className={r.dir === first?.dir ? 'btn btn-small active' : 'btn btn-small'}
-                          {...(r.dir === first?.dir ? { 'data-hint': 'Самый свежий объект — открывается по Enter' } : {})}
+                          {...(r.dir === first?.dir ? { 'data-hint': 'Самый свежий проект — открывается по Enter' } : {})}
                           onClick={() => void open(r.dir)}
                         >
                           Открыть
@@ -213,7 +213,7 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
                       )}{' '}
                       <button
                         className="btn btn-small"
-                        data-hint="Убрать из списка. Сама папка объекта на диске остаётся — удалить её можно только вручную."
+                        data-hint="Убрать из списка. Сама папка проекта на диске остаётся — удалить её можно только вручную."
                         onClick={() => send({ type: 'forgetProject', dir: r.dir })}
                       >
                         Убрать
@@ -226,14 +226,14 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
           </table>
         )}
 
-        <h3 style={{ marginTop: 18, marginBottom: 6 }}>Открыть другой объект</h3>
+        <h3 style={{ marginTop: 18, marginBottom: 6 }}>Открыть другой проект</h3>
         <div className="form-row">
           <input
             className="input"
             style={{ width: 380 }}
-            placeholder="Путь к папке объекта: D:\Фонтаны\Новороссийск"
+            placeholder="Путь к папке проекта: D:\Фонтаны\Новороссийск"
             value={openPath}
-            data-hint="Путь к папке объекта (или к файлу project.json / .fsproj внутри неё)."
+            data-hint="Путь к папке проекта (или к файлу project.json / .fsproj внутри неё)."
             onChange={(e) => setOpenPath(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && openPath.trim() !== '') void open(openPath.trim());
@@ -245,7 +245,7 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
           {desktop() && (
             <button
               className="btn btn-small"
-              data-hint="Выбрать папку объекта на диске — например, ту, что прислали на флешке."
+              data-hint="Выбрать папку проекта на диске — например, ту, что прислали на флешке."
               onClick={() => void browseOpen()}
             >
               Обзор…
@@ -253,7 +253,7 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
           )}
         </div>
 
-        <h3 style={{ marginTop: 18, marginBottom: 6 }}>Новый объект</h3>
+        <h3 style={{ marginTop: 18, marginBottom: 6 }}>Новый проект</h3>
         {creating || copying ? (
           <div className="form-column">
             <div className="form-row">
@@ -296,7 +296,7 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
                   style={{ width: 380 }}
                   value={destDir}
                   placeholder={projects.projectsRoot}
-                  data-hint="Куда положить папку объекта. Пусто — используется папка по умолчанию."
+                  data-hint="Куда положить папку проекта. Пусто — используется папка по умолчанию."
                   onChange={(e) => setDestDir(e.target.value)}
                 />
               </label>
@@ -307,7 +307,7 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
               )}
               <span className="dim">
                 {copying
-                  ? 'Схема, вселенные и музыка — как в исходном объекте, журнал и резервные копии начнутся заново.'
+                  ? 'Схема, вселенные и музыка — как в исходном проекте, журнал и резервные копии начнутся заново.'
                   : 'Внутри сразу будет одна вселенная DMX.'}
               </span>
             </div>
@@ -322,13 +322,13 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
                 setCreating(true);
               }}
             >
-              + Новый объект
+              + Новый проект
             </button>
           </div>
         )}
 
         <p className="dim" style={{ marginTop: 16 }}>
-          Объект можно открыть и не заходя в программу: в его папке лежит файл с расширением
+          Проект можно открыть и не заходя в программу: в его папке лежит файл с расширением
           <b> .fsproj</b> — двойной щелчок по нему открывает этот фонтан сразу.
         </p>
       </section>

@@ -27,7 +27,7 @@ const ACTION_LABEL: Record<RemoteAction['type'], string> = {
  */
 export function RemoteView({ engine }: { engine: EngineConnection }) {
   const { project, remote, universes, updateProject } = engine;
-  if (!project) return <main className="view">Жду данные объекта от движка…</main>;
+  if (!project) return <main className="view">Жду данные проекта от движка…</main>;
 
   const refOptions = (type: RemoteAction['type']): { id: string; name: string }[] => {
     switch (type) {

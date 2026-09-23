@@ -117,6 +117,13 @@ export interface EngineConfig {
    */
   benchMode?: boolean;
   /**
+   * Автосохранение проекта (решение заказчика 23.09.2026): включено и раз в
+   * minutes минут. Выключено — правки живут в памяти движка до «Сохранить»
+   * (Ctrl+S), а при переключении проекта программа спрашивает, что с ними
+   * делать. При закрытии программы несохранённое дописывается всегда.
+   */
+  autosave?: { enabled: boolean; minutes: number };
+  /**
    * Откуда прочитаны настройки программы. Нужен, чтобы дописать в тот же файл
    * переключатель подготовки кадров: в установленном приложении человек до
    * этого файла руками не доберётся.
@@ -180,9 +187,21 @@ export function loadAppConfig(appDataDir: string): EngineConfig & { configFile: 
     playbackWorker: raw.playbackWorker !== false,
     // Режим наладки — только явным true: по умолчанию защита работает.
     benchMode: raw.benchMode === true,
+    autosave: sanitizeAutosave(raw.autosave),
     ...(typeof raw.playbackLookaheadMs === 'number' && Number.isFinite(raw.playbackLookaheadMs)
       ? { playbackLookaheadMs: Math.max(0, Math.min(2000, Math.round(raw.playbackLookaheadMs))) }
       : {}),
+  };
+}
+
+/** Автосохранение: по умолчанию включено, раз в 5 минут; интервал 1…120 мин. */
+export const AUTOSAVE_DEFAULT_MIN = 5;
+export function sanitizeAutosave(raw: unknown): { enabled: boolean; minutes: number } {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as { enabled?: unknown; minutes?: unknown };
+  const m = Math.round(Number(r.minutes));
+  return {
+    enabled: r.enabled !== false,
+    minutes: Number.isFinite(m) ? Math.min(120, Math.max(1, m)) : AUTOSAVE_DEFAULT_MIN,
   };
 }
 
@@ -249,6 +268,7 @@ export function loadConfig(argv: string[]): EngineConfig & { configFile: string 
     playbackWorker: raw.playbackWorker !== false,
     // Режим наладки — только явным true: по умолчанию защита работает.
     benchMode: raw.benchMode === true,
+    autosave: sanitizeAutosave(raw.autosave),
     ...(typeof raw.playbackLookaheadMs === 'number' && Number.isFinite(raw.playbackLookaheadMs)
       ? { playbackLookaheadMs: Math.max(0, Math.min(2000, Math.round(raw.playbackLookaheadMs))) }
       : {}),

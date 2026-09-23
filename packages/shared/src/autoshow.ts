@@ -800,7 +800,7 @@ export function gradeAutoShow(args: {
   if (holdBeats > 3) notes.push('картина держится дольше трёх долей — в припеве это выглядит вяло');
   if (colorPerMin > 90) notes.push('цвет меняется чаще раза в секунду — на объекте это читается как мигание');
   if (quietShare > 0.55) notes.push('больше половины трека отдано тихим частям — проверьте разметку, шоу может показаться пустым');
-  if (lightBlocks.length === 0) notes.push('в объекте нет светильников — свет не расставлен, только вода');
+  if (lightBlocks.length === 0) notes.push('в проекте нет светильников — свет не расставлен, только вода');
 
   return { onBeat, holdBeats, tooShort, colorPerMin, quietShare, notes };
 }

@@ -75,7 +75,7 @@ export function PatchView({ engine }: { engine: EngineConnection }) {
   // не должно быть просто.
   const [remapOpen, setRemapOpen] = useState(false);
 
-  if (!project) return <main className="view">Жду данные объекта от движка…</main>;
+  if (!project) return <main className="view">Жду данные проекта от движка…</main>;
 
   const remapped = Object.values(project.addressRemap ?? {}).reduce((s, t) => s + Object.keys(t).length, 0);
 
@@ -123,7 +123,7 @@ function ProjectHeader({ engine }: { engine: EngineConnection }) {
   const { project, updateProject } = engine;
   return (
     <section className="panel">
-      <h2>Объект</h2>
+      <h2>Проект</h2>
       <label className="field">
         Название:{' '}
         <input

@@ -40,7 +40,7 @@ export function SequencesView({ engine }: { engine: EngineConnection }) {
     }
   }, [sequences, selectedId]);
 
-  if (!project) return <main className="view">Жду данные объекта от движка…</main>;
+  if (!project) return <main className="view">Жду данные проекта от движка…</main>;
 
   const addSequence = (): void => {
     const seq: Sequence = { id: uid(), name: `Секвенсор ${project.sequences.length + 1}`, mode: 'loop', steps: [] };

@@ -178,7 +178,7 @@ export function safeFolderName(name: string): string {
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/[. ]+$/, '');
-  return cleaned === '' ? 'Новый объект' : cleaned.slice(0, 80);
+  return cleaned === '' ? 'Новый проект' : cleaned.slice(0, 80);
 }
 
 /** Свободная папка: «Новороссийск», занято — «Новороссийск 2» и так далее. */
@@ -381,7 +381,7 @@ export function migrateLegacyProject(legacyConfigFile: string, projectsRoot: str
   } catch {
     return null;
   }
-  const name = project.name?.trim() || 'Объект';
+  const name = project.name?.trim() || 'Проект';
   fs.mkdirSync(projectsRoot, { recursive: true });
   const paths = createProject(projectsRoot, name, project);
 

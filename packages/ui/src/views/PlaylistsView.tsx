@@ -32,7 +32,7 @@ export function PlaylistsView({ engine, readOnly = false }: { engine: EngineConn
     }
   }, [playlists, selectedId]);
 
-  if (!project) return <main className="view">Жду данные объекта от движка…</main>;
+  if (!project) return <main className="view">Жду данные проекта от движка…</main>;
 
   const addPlaylist = (): void => {
     const p: Playlist = {

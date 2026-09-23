@@ -144,7 +144,7 @@ function send(st: Conn, msg: AnyMsg): void {
   send(st, { type: 'importAppSettings', dataBase64: foreign.toString('base64') });
   const bad1 = await waitFor(st, 'appSettingsImportResult');
   check('копия объекта не принимается за настройки', bad1?.ok === false, String(bad1?.message));
-  check('человеку сказано, что это не тот файл', String(bad1?.message).includes('копия объекта'), String(bad1?.message));
+  check('человеку сказано, что это не тот файл', String(bad1?.message).includes('копия проекта'), String(bad1?.message));
 
   const broken = createZip([{ name: 'app-config.json', data: Buffer.from('это не json', 'utf8') }]);
   send(st, { type: 'importAppSettings', dataBase64: broken.toString('base64') });

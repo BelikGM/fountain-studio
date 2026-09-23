@@ -52,7 +52,7 @@ export function ScheduleView({ engine }: { engine: EngineConnection }) {
   const { project, updateProject } = engine;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hasClip, setHasClip] = useState(() => clipboardHasKind(CLIP_KIND));
-  if (!project) return <main className="view">Жду данные объекта от движка…</main>;
+  if (!project) return <main className="view">Жду данные проекта от движка…</main>;
 
   const schedules = project.schedules;
   const selected = schedules.find((s) => s.id === selectedId) ?? schedules[0] ?? null;
