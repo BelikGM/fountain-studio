@@ -160,6 +160,32 @@ function launch(extraArgs, extraEnv) {
     check(res.set === true && res.on === true, 'включили — запись в «Автозагрузке» Windows есть');
     check(res.unset === true && res.off === true, 'выключили — записи нет');
   }
+  console.log('— автозапуск движка из исходников (реестр, тестовое имя) —');
+  {
+    // Из исходников — тоже записью в «Автозагрузке», без прав администратора:
+    // задачу планировщика «при входе» обычный пользователь не создаст.
+    const code = [
+      "import { isAutostartEnabled, isAutostartSupported, setAutostart } from './packages/engine/src/autostart.ts';",
+      'const set = setAutostart(true);',
+      'const out = { supported: isAutostartSupported(), set: set.ok, err: set.error ?? "", on: isAutostartEnabled(), unset: setAutostart(false).ok, off: !isAutostartEnabled() };',
+      'console.log(JSON.stringify(out));',
+    ].join('\n');
+    const env = { ...process.env, FOUNTAIN_AUTOSTART_NAME: 'FountainStudioDEVTEST' };
+    delete env.FOUNTAIN_APP_CMD;
+    const file = path.join(os.tmpdir(), `fs-autostart-dev-${process.pid}.mts`);
+    fs.writeFileSync(file, code.replace('./packages/engine/src/autostart.ts', pathToFileUrl(path.join(ROOT, 'packages/engine/src/autostart.ts'))));
+    const r = spawnSync(process.execPath, [path.join(ROOT, 'node_modules/tsx/dist/cli.mjs'), file], { cwd: ROOT, env, encoding: 'utf8' });
+    fs.rmSync(file, { force: true });
+    let res = {};
+    try {
+      res = JSON.parse((r.stdout || '').trim().split('\n').pop());
+    } catch {
+      console.log(r.stdout, r.stderr);
+    }
+    check(res.supported === true, 'из исходников автозапуск доступен');
+    check(res.set === true && res.on === true, `включили без прав администратора — запись есть${res.err ? ' (' + res.err + ')' : ''}`);
+    check(res.unset === true && res.off === true, 'выключили — записи нет');
+  }
   console.log(`\nустановленная программа: пройдено ${passed}, ошибок ${failed}`);
   process.exit(failed ? 1 : 0);
 })();

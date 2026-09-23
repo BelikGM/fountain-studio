@@ -18,6 +18,36 @@ import { fileURLToPath } from 'node:url';
  */
 const TASK_NAME = 'FountainStudioEngine';
 
+/*
+ * Из исходников — тоже через «Автозагрузку» пользователя (реестр Run), а не
+ * задачей планировщика. Задачу «при входе в систему» schtasks создаёт только
+ * с правами администратора: кнопка молча не работала у обычного пользователя
+ * (поймано 24.09.2026 — «Command failed: schtasks /Create …»). Запись Run прав
+ * не требует. Старую задачу планировщика, если её когда-то поставили
+ * администратором, по-прежнему узнаём и снимаем.
+ */
+const DEV_RUN_NAME = process.env.FOUNTAIN_AUTOSTART_NAME || TASK_NAME;
+/** Команда запуска сторожа из репозитория: свёрнутым окном, чтобы не мешало. */
+function devRunCommand(): string {
+  return `cmd /c start "Fountain Studio — движок" /min cmd /c "cd /d \"${REPO_ROOT}\" && npm run engine:watchdog"`;
+}
+function regHas(name: string): boolean {
+  try {
+    execFileSync('reg', ['query', RUN_KEY, '/v', name], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false; // записи нет — reg возвращает ненулевой код
+  }
+}
+function taskHas(): boolean {
+  try {
+    execFileSync('schtasks', ['/Query', '/TN', TASK_NAME], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Установленное приложение (npm run app:dist). main.cjs передаёт движку
  * готовую команду запуска самого себя «в фоне» (--hidden). До 23.09.2026 в
@@ -103,12 +133,7 @@ export function isAutostartEnabled(): boolean {
       return false; // записи нет — reg возвращает ненулевой код
     }
   }
-  try {
-    execFileSync('schtasks', ['/Query', '/TN', TASK_NAME], { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false; // задачи нет — schtasks возвращает ненулевой код
-  }
+  return regHas(DEV_RUN_NAME) || taskHas();
 }
 
 export function setAutostart(enabled: boolean): { ok: boolean; error?: string } {
@@ -126,12 +151,12 @@ export function setAutostart(enabled: boolean): { ok: boolean; error?: string } 
   }
   try {
     if (enabled) {
-      const tr = `cmd /c cd /d "${REPO_ROOT}" && npm run engine:watchdog`;
-      execFileSync('schtasks', ['/Create', '/TN', TASK_NAME, '/TR', tr, '/SC', 'ONLOGON', '/RL', 'LIMITED', '/F'], {
-        stdio: 'ignore',
-      });
+      execFileSync('reg', ['add', RUN_KEY, '/v', DEV_RUN_NAME, '/t', 'REG_SZ', '/d', devRunCommand(), '/f'], { stdio: 'ignore' });
     } else {
-      execFileSync('schtasks', ['/Delete', '/TN', TASK_NAME, '/F'], { stdio: 'ignore' });
+      if (regHas(DEV_RUN_NAME)) execFileSync('reg', ['delete', RUN_KEY, '/v', DEV_RUN_NAME, '/f'], { stdio: 'ignore' });
+      // Старая задача планировщика (ставилась администратором) — снимаем тоже;
+      // без прав снять не выйдет — тогда честная ошибка ниже.
+      if (taskHas()) execFileSync('schtasks', ['/Delete', '/TN', TASK_NAME, '/F'], { stdio: 'ignore' });
     }
     return { ok: true };
   } catch (err) {
