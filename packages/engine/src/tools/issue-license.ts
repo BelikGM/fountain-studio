@@ -118,7 +118,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * подписью не перестаёт быть подлинным), поэтому это отдельный, необязательный
  * слой: движок сам подтягивает по сети опубликованный список отозванных
  * ID, если в app-config.json указан license.revocationUrl (разбор решения —
- * docs/ARCHITECTURE.md §28, код проверки — licenseRevocation.ts).
+ * docs/АРХИТЕКТУРА.md §28, код проверки — licenseRevocation.ts).
  */
 
 const KEY_DIR = process.env.FS_LICENSE_KEYS_DIR ?? path.join(__dirname, '..', '..', 'license-keys');

@@ -113,7 +113,7 @@ function loadTab(): Tab {
   return 'console';
 }
 
-/** Короткий маршрут по мотивам docs/MANUAL.md §4 — полные 8 шагов остаются в Справке. */
+/** Короткий маршрут по мотивам docs/РУКОВОДСТВО.md §4 — полные 8 шагов остаются в Справке. */
 const TOUR_STEPS: TourStepDef[] = [
   {
     tabId: 'console',

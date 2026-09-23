@@ -411,7 +411,7 @@ function formatAge(ageMs: number): string {
  * Универсальные RDM-параметры (§3 доработки): одинаковы по спецификации
  * E1.20 для любой марки прибора, в отличие от сенсоров/статус-сообщений
  * (те — опциональные, формат зависит от производителя, сюда сознательно
- * не включены — см. docs/ARCHITECTURE.md §22, §25).
+ * не включены — см. docs/АРХИТЕКТУРА.md §22, §25).
  */
 function RdmDetailPanel({ engine, uid }: { engine: EngineConnection; uid: string }) {
   const [deviceInfo, setDeviceInfo] = useState<{
