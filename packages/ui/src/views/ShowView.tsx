@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  analyzeTrack,
   bandEnergyEnvelope,
+  buildAutoShow,
   bandEnvelopePoints,
   brightnessEnvelopePoints,
   colorChangeEvents,
@@ -279,7 +281,7 @@ function ShowEditor({
    */
   readOnly: boolean;
 }) {
-  const { project, send, requestAudio } = engine;
+  const { project, send, requestAudio, updateProject } = engine;
   const [pxPerSec, setPxPerSec] = useState(30);
   const [buffer, setBuffer] = useState<AudioBuffer | null>(
     show.audioFile ? (audioCache.get(show.audioFile) ?? null) : null,
@@ -777,112 +779,54 @@ function ShowEditor({
   // открывается по кнопке ниже.
   const [videoRenderOpen, setVideoRenderOpen] = useState(false);
 
+  /**
+   * Черновик шоу по музыке — новая раскладка (см. shared/autoshow.ts).
+   *
+   * Прежняя версия рисовала огибающую громкости на первый насос и залпы на
+   * всплесках. Настоящее шоу устроено иначе: картина воды переключается по
+   * сетке долей между ФИГУРАМИ, а свет живёт отдельным, более медленным
+   * слоем. Разбор восьми видео с объекта и цифры — в docs/АВТОПОСТАНОВКА.md.
+   *
+   * Сцены-фигуры добавляются в объект (имена начинаются с «⚡»): человек
+   * должен видеть, из чего собрано шоу, и править это руками.
+   */
   const autoStage = (): void => {
     if (!buffer || !project) return;
     const mono = toMono(buffer);
-    const sr = buffer.sampleRate;
-
-    const tempo = estimateTempo(mono, sr, {});
-    const env = energyEnvelope(mono, sr, 80);
-    const cuts = show.cuts;
-    const inCut = (srcMs: number): boolean => cuts.some((c) => srcMs >= c.startMs && srcMs < c.endMs);
-
-    // Источник → монтаж: точки внутри вырезок отбрасываем, остальные переводим
-    // в смонтированное время; затем прореживаем (шаг > 250 мс или скачок > 6).
-    // Общий хелпер — используется и громкостью, и полосами частот.
-    const toEdited = (srcPoints: { tMs: number; value: number }[]): { tMs: number; value: number }[] => {
-      const out: { tMs: number; value: number }[] = [];
-      let lastT = -Infinity;
-      let lastV = -Infinity;
-      for (const p of srcPoints) {
-        if (inCut(p.tMs)) continue;
-        const t = Math.round(sourceToEditedMs(cuts, p.tMs));
-        if (t > show.durationMs) break;
-        if (t - lastT < 250 && Math.abs(p.value - lastV) < 6) continue;
-        out.push({ tMs: t, value: p.value });
-        lastT = t;
-        lastV = p.value;
-      }
-      return out;
-    };
-
-    // Целевые устройства: все с каналом intensity (насосы/диммеры). Нет таких — черновика не будет.
-    const intensityDevices = project.devices.filter((d) =>
-      profiles.get(d.profileId)?.channels.some((c) => c.role === 'intensity'),
-    );
-    if (intensityDevices.length === 0) {
-      setAutoStatus('Нет приборов с каналом уровня (насос или одноканальный свет) — добавьте их на вкладке «Оборудование».');
+    const map = analyzeTrack(mono, buffer.sampleRate);
+    const nozzles = project.layout.nozzles;
+    if (nozzles.length === 0) {
+      setAutoStatus('В объекте нет форсунок на схеме — автопостановке не по чему строить картину. Добавьте их на вкладке «3D».');
       return;
     }
-
-    const newTracks: ShowTrack[] = [];
-    const summary: string[] = [];
-
-    // Общая громкость → первое устройство (обычно насос: §17 п.5 «громкость/бас → высота воды»).
-    const target1 = intensityDevices[0]!;
-    const ch1 = Math.max(0, profiles.get(target1.profileId)!.channels.findIndex((c) => c.role === 'intensity'));
-    const loudnessPoints = toEdited(loudnessEnvelopePoints(env, { min: 0, max: 255, gamma: 1.4 }));
-    const envTrack1: EnvelopeTrack = {
-      id: uid(),
-      name: `Громкость → ${target1.name}`,
-      kind: 'envelope',
-      offsetMs: 0,
-      muted: false,
-      deviceId: target1.id,
-      channel: ch1,
-      points: loudnessPoints,
-    };
-    newTracks.push(envTrack1);
-    summary.push(`громкость → «${target1.name}» (${loudnessPoints.length} точек)`);
-
-    // Второе устройство (если есть) — высокие частоты, отдельной полосой (блеск/вспышки света).
-    if (intensityDevices.length > 1) {
-      const target2 = intensityDevices[1]!;
-      const ch2 = Math.max(0, profiles.get(target2.profileId)!.channels.findIndex((c) => c.role === 'intensity'));
-      const trebleBand = bandEnergyEnvelope(mono, sr, [{ loHz: 2000, hiHz: 8000 }], 80, 1024).bands[0]!;
-      const treblePoints = toEdited(bandEnvelopePoints(trebleBand, 80, { min: 0, max: 255, gamma: 1.2 }));
-      const envTrack2: EnvelopeTrack = {
-        id: uid(),
-        name: `Высокие → ${target2.name}`,
-        kind: 'envelope',
-        offsetMs: 0,
-        muted: false,
-        deviceId: target2.id,
-        channel: ch2,
-        points: treblePoints,
-      };
-      newTracks.push(envTrack2);
-      summary.push(`высокие частоты → «${target2.name}» (${treblePoints.length} точек)`);
+    const res = buildAutoShow({
+      show,
+      nozzles,
+      devices: project.devices,
+      profiles,
+      map,
+      uid,
+    });
+    if (res.tracks.length === 0) {
+      setAutoStatus('Не нашлось приборов, привязанных к форсункам: проверьте на «3D», что у форсунок выбраны насос и клапан.');
+      return;
     }
-
-    // Форте → залпы (§17 п.5): заметные всплески громкости становятся короткими блоками первой сцены.
-    if (project.scenes.length > 0) {
-      const scene = project.scenes[0]!;
-      const blocks: ShowBlock[] = [];
-      for (const p of peakEvents(env, { thresholdRatio: 1.4, minGapMs: 400 })) {
-        if (inCut(p.tMs)) continue;
-        const t = Math.round(sourceToEditedMs(cuts, p.tMs));
-        if (t > show.durationMs) continue;
-        blocks.push({ id: uid(), type: 'scene', refId: scene.id, startMs: t, durationMs: 300, fadeInMs: 0, fadeOutMs: 100 });
-      }
-      if (blocks.length > 0) {
-        const burstTrack: BlocksTrack = {
-          id: uid(),
-          name: `Форте → «${scene.name}»`,
-          kind: 'blocks',
-          offsetMs: 0,
-          muted: false,
-          blocks,
-          effects: [],
-        };
-        newTracks.push(burstTrack);
-        summary.push(`${blocks.length} залпов «${scene.name}» на всплесках`);
-      }
-    }
-
-    onChange({ ...show, tracks: [...show.tracks, ...newTracks] });
-    const bpmText = tempo.bpm > 0 ? `темп ≈ ${tempo.bpm} BPM` : 'темп не определён';
-    setAutoStatus(`Черновик: ${summary.join(', ')}, ${bpmText}. Правьте на таймлайне.`);
+    // Сцены — в объект, дорожки — в шоу. Одним действием, чтобы отмена (Ctrl+Z)
+    // откатывала черновик целиком, а не половину.
+    updateProject({
+      ...project,
+      scenes: [...project.scenes, ...res.scenes],
+      shows: project.shows.map((s) =>
+        s.id === show.id ? { ...s, tracks: [...s.tracks, ...res.tracks] } : s,
+      ),
+    });
+    const g = res.report.grade;
+    const notes = g.notes.length > 0 ? ` · на что смотреть: ${g.notes.join('; ')}` : '';
+    setAutoStatus(
+      `Черновик: ${res.report.summary}. Проверка: в сетку попало ${Math.round(g.onBeat * 100)} %, ` +
+        `картина держится ${g.holdBeats.toFixed(1)} доли, смен цвета ${Math.round(g.colorPerMin)} в минуту${notes}. ` +
+        `Правьте на таймлайне — это черновик.`,
+    );
   };
 
   // ── Анализ видео (§4 доработки) ─────────────────────────────────────────────
@@ -1272,7 +1216,7 @@ function ShowEditor({
           className="btn"
           onClick={autoStage}
           disabled={!buffer}
-          data-hint="Черновик шоу по музыке: громкость — на насос, высокие частоты — на второй прибор, всплески — залпами сцены. Дальше правится руками"
+          data-hint="Черновик шоу по музыке: трек разбирается на доли и части, картина воды переключается между фигурами по сетке, свет — отдельным слоем по частям. Сцены-фигуры добавятся в объект с «⚡» в имени. Дальше правится руками"
         >
           ⚡ Автопостановка
         </button>

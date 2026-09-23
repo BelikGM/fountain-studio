@@ -55,6 +55,7 @@ npm -w @fountain-studio/engine run appbackup-test    # копия настрое
 npm -w @fountain-studio/engine run schedule-test     # расписание при прыжках часов (сон ПК, перевод времени)
 npm -w @fountain-studio/engine run editors-test      # два редактора сразу: чужая правка не затирается
 npm -w @fountain-studio/engine run why-test          # экран «почему ничего не играет»: порядок причин
+npm -w @fountain-studio/engine run autoshow-test     # автопостановка: сетка долей, части, фигуры, самооценка
 npm -w @fountain-studio/engine run musidora-test     # кадр USB-DMX FountanPlay
 npm -w @fountain-studio/engine run failsafe-test     # аварийное отключение
 npm -w @fountain-studio/engine run eventlog-test     # журнал на диске
@@ -113,6 +114,7 @@ npm -w @fountain-studio/engine run ui-shots -- сценарий.json
 | `docs/ЖУРНАЛ.md` | **что сделано в каждой сессии и что осталось** — читать первым, чтобы понять, на чём остановились |
 | `docs/IDEAS.md` | список задач: что делаем дальше (в порядке), что уже сделано |
 | `docs/ARCHITECTURE.md` | архитектурные решения и итоги фаз, по датам |
+| `docs/АВТОПОСТАНОВКА.md` | как автопостановка разбирает трек и по каким замерам с объекта она калибрована |
 | `docs/USB-DMX.md` | железо вывода: ENTTEC PRO / Open DMX / интерфейс FontanPlay, формат кадра |
 | `docs/USB-DMX-проверка-на-объекте.md` | памятка человеку на объекте (пересылается тестировщику) |
 | `docs/FONTANPLAY-REFERENCE.md` | конспект старой программы FontanPlay — что она умела |

@@ -27,7 +27,8 @@
     "appbackup-test": "tsx src/tools/appbackup-selftest.ts",
     "schedule-test": "tsx src/tools/schedule-selftest.ts",
     "editors-test": "tsx src/tools/editors-selftest.ts",
-    "why-test": "tsx src/tools/whyquiet-selftest.ts"
+    "why-test": "tsx src/tools/whyquiet-selftest.ts",
+    "autoshow-test": "tsx src/tools/autoshow-selftest.ts"
   },
   "dependencies": {
     "@fountain-studio/shared": "*",

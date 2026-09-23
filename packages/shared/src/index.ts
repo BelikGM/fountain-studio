@@ -1,5 +1,6 @@
 export * from './audioanalysis';
 export * from './audiovolume';
+export * from './autoshow';
 export * from './dependents';
 export * from './dmx';
 export * from './dmxcycle';
