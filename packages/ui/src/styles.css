@@ -40,6 +40,9 @@
   --fader-white: #eaeaea;
   --fader-lamp: #f0c040;
   --fader-other: #9aa0ac;
+  /* Подсветка найденного в справке и вспышка места, куда привела находка. */
+  --hit-bg: rgba(240, 190, 60, 0.38);
+  --hit-flash: rgba(46, 157, 247, 0.28);
 }
 
 /* Светлая тема (тумблер в шапке; выбор хранится в localStorage). */
@@ -66,6 +69,8 @@
   /* Белый DMX-канал светлым не видно на светлой теме — серый вместо него.
      Насосы здесь НЕ переопределяем: их серый один на обе темы (см. :root). */
   --fader-white: #8a8a8a;
+  --hit-bg: rgba(255, 196, 0, 0.45);
+  --hit-flash: rgba(24, 119, 207, 0.2);
 }
 
 * {
@@ -218,8 +223,94 @@ body {
 }
 
 .help-modal {
-  width: min(760px, calc(100vw - 48px));
-  max-height: calc(100vh - 48px);
+  width: min(980px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  /* Прокручивается текст, а не окно: иначе выпадающие находки поиска
+     обрезались бы краем окна. */
+  overflow: visible;
+}
+.help-body { flex: 1 1 auto; min-height: 0; }
+/* Шапка справки — в одну строку при любой ширине (заказчик 25.09.2026:
+   «Закрыть» уезжала на вторую строку). Сжимается поле поиска, на узком
+   экране пропадает слово «Справка». */
+.help-head { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; min-width: 0; }
+/* .panel-title ниже задаёт width: 100% — здесь точнее, иначе строка шире окна. */
+.panel-title.help-title { width: auto; flex: none; }
+.help-docs { display: flex; gap: 6px; flex: none; }
+.help-close { flex: none; margin-left: auto; }
+.help-search { position: relative; flex: 1 1 240px; min-width: 110px; max-width: 340px; }
+/* Поле поиска — овальное, как поиск на вкладке 3D. */
+.help-search-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-track);
+  color: var(--fg-dim);
+  cursor: text;
+}
+.help-search-field:focus-within { border-color: var(--accent); color: var(--accent); }
+.help-search-field svg { flex: none; }
+.help-search-field input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  padding: 0;
+}
+.help-search-count { font-size: 11px; flex: none; }
+/* Находки — карточками под полем, поверх текста. Прижаты к правому краю
+   поля: поле стоит справа, и так список не вылезает за окно справки. */
+.help-results {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 5;
+  width: min(540px, calc(100vw - 64px));
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
+}
+.help-results-empty { margin: 4px 6px; font-size: 12px; }
+.help-result {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+.help-result.active { border-color: var(--accent); background: var(--bg-track); }
+.help-result-section { font-size: 12px; font-weight: 600; color: var(--accent); }
+.help-result-text { font-size: 13px; line-height: 1.45; color: var(--fg-dim); }
+mark.help-hit { background: var(--hit-bg); color: var(--fg); border-radius: 2px; padding: 0 1px; }
+/* Место, куда привела находка, коротко вспыхивает — глазу есть за что зацепиться. */
+.help-target { animation: help-flash 1.8s ease-out; border-radius: 4px; }
+@keyframes help-flash {
+  from { background: var(--hit-flash); }
+  to { background: transparent; }
+}
+@media (max-width: 760px) {
+  .help-title { display: none; }
 }
 .license-modal { width: min(520px, calc(100vw - 48px)); }
 
