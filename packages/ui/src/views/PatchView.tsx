@@ -1,6 +1,9 @@
-import { useMemo, useRef, useState } from 'react';
+import { Fragment, useMemo, useRef, useState } from 'react';
 import { useCollapsiblePanels } from '../collapsiblePanels';
 import { ReaddressPanel } from '../components/ReaddressPanel';
+import { FigureWizard } from '../components/FigureWizard';
+import { ArrowRightIcon } from '../components/Icons';
+import { NumInput } from '../components/NumInput';
 import { RemapDialog } from '../components/RemapDialog';
 import {
   DMX_UNIVERSE_SIZE,
@@ -82,8 +85,20 @@ export function PatchView({ engine }: { engine: EngineConnection }) {
 
   const remapped = Object.values(project.addressRemap ?? {}).reduce((s, t) => s + Object.keys(t).length, 0);
 
+  /*
+   * Порядок панелей — как идёт работа (заказчик 24.09.2026): назвали проект →
+   * завели приборы (по одному, несколькими типами, фигурой) → проверили
+   * список → и только потом, если монтаж не совпал, переадресация и
+   * перенумерация. Свой тип прибора — в самом низу: нужен редко. Раньше
+   * переадресация стояла первой, хотя без приборов ей нечего делать.
+   */
   return (
     <main className="view" ref={rootRef}>
+      <ProjectHeader engine={engine} />
+      <AddDevices engine={engine} />
+      <DeviceWizard engine={engine} />
+      <FigureWizard engine={engine} />
+      <DevicesTable engine={engine} />
       <section className="panel">
         <h2>Переадресация каналов</h2>
         <p className="dim">
@@ -112,10 +127,6 @@ export function PatchView({ engine }: { engine: EngineConnection }) {
           }}
         />
       )}
-      <ProjectHeader engine={engine} />
-      <AddDevices engine={engine} />
-      <DeviceWizard engine={engine} />
-      <DevicesTable engine={engine} />
       <ReaddressPanel project={project} universes={universes} updateProject={updateProject} />
       <Profiles project={project} updateProject={updateProject} universesCount={universes.length} />
     </main>
@@ -274,7 +285,10 @@ interface WizardRowState {
 }
 
 /**
- * Мастер нового объекта (§27 доработки, УХ п.11): несколько типов приборов
+ * «Добавить несколько типов сразу» — бывший «Мастер нового объекта» (§27
+ * доработки, УХ п.11). Переименован и стал обычной панелью (заказчик
+ * 24.09.2026): «мастер» ничем не отличался от добавления приборов, кроме того,
+ * что берёт несколько типов за раз, — так и называем. Несколько типов приборов
  * одним заходом, с общим порядком адресации между строками. Не хватает
  * вселенных под перелив — создаём их сами (шлём updateConfig с
  * заглушкой Art-Net/127.0.0.1, как кнопка «+ Вселенная» в Настройках) и
@@ -283,8 +297,17 @@ interface WizardRowState {
 function DeviceWizard({ engine }: { engine: EngineConnection }) {
   const { project, universes, engineConfig, updateProject, send } = engine;
   const profiles = allProfiles(project!);
-  const [open, setOpen] = useState(false);
-  const [rows, setRows] = useState<WizardRowState[]>([]);
+  const [rows, setRows] = useState<WizardRowState[]>(() => [
+    {
+      key: uid(),
+      profileId: profiles[0]?.id ?? 'pump',
+      count: 10,
+      namePrefix: '',
+      customStart: false,
+      startUniverse: universes[0]?.id ?? 1,
+      startAddress: 1,
+    },
+  ]);
   const [result, setResult] = useState<{ added: number; newUniverses: number; appliedNow: boolean } | null>(null);
 
   const newRow = (): WizardRowState => ({
@@ -296,12 +319,6 @@ function DeviceWizard({ engine }: { engine: EngineConnection }) {
     startUniverse: universes[0]?.id ?? 1,
     startAddress: 1,
   });
-
-  const openWizard = (): void => {
-    setResult(null);
-    setRows(rows.length > 0 ? rows : [newRow()]);
-    setOpen(true);
-  };
 
   const patchRow = (key: string, patch: Partial<WizardRowState>): void => {
     setRows(rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
@@ -362,26 +379,16 @@ function DeviceWizard({ engine }: { engine: EngineConnection }) {
     }));
     updateProject({ ...project, devices: [...project.devices, ...devices] });
     setResult({ added: devices.length, newUniverses: plan.newUniverseIds.length, appliedNow });
-    setRows([]);
+    setRows([newRow()]);
   };
-
-  if (!open) {
-    return (
-      <div className="form-row">
-        <button className="btn" onClick={openWizard}>
-          🧙 Мастер нового объекта
-        </button>
-      </div>
-    );
-  }
 
   return (
     <section className="panel">
-      <h2>Мастер нового объекта</h2>
+      <h2>Добавить несколько типов сразу</h2>
       <p className="dim">
-        Несколько типов приборов сразу, одной адресацией: каждая следующая строка продолжает с того
-        адреса, на котором остановилась предыдущая (в том числе переходя в следующую вселенную), если
-        не задан свой начальный адрес.
+        Например, 10 насосов, 20 клапанов и 30 светильников одним заходом. Каждая следующая строка продолжает
+        адреса с того места, где остановилась предыдущая (в том числе переходя в следующую вселенную), если не
+        задан свой начальный адрес. Форсунки в 3D этим не создаются — для этого «Добавить фигуру фонтана» ниже.
       </p>
 
       {result ? (
@@ -393,11 +400,12 @@ function DeviceWizard({ engine }: { engine: EngineConnection }) {
                 ? ` (новых вселенных: ${result.newUniverses})`
                 : ` (новых вселенных: ${result.newUniverses} — ждут применения вместе с другими правками, см. плашку вверху)`)}
           </span>
-          <button className="btn" onClick={() => requestTab('layout')}>
-            → Перейти в 3D и расставить кольцом
+          <button className="btn btn-icon" onClick={() => requestTab('layout')}>
+            <ArrowRightIcon />
+            Перейти в 3D и расставить фигурой
           </button>
-          <button className="btn btn-small" onClick={() => setOpen(false)}>
-            Закрыть
+          <button className="btn btn-small" onClick={() => setResult(null)}>
+            Добавить ещё
           </button>
         </div>
       ) : (
@@ -491,10 +499,7 @@ function DeviceWizard({ engine }: { engine: EngineConnection }) {
               + Строка
             </button>
             <button className="btn active" disabled={rows.length === 0} onClick={place}>
-              Разместить
-            </button>
-            <button className="btn btn-small" onClick={() => setOpen(false)}>
-              Отмена
+              Добавить
             </button>
           </div>
         </>
@@ -543,6 +548,13 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
   const [modbusOpenId, setModbusOpenId] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const [hasDeviceClip, setHasDeviceClip] = useState(() => clipboardHasKind('device'));
+  /**
+   * Порядок строк, замороженный на время правки адреса. Таблица сортируется по
+   * адресу, и раньше при наборе «109» строка переезжала уже на «10», а курсор
+   * из поля пропадал (заказчик 24.09.2026). Пока поле адреса в фокусе, строки
+   * стоят на месте; вышли из поля — таблица пересортировывается.
+   */
+  const [frozenOrder, setFrozenOrder] = useState<string[] | null>(null);
 
   // Copy/paste прибора (§27 доработки, УХ п.13) — вставка ищет свободный адрес
   // в той же вселенной, откуда скопирован (авто-адресация, как «Добавить устройства»).
@@ -637,8 +649,13 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
     };
   });
   const q = filter.trim().toLowerCase();
+  const byAddress = (a: PatchedDevice, b: PatchedDevice): number => a.universe - b.universe || a.address - b.address;
+  const frozenAt = (id: string): number => {
+    const i = frozenOrder?.indexOf(id) ?? -1;
+    return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+  };
   const sorted = [...project!.devices]
-    .sort((a, b) => a.universe - b.universe || a.address - b.address)
+    .sort(frozenOrder ? (a, b) => frozenAt(a.id) - frozenAt(b.id) || byAddress(a, b) : byAddress)
     .filter((d) => {
       if (q === '') return true;
       const rec = searchRecords.find((r) => r.id === d.id);
@@ -740,7 +757,11 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                 const profile = profiles.get(d.profileId);
                 const trimOpen = trimOpenId === d.id;
                 const modbusOpen = modbusOpenId === d.id;
-                return [
+                // Строка прибора и раскрытые под ней панели — одним куском с ключом прибора:
+                // иначе при пересортировке React пересоздавал строку по месту, и поле
+                // адреса пропадало прямо во время набора.
+                return (
+                  <Fragment key={d.id}>
                   <tr key={d.id} className={bad ? 'row-error' : ''}>
                     <td>
                       <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} />
@@ -781,13 +802,14 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                       </select>
                     </td>
                     <td>
-                      <input
-                        className="input input-num"
-                        type="number"
+                      <NumInput
+                        integer
                         min={1}
                         max={DMX_UNIVERSE_SIZE}
                         value={d.address}
-                        onChange={(e) => patchDevice(d.id, { address: Number(e.target.value) })}
+                        onFocus={() => setFrozenOrder(sorted.map((x) => x.id))}
+                        onBlur={() => setFrozenOrder(null)}
+                        onChange={(v) => patchDevice(d.id, { address: v })}
                       />
                     </td>
                     <td className="dim">
@@ -838,8 +860,8 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                         ✕
                       </button>
                     </td>
-                  </tr>,
-                  trimOpen && profile ? (
+                  </tr>
+                  {trimOpen && profile ? (
                     <tr key={`${d.id}-trim`}>
                       <td colSpan={7}>
                         <TrimEditor
@@ -849,8 +871,8 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                         />
                       </td>
                     </tr>
-                  ) : null,
-                  modbusOpen ? (
+                  ) : null}
+                  {modbusOpen ? (
                     <tr key={`${d.id}-modbus`}>
                       <td colSpan={7}>
                         <ModbusEditor
@@ -861,8 +883,9 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                         />
                       </td>
                     </tr>
-                  ) : null,
-                ];
+                  ) : null}
+                  </Fragment>
+                );
               })}
             </tbody>
           </table>
@@ -1311,9 +1334,30 @@ function Profiles({
     updateProject({ ...project, profiles: project.profiles.filter((p) => p.id !== id) });
   };
 
+  /*
+   * Панель называлась «Типы приборов» и начиналась со списка — было непонятно,
+   * что здесь можно завести СВОЙ тип (заказчик 24.09.2026). Теперь название
+   * говорит, зачем панель, форма сверху, список всех типов — под ней.
+   */
   return (
     <section className="panel">
-      <h2>Типы приборов</h2>
+      <h2>Создать свой тип прибора</h2>
+      <p className="dim">
+        Нужного прибора нет в списке «Тип» — заведите свой: название, вид и каналы по порядку адресов. Ниже — все
+        типы, которые уже есть.
+      </p>
+      <ProfileForm
+        name={name}
+        setName={setName}
+        kind={kind}
+        setKind={setKind}
+        twoState={twoState}
+        setTwoState={setTwoState}
+        channels={channels}
+        setChannels={setChannels}
+        onCreate={createProfile}
+      />
+      <h3>Все типы приборов</h3>
       <table className="table">
         <thead>
           <tr>
@@ -1351,8 +1395,35 @@ function Profiles({
           })}
         </tbody>
       </table>
+    </section>
+  );
+}
 
-      <h3>Новый тип прибора</h3>
+/** Форма нового типа прибора (вынесена, чтобы стоять над списком типов). */
+function ProfileForm({
+  name,
+  setName,
+  kind,
+  setKind,
+  twoState,
+  setTwoState,
+  channels,
+  setChannels,
+  onCreate,
+}: {
+  name: string;
+  setName: (v: string) => void;
+  kind: DeviceKind;
+  setKind: (v: DeviceKind) => void;
+  twoState: boolean;
+  setTwoState: (v: boolean) => void;
+  channels: { name: string; role: ChannelRole }[];
+  setChannels: (v: { name: string; role: ChannelRole }[]) => void;
+  onCreate: () => void;
+}) {
+  const createProfile = onCreate;
+  return (
+    <>
       <div className="form-row">
         <label className="field">
           Название:{' '}
@@ -1417,6 +1488,6 @@ function Profiles({
           </button>
         </div>
       </div>
-    </section>
+    </>
   );
 }

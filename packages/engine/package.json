@@ -20,6 +20,7 @@
     "eventlog-test": "tsx src/tools/eventlog-selftest.ts",
     "worker-test": "tsx src/tools/worker-selftest.ts",
     "wind-test": "tsx src/tools/wind-selftest.ts",
+    "figure-test": "tsx src/tools/figure-selftest.ts",
     "telegram-test": "tsx src/tools/telegram-selftest.ts",
     "projects-test": "tsx src/tools/projects-selftest.ts",
     "dirty-guard-test": "tsx src/tools/dirty-guard-selftest.ts",

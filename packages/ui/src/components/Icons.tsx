@@ -149,3 +149,43 @@ export function KeyArrowIcon({ dir }: { dir: 'up' | 'down' | 'left' | 'right' })
     </svg>
   );
 }
+
+/**
+ * «Перейти туда»: стрелка вправо значком. Символ «→» шрифта сидит ниже
+ * середины кнопки (замечание 24.09.2026), значок в .btn-icon — ровно по центру.
+ */
+export function ArrowRightIcon() {
+  return (
+    <svg {...ICON_PROPS} width={13} height={13} aria-hidden="true">
+      <path d="M4 12h15" />
+      <path d="M13 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+/**
+ * Проект — папка. Раньше в шапке стоял эмодзи «🏛» (здание с колоннами): что
+ * он значит, было непонятно, и сидел он ниже середины кнопки (24.09.2026).
+ */
+/**
+ * Сохранить — дискета. Кнопка «● Сохранить» словами не помещалась в шапку на
+ * 1280–1600 px, когда есть несохранённые правки (замер 24.09.2026); значок
+ * в жёлтой рамке + подсказка занимают вчетверо меньше места.
+ */
+export function SaveIcon() {
+  return (
+    <svg {...ICON_PROPS} width={14} height={14} aria-hidden="true">
+      <path d="M5 3h11l4 4v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+      <path d="M8 3v5h7V3" />
+      <path d="M8 21v-7h8v7" />
+    </svg>
+  );
+}
+
+export function FolderIcon() {
+  return (
+    <svg {...ICON_PROPS} width={14} height={14} aria-hidden="true">
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+    </svg>
+  );
+}

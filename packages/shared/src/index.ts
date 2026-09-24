@@ -27,6 +27,7 @@ export * from './utilitylight';
 export * from './vfdpresets';
 export * from './videoanalysis';
 export * from './failsafe';
+export * from './figure';
 export * from './windlimit';
 export * from './whyquiet';
 export * from './wizard';

@@ -2441,3 +2441,48 @@ section.panel-flash { box-shadow: 0 0 0 1px var(--accent); transition: box-shado
 }
 .eq input[type='range'].eq-slider::-moz-range-track { width: 6px; height: 100%; }
 .eq-scale { padding: 22px 2px 24px 0; }
+
+/* «Добавить фигуру фонтана» на «Оборудовании»: форма слева, вид сверху справа.
+   На узком окне вид сверху уходит под форму. */
+.figure-wizard { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+.figure-form { flex: 1 1 640px; min-width: 0; }
+.figure-form h3 { margin: 10px 0 6px; font-size: 13px; color: var(--fg-dim); font-weight: 600; }
+.figure-form h3:first-child { margin-top: 0; }
+.figure-form .shape-presets { display: inline-flex; }
+.figure-devices td { vertical-align: middle; }
+.figure-preview { margin: 0; flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.figure-preview svg { background: var(--bg-track); border: 1px solid var(--border); border-radius: 6px; }
+.figure-preview-center { stroke: var(--fg-dim); stroke-width: 1; }
+.figure-preview-label { fill: var(--fg); font-size: 10px; }
+.figure-share { margin: 10px 0; }
+.figure-share > summary { cursor: pointer; color: var(--accent); }
+.figure-share-table { margin-top: 6px; width: auto; }
+.figure-share-table td { padding-right: 18px; }
+.figure-share-table select { margin-right: 4px; }
+.figure-slot-empty { opacity: 0.55; }
+/* Ссылка-кнопка внутри текста: ведёт на другую вкладку, выглядит как ссылка. */
+.link-btn { display: inline; background: none; border: none; padding: 0; margin: 0; font: inherit; color: var(--accent); cursor: pointer; text-align: left; text-decoration: underline dotted; text-underline-offset: 2px; }
+.link-btn:hover { text-decoration-style: solid; }
+.sidebar-note { font-size: 12px; margin: 0 0 8px; line-height: 1.4; }
+/* Контур в списке 3D раскрывается стрелкой: под ним — его форсунки и прожекторы. */
+.list-expand {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  margin: 0 -4px 0 -4px;
+  border: none;
+  background: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.list-expand:disabled { cursor: default; opacity: 0.35; }
+.list-expand .panel-chevron { margin-left: 0; transform: rotate(-45deg); }
+.list-expand-open .panel-chevron { transform: translateY(-2px) rotate(45deg); }
+.list-expand:hover .panel-chevron { opacity: 0.9; }
+.list-item > .list-expand + .list-item-label { flex: 1; }
+.list-nested-wrap { list-style: none; padding: 0 0 2px 14px; }
+.list-nested { border-left: 1px solid var(--border); padding-left: 6px; }
+.list-nested .list-item { padding: 4px 8px; font-size: 12px; }

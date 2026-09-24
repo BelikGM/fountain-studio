@@ -103,6 +103,17 @@ export function registerPanelStateSender(fn: ((key: string, collapsed: boolean) 
   sender = fn;
 }
 
+/**
+ * Свёрнуто ли что-то своё, не панель: разделы списка слева в 3D. Хранится
+ * там же, где панели, — у движка, и переживает перезапуск программы.
+ */
+export function isCollapsedKey(key: string, byDefault = false): boolean {
+  return state[key] ?? byDefault;
+}
+export function rememberCollapsedKey(key: string, collapsed: boolean): void {
+  remember(key, collapsed);
+}
+
 function remember(key: string, collapsed: boolean): void {
   state = { ...state, [key]: collapsed };
   saveLocal();

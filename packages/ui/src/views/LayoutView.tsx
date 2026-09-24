@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useCollapsiblePanels } from '../collapsiblePanels';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { isCollapsedKey, rememberCollapsedKey, useCollapsiblePanels } from '../collapsiblePanels';
+import { NumInput } from '../components/NumInput';
+import { requestTab } from '../navigate';
 import {
   BOWL_DEFAULTS,
   DMX_MAX_VALUE,
@@ -21,9 +23,13 @@ import {
   sniffPlanFormat,
   profileMap,
   LAYOUT_SHAPES,
+  figurePoints,
+  planFigure,
   ringPositions,
   shapePositions,
   snapShapeCount,
+  type FigureDevices,
+  type FigureSpec,
   rotateGroup,
   translateGroup,
   uid,
@@ -721,6 +727,36 @@ function ElementList({
    * свойств рассчитана на один элемент, а массовые операции — на набор.
    */
   const [search, setSearch] = useState('');
+  /**
+   * Раскрытые контуры: под строкой контура — его форсунки и прожекторы
+   * (заказчик 24.09.2026: «внешнее кольцо и все относящиеся к нему форсунки»
+   * должны быть видны вместе в списке слева).
+   */
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+  /**
+   * Свёрнутые разделы списка («Форсунки», «Прожекторы»…). На объекте сотни
+   * форсунок: свернул «Форсунки» — работаешь контурами, список не тянется на
+   * десять экранов. Помнится и после перезапуска программы.
+   */
+  const [closedKinds, setClosedKinds] = useState<Set<ElKind>>(
+    () => new Set((['nozzle', 'light', 'bowl', 'group'] as ElKind[]).filter((k) => isCollapsedKey(`layout-list:${k}`))),
+  );
+  const toggleKind = (k: ElKind): void => {
+    const next = new Set(closedKinds);
+    const close = !next.has(k);
+    if (close) next.add(k);
+    else next.delete(k);
+    setClosedKinds(next);
+    rememberCollapsedKey(`layout-list:${k}`, close);
+  };
+  /** Раздел свёрнут — но при поиске всё равно показываем находки. */
+  const shown = (k: ElKind): boolean => !closedKinds.has(k) || search.trim() !== '';
+  const toggleGroup = (id: string): void => {
+    const next = new Set(openGroups);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setOpenGroups(next);
+  };
   /** Подходит ли элемент под строку поиска — по любому из его полей. */
   const matches = (type: ElKind, id: string): boolean => {
     const q = search.trim().toLowerCase();
@@ -804,7 +840,7 @@ function ElementList({
     );
   };
 
-  const item = (type: ElKind, id: string, label: string) => {
+  const item = (type: ElKind, id: string, label: string, expand?: { open: boolean; count: number }) => {
     const keys = hideKeys(type, id);
     return (
       <li
@@ -812,6 +848,21 @@ function ElementList({
         className={rowClass(type, id) + (isHidden(keys) ? ' list-item-hidden' : '')}
         onClick={(e) => click(type, id, e)}
       >
+        {expand && (
+          <button
+            type="button"
+            className={expand.open ? 'list-expand list-expand-open' : 'list-expand'}
+            disabled={expand.count === 0}
+            data-hint={expand.count === 0 ? 'В контуре пока пусто' : expand.open ? 'Свернуть' : 'Показать форсунки и прожекторы контура'}
+            onClick={(e) => {
+              // Стрелка раскрывает список, строку не выбирает.
+              e.stopPropagation();
+              toggleGroup(id);
+            }}
+          >
+            <span className="panel-chevron" aria-hidden="true" />
+          </button>
+        )}
         <span className="list-item-label">{label}</span>
         {eye(keys, type === 'group' ? 'форсунки контура' : 'элемент')}
       </li>
@@ -827,8 +878,17 @@ function ElementList({
     const all = idsOf(type);
     const allMarked = count > 0 && all.every((id) => multi.ids[type].includes(id));
     const sectionKeys = type === 'group' ? all.flatMap((id) => hideKeys('group', id)) : all.map((id) => type + ':' + id);
+    const open = shown(type);
     return (
       <h3 className="list-head">
+        <button
+          type="button"
+          className={open ? 'list-expand list-expand-open' : 'list-expand'}
+          data-hint={open ? `Свернуть раздел «${title}»` : `Показать раздел «${title}»`}
+          onClick={() => toggleKind(type)}
+        >
+          <span className="panel-chevron" aria-hidden="true" />
+        </button>
         {title} ({count})
         {count > 0 && (
           <button
@@ -961,21 +1021,51 @@ function ElementList({
         />
       </h2>
       {head('nozzle', 'Форсунки', layout.nozzles.length)}
-      <ul className="list">
-        {layout.nozzles.filter((n) => matches('nozzle', n.id)).map((n) => item('nozzle', n.id, n.name))}
-      </ul>
+      {shown('nozzle') && (
+        <ul className="list">
+          {layout.nozzles.filter((n) => matches('nozzle', n.id)).map((n) => item('nozzle', n.id, n.name))}
+        </ul>
+      )}
       {head('light', 'Прожекторы', layout.lights.length)}
-      <ul className="list">
-        {layout.lights.filter((l) => matches('light', l.id)).map((l) => item('light', l.id, l.name))}
-      </ul>
+      {shown('light') && (
+        <ul className="list">
+          {layout.lights.filter((l) => matches('light', l.id)).map((l) => item('light', l.id, l.name))}
+        </ul>
+      )}
       {head('bowl', 'Чаши', layout.bowls.length)}
-      <ul className="list">
-        {layout.bowls.filter((b) => matches('bowl', b.id)).map((b) => item('bowl', b.id, b.name))}
-      </ul>
+      {shown('bowl') && (
+        <ul className="list">
+          {layout.bowls.filter((b) => matches('bowl', b.id)).map((b) => item('bowl', b.id, b.name))}
+        </ul>
+      )}
       {head('group', 'Контуры', layout.nozzleGroups.length)}
-      <ul className="list">
-        {layout.nozzleGroups.filter((g) => matches('group', g.id)).map((g) => item('group', g.id, g.name))}
-      </ul>
+      {shown('group') && <ul className="list">
+        {layout.nozzleGroups
+          .filter((g) => matches('group', g.id))
+          .map((g) => {
+            const count = g.nozzleIds.length + g.lightIds.length;
+            const open = openGroups.has(g.id) && count > 0;
+            return (
+              <Fragment key={g.id}>
+                {item('group', g.id, `${g.name} (${count})`, { open, count })}
+                {open && (
+                  <li className="list-nested-wrap">
+                    <ul className="list list-nested">
+                      {g.nozzleIds.map((id) => {
+                        const n = layout.nozzles.find((x) => x.id === id);
+                        return n ? item('nozzle', n.id, n.name) : null;
+                      })}
+                      {g.lightIds.map((id) => {
+                        const l = layout.lights.find((x) => x.id === id);
+                        return l ? item('light', l.id, l.name) : null;
+                      })}
+                    </ul>
+                  </li>
+                )}
+              </Fragment>
+            );
+          })}
+      </ul>}
       {multiCount(multi) > 1 && (
         // Только счётчик: удаление и правки набора живут в панели свойств
         // справа, чтобы действие было там же, где видно, что именно меняется.
@@ -996,7 +1086,16 @@ function ElementList({
 
 // ---------- Добавление ----------
 
-let addCursor = 0;
+/** Никаких приборов — «Расставить фигурой» в 3D ставит только геометрию. */
+const NO_DEVICES: FigureDevices = { count: 0, profileId: '', universe: 1, startAddress: null, mode: 'blocks' };
+
+const SHAPE_BASE_NAME: Record<LayoutShape, string> = {
+  ring: 'Кольцо',
+  square: 'Квадрат',
+  rect: 'Прямоугольник',
+  triangle: 'Треугольник',
+  star: 'Звезда',
+};
 
 function AddTools({
   project,
@@ -1008,13 +1107,20 @@ function AddTools({
   onSelect: (s: Selected) => void;
 }) {
   const layout = project.layout;
+  /** Что расставлять: форсунки или прожекторы (прожекторы фигурой на «Оборудовании» не ставятся). */
+  const [what, setWhat] = useState<'nozzle' | 'light'>('nozzle');
   const [shape, setShape] = useState<LayoutShape>('ring');
   const [ringCount, setRingCount] = useState(8);
   const [ringRadius, setRingRadius] = useState(3);
   /** Центр фигуры: раскладка строится вокруг него, а не всегда вокруг нуля. */
   const [shapeCenter, setShapeCenter] = useState({ x: 0, y: 0, z: 0 });
   const [aspect, setAspect] = useState(0.6);
+  const [rotation, setRotation] = useState(0);
   const [ringKind, setRingKind] = useState<NozzleKind>('straight');
+  const [height, setHeight] = useState(() => nozzleDefaults('straight').maxHeightM);
+  const [widthMm, setWidthMm] = useState(() => Math.round(nozzleDefaults('straight').widthM * 1000));
+  const [tilt, setTilt] = useState(0);
+  const [tiltTo, setTiltTo] = useState<'center' | 'out'>('center');
 
   const newNozzle = (kind: NozzleKind, x: number, y: number, name: string, z = 0): Nozzle => ({
     id: uid(),
@@ -1042,15 +1148,19 @@ function AddTools({
     lightDeviceId: null,
   });
 
+  /*
+   * Новый элемент — в начало координат (заказчик 24.09.2026). Раньше форсунка
+   * вставала где-то в −4…+4 по X, а прожектор ещё и в −0,5 по Y и под воду по
+   * Z — чтобы новые не ложились друг на друга, но выглядело это как
+   * «добавилось в странное место». Координаты правятся справа.
+   */
   const addNozzle = (): void => {
-    const spot = (addCursor++ % 9) - 4;
-    const n = newNozzle('straight', spot, 0, `Ф${layout.nozzles.length + 1}`);
+    const n = newNozzle('straight', 0, 0, `Ф${layout.nozzles.length + 1}`);
     setLayout({ ...layout, nozzles: [...layout.nozzles, n] });
     onSelect({ type: 'nozzle', id: n.id });
   };
   const addLight = (): void => {
-    const spot = (addCursor++ % 9) - 4;
-    const l: LayoutLight = { id: uid(), name: `П${layout.lights.length + 1}`, x: spot, y: -0.5, z: -0.1, deviceId: null, ...LIGHT_DEFAULTS };
+    const l: LayoutLight = { id: uid(), name: `П${layout.lights.length + 1}`, x: 0, y: 0, z: 0, deviceId: null, ...LIGHT_DEFAULTS };
     setLayout({ ...layout, lights: [...layout.lights, l] });
     onSelect({ type: 'light', id: l.id });
   };
@@ -1071,27 +1181,76 @@ function AddTools({
     onSelect({ type: 'bowl', id: b.id });
   };
   const shapeDef = LAYOUT_SHAPES.find((s) => s.id === shape)!;
+
+  /**
+   * Фигура ложится КОНТУРОМ (заказчик 24.09.2026): кольцо из 36 форсунок — это
+   * один объект «Кольцо 1» в списке слева, а не 36 разрозненных строк. Контур
+   * потом поворачивается и сдвигается целиком (свойства справа). Геометрию
+   * считает тот же код, что и «Добавить фигуру фонтана» на «Оборудовании».
+   */
   const addShape = (): void => {
-    const base = layout.nozzles.length;
-    const nozzles = shapePositions(
+    const base = SHAPE_BASE_NAME[shape];
+    const taken = new Set(layout.nozzleGroups.map((g) => g.name));
+    let k = 1;
+    while (taken.has(`${base} ${k}`)) k++;
+    const spec: FigureSpec = {
+      name: `${base} ${k}`,
       shape,
-      ringCount,
-      ringRadius,
-      shapeCenter.x,
-      shapeCenter.y,
-      0,
+      count: ringCount,
+      size: ringRadius,
       aspect,
-    ).map((p, i) =>
-      newNozzle(
-        ringKind,
-        Math.round(p.x * 100) / 100,
-        Math.round(p.y * 100) / 100,
-        `Ф${base + i + 1}`,
-        Math.round(shapeCenter.z * 100) / 100,
-      ),
-    );
-    setLayout({ ...layout, nozzles: [...layout.nozzles, ...nozzles] });
+      cx: shapeCenter.x,
+      cy: shapeCenter.y,
+      cz: shapeCenter.z,
+      rotationDeg: rotation,
+      nozzleKind: ringKind,
+      maxHeightM: height,
+      widthM: widthMm / 1000,
+      tiltDeg: tilt,
+      tiltTo,
+      pump: NO_DEVICES,
+      valve: NO_DEVICES,
+      light: NO_DEVICES,
+    };
+    if (what === 'nozzle') {
+      const plan = planFigure(project, spec, { pump: [], valve: [], light: [] }, uid);
+      setLayout({ ...layout, nozzles: [...layout.nozzles, ...plan.nozzles], nozzleGroups: [...layout.nozzleGroups, plan.group] });
+      onSelect({ type: 'group', id: plan.group.id });
+      return;
+    }
+    const lights: LayoutLight[] = figurePoints(spec).map((p, i, all) => {
+      const toCenter = (Math.atan2(spec.cy - p.y, spec.cx - p.x) * 180) / Math.PI;
+      const atCenter = Math.hypot(spec.cx - p.x, spec.cy - p.y) < 1e-6;
+      const heading = atCenter ? 0 : tiltTo === 'center' ? toCenter : toCenter + 180;
+      return {
+        id: uid(),
+        name: all.length === 1 ? spec.name : `${spec.name} · П${i + 1}`,
+        x: p.x,
+        y: p.y,
+        z: spec.cz,
+        deviceId: null,
+        ...LIGHT_DEFAULTS,
+        tiltDeg: tilt,
+        headingDeg: Math.round((((heading % 360) + 360) % 360) * 10) / 10,
+      };
+    });
+    const group: NozzleGroup = {
+      id: uid(),
+      name: spec.name,
+      nozzleIds: [],
+      lightIds: lights.map((l) => l.id),
+      rotationDeg: ((rotation % 360) + 360) % 360,
+      offsetX: 0,
+      offsetY: 0,
+      offsetZ: 0,
+    };
+    setLayout({ ...layout, lights: [...layout.lights, ...lights], nozzleGroups: [...layout.nozzleGroups, group] });
+    onSelect({ type: 'group', id: group.id });
   };
+
+  const numField = (v: number, set: (x: number) => void, opts: { min?: number; max?: number; step?: number; integer?: boolean }) => (
+    <NumInput className="input input-num" value={v} onChange={set} {...opts} />
+  );
 
   return (
     <section className="panel">
@@ -1102,7 +1261,20 @@ function AddTools({
         <button className="btn btn-small" onClick={addBowl}>+ Чаша</button>
       </div>
       <h3>Расставить фигурой</h3>
+      <p className="dim sidebar-note">
+        Здесь — только форсунки или прожекторы, без приборов. Форсунки сразу с насосами, клапанами и светом{' '}—{' '}
+        <button className="link-btn" onClick={() => requestTab('patch')}>
+          «Оборудование» → «Добавить фигуру фонтана»
+        </button>
+      </p>
       <div className="field-grid">
+        <label className="field">
+          <FieldName label="Что" hint="Форсунки или прожекторы. Получится контур — его потом поворачивают и двигают целиком" />{' '}
+          <select className="input" value={what} onChange={(e) => setWhat(e.target.value as 'nozzle' | 'light')}>
+            <option value="nozzle">Форсунки</option>
+            <option value="light">Прожекторы</option>
+          </select>
+        </label>
         <label className="field">
           <FieldName label="Фигура" hint={H.shape} />{' '}
           <select
@@ -1123,14 +1295,7 @@ function AddTools({
         </label>
         <label className="field">
           <FieldName label="Штук" hint={H.shapeCount} />{' '}
-          <input
-            className="input input-num"
-            type="number"
-            min={shapeDef.min}
-            max={200}
-            value={ringCount}
-            onChange={(e) => setRingCount(Math.max(1, Math.min(200, Math.round(Number(e.target.value) || 1))))}
-          />
+          {numField(ringCount, setRingCount, { min: 1, max: 500, integer: true })}
         </label>
         <div className="shape-presets">
           {shapeDef.nice.map((n) => (
@@ -1146,27 +1311,12 @@ function AddTools({
         </div>
         <label className="field">
           <FieldName label={shape === 'ring' ? 'Радиус, м' : 'Размер, м'} hint={H.shapeSize(shape === 'ring')} />{' '}
-          <input
-            className="input input-num"
-            type="number"
-            step={0.5}
-            min={0.5}
-            value={ringRadius}
-            onChange={(e) => setRingRadius(Math.max(0.1, Number(e.target.value) || 3))}
-          />
+          {numField(ringRadius, setRingRadius, { min: 0.1, max: 500, step: 0.5 })}
         </label>
         {shape === 'rect' && (
           <label className="field">
             <FieldName label="Пропорция" hint={H.shapeAspect} />{' '}
-            <input
-              className="input input-num"
-              type="number"
-              step={0.1}
-              min={0.1}
-              max={5}
-              value={aspect}
-              onChange={(e) => setAspect(Math.min(5, Math.max(0.1, Number(e.target.value) || 0.6)))}
-            />
+            {numField(aspect, setAspect, { min: 0.1, max: 5, step: 0.1 })}
           </label>
         )}
         {(
@@ -1178,23 +1328,55 @@ function AddTools({
         ).map(([axis, label]) => (
           <label className="field" key={axis}>
             <FieldName label={label} hint={H.shapeCenter(axis)} />{' '}
-            <input
-              className="input input-num"
-              type="number"
-              step={0.5}
-              value={shapeCenter[axis]}
-              onChange={(e) => setShapeCenter({ ...shapeCenter, [axis]: Number(e.target.value) || 0 })}
-            />
+            {numField(shapeCenter[axis], (v) => setShapeCenter({ ...shapeCenter, [axis]: v }), { min: -1000, max: 1000, step: 0.5 })}
           </label>
         ))}
         <label className="field">
-          <FieldName label="Тип" hint={H.shapeKind} />{' '}
-          <select className="input" value={ringKind} onChange={(e) => setRingKind(e.target.value as NozzleKind)}>
-            {NOZZLE_KINDS.map((k) => (
-              <option key={k.id} value={k.id}>{k.label}</option>
-            ))}
-          </select>
+          <FieldName label="Поворот, °" hint="Повернуть фигуру вокруг её центра, 0–360°. Потом поворот меняется в свойствах контура" />{' '}
+          {numField(rotation, setRotation, { min: 0, max: 360, step: 5 })}
         </label>
+        {what === 'nozzle' && (
+          <>
+            <label className="field">
+              <FieldName label="Тип" hint={H.shapeKind} />{' '}
+              <select
+                className="input"
+                value={ringKind}
+                onChange={(e) => {
+                  const kind = e.target.value as NozzleKind;
+                  setRingKind(kind);
+                  setHeight(nozzleDefaults(kind).maxHeightM);
+                  setWidthMm(Math.round(nozzleDefaults(kind).widthM * 1000));
+                }}
+              >
+                {NOZZLE_KINDS.map((k) => (
+                  <option key={k.id} value={k.id}>{k.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <FieldName label="Высота струи, м" hint={H.height(ringKind)} />{' '}
+              {numField(height, setHeight, { min: 0.1, max: 100, step: 0.5 })}
+            </label>
+            <label className="field">
+              <FieldName label="Диаметр струи, мм" hint={H.diameter(ringKind)} />{' '}
+              {numField(widthMm, setWidthMm, { min: 2, max: 500, integer: true })}
+            </label>
+          </>
+        )}
+        <label className="field">
+          <FieldName label="Наклон, °" hint={H.tilt(what === 'nozzle' ? 'nozzle' : 'light', ringKind)} />{' '}
+          {numField(tilt, setTilt, { min: 0, max: 90, step: 5 })}
+        </label>
+        {tilt > 0 && (
+          <label className="field">
+            <FieldName label="Наклон куда" hint="К центру фигуры или наружу — азимут каждой форсунки посчитается сам" />{' '}
+            <select className="input" value={tiltTo} onChange={(e) => setTiltTo(e.target.value as 'center' | 'out')}>
+              <option value="center">к центру</option>
+              <option value="out">наружу</option>
+            </select>
+          </label>
+        )}
       </div>
       <button className="btn btn-small" onClick={addShape}>
         Расставить · {ringCount} шт.
@@ -1202,6 +1384,7 @@ function AddTools({
     </section>
   );
 }
+
 
 // ---------- Массовая привязка к патчу ----------
 
