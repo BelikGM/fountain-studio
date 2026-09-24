@@ -30,7 +30,8 @@
     "editors-test": "tsx src/tools/editors-selftest.ts",
     "why-test": "tsx src/tools/whyquiet-selftest.ts",
     "autoshow-test": "tsx src/tools/autoshow-selftest.ts",
-    "mail-test": "tsx src/tools/mail-selftest.ts"
+    "mail-test": "tsx src/tools/mail-selftest.ts",
+    "app-shots": "tsx src/tools/app-shots.ts"
   },
   "dependencies": {
     "@fountain-studio/shared": "*",

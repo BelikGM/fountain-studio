@@ -105,9 +105,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-hidden.ps1 \
   -Command 'cmd /c npm -w @fountain-studio/engine run ui-shots -- сценарий.json > shots.log 2>&1' -TimeoutSec 600
 ```
 
+Настольную программу со своей строкой заголовка, меню и кнопками Windows
+снимает `npm -w @fountain-studio/engine run app-shots -- папка` (изолированный
+движок, настоящее окно, протокол отладки Chromium) — тоже только через
+`scripts/run-hidden.ps1`.
+
 Новая или изменённая кнопка, плашка, вкладка, значок — прогнать шаг `align`
 (выравнивание по пикселям) при `"scale": 1` и `"scale": 1.5`. Символы шрифта
-и эмодзи в кнопках не использовать — только значки из `Icons.tsx`. Подробно —
+и эмодзи в кнопках не использовать — только значки из `Icons.tsx`. Новая
+вкладка, панель, широкая таблица — сплошная проверка на размерах ноутбуков
+(`node scripts/responsive-scenario.cjs`, от 1920 до 800 px). Подробно —
 `docs/ВЁРСТКА.md`.
 
 ## Правила, которых держимся

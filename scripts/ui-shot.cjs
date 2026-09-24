@@ -25,6 +25,7 @@
  *       { "focus": "input[type=number]", "n": 2 },     // фокус в поле (CSS-селектор)
  *       { "keys": ["Up", "Up", "5", "Tab"] },          // настоящие нажатия клавиш
  *       { "mouseAt": "input[type=number]", "n": 2, "fromRight": 6, "fromTop": 5, "times": 2 }, // щелчок мышью (кнопки ▲▼)
+ *       { "drag": ".side-resize", "n": 0, "dx": -60 },   // потянуть мышью (край панели)
  *       { "wait": 500 },
  *       { "eval": "document.title" },                  // выполнить JS, результат в вывод
  *       { "shot": "settings.png" },                    // снять видимую часть окна
@@ -66,7 +67,7 @@ const FIND = `
   (function find(text, n) {
     const want = text.trim();
     const all = [...document.querySelectorAll('button, a, [role=tab], .tab, label, summary, th, h2, h3, span, option, .panel-title, p, div')];
-    const vis = all.filter((e) => e.offsetParent !== null || e.tagName === 'OPTION');
+    const vis = all.filter((e) => (e.offsetParent !== null || e.tagName === 'OPTION') && !e.closest('.tabs-measure'));
     const txt = (e) => (e.innerText || e.textContent || '').trim();
     /*
      * Тот же текст у кнопки и у обёртки вокруг неё (div.form-row с одной
@@ -96,7 +97,7 @@ const FIT = `
     const ctx = canvas.getContext('2d');
     const label = (e) => (e.innerText || e.value || e.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 80);
     for (const e of document.querySelectorAll('button, .btn, th, td, label, .badge, .tab, input[type=text], input[type=number], input:not([type])')) {
-      if (e.offsetParent === null) continue;
+      if (e.closest('.tabs-measure') || e.offsetParent === null) continue;
       const cs = getComputedStyle(e);
       if (cs.overflow === 'visible' && cs.textOverflow !== 'ellipsis' && e.tagName !== 'INPUT') {
         // Переносящийся текст не обрезается; ловим только то, что не влезло в одну строку без переноса.
@@ -119,14 +120,15 @@ const FIT = `
     // сам элемент цел, но окно его не показывает.
     const W = document.documentElement.clientWidth;
     for (const e of document.querySelectorAll('header *, button, .btn, .conn, .tab, h2, label')) {
-      if (e.offsetParent === null || e.children.length > 3) continue;
+      // Внутри таблицы с прокруткой вбок (.table-scroll) — не за краем окна: её прокручивают.
+      if (e.closest('.tabs-measure') || e.closest('.table-scroll') || e.offsetParent === null || e.children.length > 3) continue;
       const r = e.getBoundingClientRect();
       if (r.width > 0 && r.right > W + 1) bad.push({ what: 'за краем окна', text: label(e), need: Math.round(r.right), room: W });
     }
     // Срезано по высоте: блок с overflow:hidden, содержимое выше него. Так
     // пряталась шапка дорожек в «Шоу» вместе с кнопкой 🎚 (22.09.2026).
     for (const e of document.querySelectorAll('div, section, td, label')) {
-      if (e.offsetParent === null || e.clientHeight === 0) continue;
+      if (e.closest('.tabs-measure') || e.offsetParent === null || e.clientHeight === 0) continue;
       const cs = getComputedStyle(e);
       if (cs.overflowY !== 'hidden' || cs.textOverflow === 'ellipsis') continue;
       if (e.scrollHeight > e.clientHeight + 2 && e.querySelector('button, input, select, label')) {
@@ -137,7 +139,7 @@ const FIT = `
     // «Шоу» крестик ✕ уезжал под шкалу времени, а проверка выше молчала: сама
     // кнопка цела, обрезает её родитель (22.09.2026).
     for (const e of document.querySelectorAll('div, section, td, label, header, nav')) {
-      if (e.offsetParent === null || e.clientWidth === 0) continue;
+      if (e.closest('.tabs-measure') || e.offsetParent === null || e.clientWidth === 0) continue;
       const cs = getComputedStyle(e);
       if (cs.textOverflow === 'ellipsis' || cs.overflowX === 'auto' || cs.overflowX === 'scroll') continue;
       const rowNoWrap = cs.display.includes('flex') && cs.flexDirection.startsWith('row') && cs.flexWrap === 'nowrap';
@@ -147,7 +149,7 @@ const FIT = `
       }
     }
     for (const s of document.querySelectorAll('select')) {
-      if (s.offsetParent === null) continue;
+      if (s.closest('.tabs-measure') || s.offsetParent === null) continue;
       const cs = getComputedStyle(s);
       ctx.font = cs.font;
       const opt = s.options[s.selectedIndex];
@@ -184,15 +186,22 @@ const ALIGN_TARGETS = `
     const out = [];
     const sel = 'button, .btn, .badge, .tab, [role=button], h2.panel-toggle';
     // Ссылки внутри строки (.link-btn, .statusbar-link) стоят по линии текста соседей, а не по своей рамке.
-    const skip = '.fader-track, .color-swatch, .color-swatch-pick, .fader-toggle, input, select, .eq-slider, .theme-toggle, .list-item, .link-btn, .statusbar-link';
+    // Свёрнутая боковая панель (.side-rail) — высокая полоска с подписью наверху, а находки справки
+    // (.help-result) — многострочные карточки с текстом слева: не кнопки с подписью по центру.
+    const skip = '.fader-track, .color-swatch, .color-swatch-pick, .fader-toggle, input, select, .eq-slider, .theme-toggle, .list-item, .link-btn, .statusbar-link, .side-rail, .help-result';
     // Открыто окно поверх страницы — проверяем только его: всё под затемнением
     // и выглядит, и меряется иначе.
     const modal = document.querySelector('.modal-overlay .modal');
-    for (const e of (modal ?? document).querySelectorAll(sel)) {
-      if (e.offsetParent === null || e.matches(skip) || e.closest('.hint-bubble')) continue;
+    // Открыто выпадающее меню («Файл», «Ещё») — только оно: кнопки под ним перекрыты.
+    const drop = [...document.querySelectorAll('.menu-drop')].filter((d) => d.offsetParent !== null).pop();
+    for (const e of (modal ?? drop ?? document).querySelectorAll(sel)) {
+      if (e.closest('.tabs-measure') || e.offsetParent === null || e.matches(skip) || e.closest('.hint-bubble')) continue;
       const r = e.getBoundingClientRect();
       if (r.width < 12 || r.height < 12 || r.bottom <= 0 || r.right <= 0 || r.top >= innerHeight || r.left >= innerWidth) continue;
       if (r.top < 0 || r.left < 0 || r.bottom > innerHeight || r.right > innerWidth) continue;
+      // Перекрыто (строкой состояния, краем прокрутки, другим окном) — снимок врёт, пропускаем.
+      const hitAt = (x, y) => { const h = document.elementFromPoint(x, y); return !!h && (h === e || e.contains(h)); };
+      if (!hitAt(r.left + r.width / 2, r.top + r.height / 2) || !hitAt(r.left + r.width * 0.25, r.top + r.height * 0.25) || !hitAt(r.right - r.width * 0.25, r.bottom - r.height * 0.25)) continue;
       const cs = getComputedStyle(e);
       if (cs.visibility === 'hidden' || parseFloat(cs.opacity) < 0.5) continue;
       const text = (e.innerText || e.getAttribute('aria-label') || '').trim().replace(/\\s+/g, ' ').slice(0, 50);
@@ -206,7 +215,8 @@ const ALIGN_TARGETS = `
         x: r.left, y: r.top, w: r.width, h: r.height,
         bt: parseFloat(cs.borderTopWidth), br: parseFloat(cs.borderRightWidth), bb: parseFloat(cs.borderBottomWidth), bl: parseFloat(cs.borderLeftWidth),
         radius: parseFloat(cs.borderTopLeftRadius) || 0,
-        centered: !e.matches('h2') && (cs.textAlign === 'center' || cs.justifyContent === 'center' || e.tagName === 'BUTTON'),
+        // Пункты выпадающих меню — как строки списка: текст слева по задумке.
+        centered: !e.matches('h2, .menu-item') && (cs.textAlign === 'center' || cs.justifyContent === 'center' || e.tagName === 'BUTTON'),
         iconFirst,
         chevron,
         iconOnly,
@@ -364,9 +374,20 @@ app.whenReady().then(async () => {
       if (step.wait) await sleep(step.wait);
       if (step.tab || step.click || step.clickNth) {
         const text = step.tab || step.click || step.clickNth;
-        const ok = await win.webContents.executeJavaScript(`
+        const clickIt = `
           (() => { const e = ${FIND}(${JSON.stringify(text)}, ${step.n || 0}); if (!e) return false; e.scrollIntoView({ block: 'center' }); e.click(); return true; })()
-        `);
+        `;
+        let ok = await win.webContents.executeJavaScript(clickIt);
+        // Вкладка не поместилась в шапку — она в «Ещё» (TabsBar): открыть и нажать там.
+        if (!ok && step.tab) {
+          const more = await win.webContents.executeJavaScript(
+            `(() => { const m = [...document.querySelectorAll('.tabs-more')].find((b) => !b.closest('.tabs-measure')); if (!m) return false; m.click(); return true; })()`,
+          );
+          if (more) {
+            await sleep(200);
+            ok = await win.webContents.executeJavaScript(clickIt);
+          }
+        }
         log(`${ok ? '✔' : '✖ НЕ НАЙДЕНО'} нажать «${text}»`);
         await sleep(step.after ?? 600);
       }
@@ -397,10 +418,16 @@ app.whenReady().then(async () => {
       }
       // keys: ["Up", "Down", "5", "Tab"] — клавиши по очереди (имена — как у Electron).
       if (step.keys) {
-        for (const k of step.keys) {
-          win.webContents.sendInputEvent({ type: 'keyDown', keyCode: k });
-          if (k.length === 1) win.webContents.sendInputEvent({ type: 'char', keyCode: k });
-          win.webContents.sendInputEvent({ type: 'keyUp', keyCode: k });
+        for (const k0 of step.keys) {
+          // «Ctrl+Z», «Shift+Tab» — с клавишами-модификаторами.
+          const parts = k0.length > 1 ? k0.split('+') : [k0];
+          const k = parts.pop() || '+';
+          const modifiers = parts
+            .map((m) => ({ ctrl: 'control', control: 'control', shift: 'shift', alt: 'alt' })[m.toLowerCase()])
+            .filter(Boolean);
+          win.webContents.sendInputEvent({ type: 'keyDown', keyCode: k, modifiers });
+          if (k.length === 1 && modifiers.length === 0) win.webContents.sendInputEvent({ type: 'char', keyCode: k });
+          win.webContents.sendInputEvent({ type: 'keyUp', keyCode: k, modifiers });
           await sleep(120);
         }
         log(`клавиши: ${step.keys.join(' ')}`);
@@ -426,6 +453,31 @@ app.whenReady().then(async () => {
             await sleep(250);
           }
           log(`мышь: ${step.times || 1} × в (${x}; ${y}) у «${step.mouseAt}»`);
+        }
+      }
+      // drag: потянуть мышью за середину элемента на dx/dy — край панели и т. п.
+      if (step.drag) {
+        const r = await win.webContents.executeJavaScript(`
+          (() => { const e = document.querySelectorAll(${JSON.stringify(step.drag)})[${step.n || 0}]; if (!e) return null; const b = e.getBoundingClientRect(); return { x: b.left + b.width / 2, y: ${step.fromTop === undefined ? 'b.top + b.height / 2' : `b.top + ${Number(step.fromTop)}`} }; })()
+        `);
+        if (!r) log(`✖ НЕ НАЙДЕНО «${step.drag}»`);
+        else {
+          const x0 = Math.round(r.x);
+          const y0 = Math.round(r.y);
+          const dx = step.dx || 0;
+          const dy = step.dy || 0;
+          win.webContents.sendInputEvent({ type: 'mouseMove', x: x0, y: y0 });
+          await sleep(80);
+          win.webContents.sendInputEvent({ type: 'mouseDown', x: x0, y: y0, button: 'left', clickCount: 1, modifiers: ['leftButtonDown'] });
+          for (let i = 1; i <= 8; i++) {
+            await sleep(30);
+            // Движение с зажатой кнопкой: Electron узнаёт её по модификатору, а не по полю button.
+            win.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(x0 + (dx * i) / 8), y: Math.round(y0 + (dy * i) / 8), modifiers: ['leftButtonDown'] });
+          }
+          await sleep(60);
+          win.webContents.sendInputEvent({ type: 'mouseUp', x: x0 + dx, y: y0 + dy, button: 'left', clickCount: 1 });
+          await sleep(200);
+          log(`тянул «${step.drag}» на ${dx}; ${dy}`);
         }
       }
       if (step.scrollTo) {
