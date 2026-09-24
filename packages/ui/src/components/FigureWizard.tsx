@@ -357,6 +357,8 @@ export function FigureWizard({ engine }: { engine: EngineConnection }) {
             )}
           </div>
           <h3>Приборы</h3>
+          {/* На узком окне таблица прокручивается вбок сама, а не растягивает страницу. */}
+          <div className="table-scroll">
           <table className="table figure-devices">
             <thead>
               <tr>
@@ -450,6 +452,7 @@ export function FigureWizard({ engine }: { engine: EngineConnection }) {
               })}
             </tbody>
           </table>
+          </div>
         </div>
         <FigurePreview spec={spec} points={points} share={share} plan={plan} extent={extent} />
       </div>

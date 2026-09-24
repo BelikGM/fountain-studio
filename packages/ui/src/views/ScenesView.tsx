@@ -30,6 +30,7 @@ import { hexToRgb, rgbToHex } from '../colorPresets';
 import { ColorPalette } from '../components/ColorPalette';
 import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
+import { SidePanel } from '../components/SidePanel';
 
 const PAGE_SIZE = 32;
 
@@ -151,7 +152,7 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
 
   return (
     <main className="view view-split">
-      <aside className="sidebar">
+      <SidePanel id="scenes" side="left" title="Сцены" width={264}>
         <div className="sidebar-actions">
           <button className="btn btn-icon" onClick={addScene}>
             <PlusIcon />
@@ -236,7 +237,7 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
             </li>
           ))}
         </ul>
-      </aside>
+      </SidePanel>
 
       <section className="content">
         {selected === null ? (

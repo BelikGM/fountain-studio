@@ -372,3 +372,60 @@ export function HelpIcon() {
     </svg>
   );
 }
+
+/** Стрелка раскрытия списка («Ещё ▾», пункты меню с подменю). */
+export function ChevronIcon({ dir = 'down', size = 12 }: { dir?: 'down' | 'up' | 'left' | 'right'; size?: number }) {
+  const d = { down: 'M6 9l6 6 6-6', up: 'M6 15l6-6 6 6', left: 'M15 6l-6 6 6 6', right: 'M9 6l6 6-6 6' }[dir];
+  return (
+    <svg {...ICON_PROPS} width={size} height={size} aria-hidden="true">
+      <path d={d} />
+    </svg>
+  );
+}
+
+/** Меню одной кнопкой — когда строка меню не помещается (узкое окно). */
+export function MenuIcon() {
+  return (
+    <svg {...ICON_PROPS} width={15} height={15} aria-hidden="true">
+      <path d="M4 7h16M4 12h16M4 17h16" />
+    </svg>
+  );
+}
+
+/** Лицензия: ключ. Раньше — эмодзи «🔑», стоял криво в кружке и по-разному на разных ПК. */
+export function KeyIcon() {
+  return (
+    <svg {...ICON_PROPS} width={14} height={14} aria-hidden="true">
+      <circle cx="8" cy="15" r="4" />
+      <path d="M10.8 12.2 20 3M16 7l3 3M14 9l2 2" />
+    </svg>
+  );
+}
+
+/** Лицензии нет — замок. */
+export function LockIcon() {
+  return (
+    <svg {...ICON_PROPS} width={14} height={14} aria-hidden="true">
+      <rect x="5" y="11" width="14" height="10" rx="2" />
+      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+    </svg>
+  );
+}
+
+/** Подписка скоро кончится — песочные часы. */
+export function HourglassIcon() {
+  return (
+    <svg {...ICON_PROPS} width={14} height={14} aria-hidden="true">
+      <path d="M6 3h12M6 21h12M7 3c0 5 10 5 10 9s-10 4-10 9M17 3c0 5-10 5-10 9s10 4 10 9" />
+    </svg>
+  );
+}
+
+/** Боковая панель: свернуть / развернуть (две стрелки-шеврона). */
+export function PanelIcon({ dir }: { dir: 'left' | 'right' }) {
+  return (
+    <svg {...ICON_PROPS} width={13} height={13} aria-hidden="true">
+      <path d={dir === 'left' ? 'M11 6l-6 6 6 6M19 6l-6 6 6 6' : 'M13 6l6 6-6 6M5 6l6 6-6 6'} />
+    </svg>
+  );
+}

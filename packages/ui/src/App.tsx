@@ -4,9 +4,14 @@ import {
   num,
 } from '@fountain-studio/shared';
 import { VENDOR_EMAIL } from './plans';
-import { comboFromEvent, getCombo } from './hotkeys';
+import { comboFromEvent, comboLabel, getCombo } from './hotkeys';
 import { registerTabNavigator } from './navigate';
-import { FolderIcon, HelpIcon, SaveIcon } from './components/Icons';
+import { FolderIcon, HelpIcon, HourglassIcon, KeyIcon, LockIcon, SaveIcon } from './components/Icons';
+import { TabsBar } from './components/TabsBar';
+import { TitleBar } from './components/TitleBar';
+import type { MenuDef, MenuEntry } from './components/MenuBar';
+import { askConfirm } from './components/ConfirmDialog';
+import { desktopApi, isDesktop, loadZoom, saveZoom, ZOOM_STEPS } from './desktop';
 
 /**
  * Картинки из public/ — от адреса страницы, а не от корня. Установленная
@@ -24,7 +29,7 @@ import { HintHost } from './hints';
 import { LinesDraftBanner } from './components/LinesDraftBanner';
 import { WhyQuietView } from './views/WhyQuietView';
 import { TourOverlay, type TourStepDef } from './components/TourOverlay';
-import { HelpView } from './views/HelpView';
+import { HelpView, type HelpDocId } from './views/HelpView';
 import { LicenseView } from './views/LicenseView';
 import { TOUR_STORAGE_KEY } from './tour';
 import { LayoutView } from './views/LayoutView';
@@ -262,6 +267,54 @@ export function App() {
     localStorage.getItem('fs-theme') === 'light' ? 'light' : 'dark',
   );
   const [helpOpen, setHelpOpen] = useState(false);
+  /** Какой документ справки открыть и ставить ли курсор в поиск (меню «Справка», F1). */
+  const [helpDoc, setHelpDoc] = useState<{ doc: HelpDocId; search: boolean }>({ doc: 'manual', search: false });
+  const openHelp = (doc: HelpDocId, search = false): void => {
+    setHelpDoc({ doc, search });
+    setHelpOpen(true);
+  };
+  /**
+   * Масштаб интерфейса в настольной программе (меню «Вид», Ctrl+= / Ctrl+− /
+   * Ctrl+0). На ноутбуке 1920 × 1080 с масштабом Windows 150 % редактору
+   * достаётся 1280 × 720 — «Мельче» (90 %) возвращает место. Хранится на этом
+   * компьютере.
+   */
+  const [zoom, setZoom] = useState(loadZoom);
+  useEffect(() => {
+    desktopApi()?.setZoom?.(zoom);
+    saveZoom(zoom);
+  }, [zoom]);
+  const zoomBy = (dir: 1 | -1): void => {
+    const i = ZOOM_STEPS.indexOf(zoom);
+    setZoom(ZOOM_STEPS[Math.max(0, Math.min(ZOOM_STEPS.length - 1, (i < 0 ? ZOOM_STEPS.indexOf(1) : i) + dir))]!);
+  };
+  // F1 — справка; в настольной программе ещё F11 и масштаб (в браузере — его собственные).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'F1') {
+        e.preventDefault();
+        openHelp('manual');
+        return;
+      }
+      const api = desktopApi();
+      if (!api?.desktop) return;
+      if (e.key === 'F11') {
+        e.preventDefault();
+        api.toggleFullScreen?.();
+      } else if (e.ctrlKey && !e.altKey && (e.code === 'Equal' || e.code === 'NumpadAdd')) {
+        e.preventDefault();
+        zoomBy(1);
+      } else if (e.ctrlKey && !e.altKey && (e.code === 'Minus' || e.code === 'NumpadSubtract')) {
+        e.preventDefault();
+        zoomBy(-1);
+      } else if (e.ctrlKey && !e.altKey && (e.code === 'Digit0' || e.code === 'Numpad0')) {
+        e.preventDefault();
+        setZoom(1);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
   /** Экран «почему ничего не играет» — один ответ вместо поисков по вкладкам. */
   const [whyOpen, setWhyOpen] = useState(false);
   // Тур при первом запуске (§27 доработки) — null = не идёт; иначе индекс
@@ -287,6 +340,13 @@ export function App() {
     // 24.09.2026): в светлой теме — светлый, в тёмной — тёмный.
     const icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
     if (icon) icon.href = asset(theme === 'dark' ? 'favicon-dark.png' : 'favicon-light.png');
+  }, [theme]);
+
+  useEffect(() => {
+    const api = desktopApi();
+    if (!api?.setTitleBarColors) return;
+    const cs = getComputedStyle(document.documentElement);
+    api.setTitleBarColors(cs.getPropertyValue('--titlebar-bg').trim() || '#121419', cs.getPropertyValue('--fg').trim() || '#d7dbe2');
   }, [theme]);
 
   useEffect(() => {
@@ -399,42 +459,251 @@ export function App() {
     return <OperatorScreen engine={engine} onUnlock={() => setLocked(false)} />;
   }
 
+  const desktop = isDesktop();
+  const brandLogo = (
+    <img
+      key={theme}
+      src={asset(theme === 'dark' ? 'FBEST_final.png' : 'FBEST_final2.png')}
+      alt=""
+      className="brand-logo"
+      onError={(e) => {
+        e.currentTarget.style.display = 'none';
+      }}
+    />
+  );
+  const themeToggle = (
+    <button
+      className={theme === 'dark' ? 'theme-toggle theme-dark' : 'theme-toggle theme-light'}
+      data-hint={theme === 'dark' ? 'Тёмная тема — нажмите для светлой' : 'Светлая тема — нажмите для тёмной'}
+      onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+    >
+      <span className="theme-knob">
+        {theme === 'dark' ? (
+          <span className="knob-moon">
+            <img src={asset('moon.jpg')} alt="" className="knob-moon-img" />
+          </span>
+        ) : (
+          <span className="knob-sun">
+            <img src={asset('sun.webp')} alt="" className="knob-sun-img" />
+          </span>
+        )}
+      </span>
+    </button>
+  );
+  const licenseButton = (
+    <button
+      className={unlicensed || expiringSoon ? 'help-btn license-btn license-btn-warn' : 'help-btn license-btn'}
+      data-hint={
+        access === 'none'
+          ? licenseStatus?.expired
+            ? `${licenseStatus.reason ?? 'Срок подписки истёк'} — нажмите, чтобы продлить`
+            : 'Лицензия не активирована — нажмите, чтобы выбрать тариф'
+          : inGrace
+            ? `Оплата просрочена — программа закроется через ${licenseStatus?.graceDaysLeft ?? 0} дн.`
+            : expiringSoon
+            ? `Подписка заканчивается через ${daysLeft} дн. — напишите нам, чтобы продлить`
+            : access === 'pro'
+              ? 'Тариф Pro — воспроизведение и расписание. Нужен полный доступ? Оформите Max'
+              : 'Лицензия'
+      }
+      onClick={() => setLicenseOpen(true)}
+    >
+      {access === 'none' ? <LockIcon /> : expiringSoon ? <HourglassIcon /> : <KeyIcon />}
+    </button>
+  );
+  const helpButton = (
+    <button className="help-btn" data-hint="Справка (F1)" aria-label="Справка" onClick={() => openHelp('manual')}>
+      <HelpIcon />
+    </button>
+  );
+  /*
+    На узком окне (1366 px) надпись уезжала за край — остаётся цветная точка,
+    а слова в подсказке. Шире 1450 px видна и надпись.
+  */
+  const connIndicator = (
+    <div
+      className={connected ? 'conn conn-on' : 'conn conn-off'}
+      data-hint={connected ? 'Движок подключён: редактор видит и управляет им' : 'Нет связи с движком — редактор переподключается каждые 2 с'}
+    >
+      <span className="conn-dot">●</span>{' '}
+      <span className="conn-text">{connected ? 'движок подключён' : 'нет связи с движком…'}</span>
+    </div>
+  );
+  /** Вкладки по тарифу; без открытого объекта — ни одной. */
+  const shownTabs =
+    noProject || access === 'none' ? [] : (access === 'pro' ? TABS.filter((t) => PRO_TABS.includes(t.id)) : TABS).map((t) => ({ id: t.id, label: t.label, hint: t.full }));
+  /**
+   * Меню строки заголовка (только настольная программа). Всё, что в нём
+   * есть, есть и на экране — меню лишь собирает это в привычные места
+   * «Файл / Правка / Вид», как в любой программе.
+   */
+  const recent = (engine.projects?.recent ?? []).filter((r) => r.dir !== engine.projects?.current?.dir && !r.missing).slice(0, 8);
+  const hasProject = !!engine.projects?.current;
+  const api = desktopApi();
+  const zoomIdx = ZOOM_STEPS.indexOf(zoom);
+  const sep: MenuEntry = { kind: 'sep' };
+  const menus: MenuDef[] = [
+    {
+      id: 'file',
+      label: 'Файл',
+      items: [
+        { label: 'Проекты…', hint: 'Открыть другой фонтан, создать новый, «Сохранить как»', onClick: () => setProjectsOpen(true) },
+        {
+          label: 'Недавние',
+          submenu: recent.length
+            ? recent.map((r) => ({ label: r.name, hint: r.dir, onClick: () => openProject(r.dir) }))
+            : [{ kind: 'note', label: 'Других проектов пока не открывали' }],
+        },
+        sep,
+        { label: 'Сохранить', shortcut: comboLabel(getCombo('save')), disabled: !hasProject, onClick: () => send({ type: 'saveNow' }) },
+        { label: 'Сохранить как…', disabled: !hasProject, hint: 'Копия проекта под новым именем — на экране «Проекты»', onClick: () => setProjectsOpen(true) },
+        { label: 'Закрыть проект', disabled: !hasProject, onClick: () => engine.closeProject() },
+        ...(api?.closeWindow
+          ? [
+              sep,
+              {
+                label: 'Закрыть окно',
+                hint: 'Фонтан продолжит играть. Открыть снова — значок у часов',
+                onClick: () => api.closeWindow!(),
+              },
+              { label: 'Остановить фонтан и выйти…', onClick: () => api.quitApp?.() },
+            ]
+          : []),
+      ],
+    },
+    {
+      id: 'edit',
+      label: 'Правка',
+      items: [
+        { label: 'Отменить', shortcut: comboLabel(getCombo('undo')), disabled: !engine.canUndo, onClick: undo },
+        { label: 'Повторить', shortcut: comboLabel(getCombo('redo')), disabled: !engine.canRedo, onClick: redo },
+        sep,
+        { label: 'Найти в справке…', onClick: () => openHelp('manual', true) },
+        {
+          label: 'Горячие клавиши…',
+          hint: '«Настройки» → «Горячие клавиши»: переназначить сочетания',
+          onClick: () => {
+            setProjectsOpen(false);
+            setTab('settings');
+          },
+        },
+      ],
+    },
+    {
+      id: 'view',
+      label: 'Вид',
+      items: [
+        {
+          label: 'Вкладка',
+          submenu: shownTabs.map((t) => ({
+            label: t.label,
+            checked: effectiveTab === t.id && !projectsOpen,
+            onClick: () => {
+              setProjectsOpen(false);
+              setTab(t.id as Tab);
+            },
+          })),
+        },
+        sep,
+        { label: 'Тёмная тема', checked: theme === 'dark', onClick: () => setTheme('dark') },
+        { label: 'Светлая тема', checked: theme === 'light', onClick: () => setTheme('light') },
+        ...(api?.setZoom
+          ? [
+              sep,
+              { label: 'Крупнее', shortcut: 'Ctrl+=', disabled: zoomIdx >= ZOOM_STEPS.length - 1, onClick: () => zoomBy(1) },
+              { label: 'Мельче', shortcut: 'Ctrl+−', disabled: zoomIdx === 0, onClick: () => zoomBy(-1) },
+              { label: `Обычный размер (сейчас ${Math.round(zoom * 100)} %)`, shortcut: 'Ctrl+0', disabled: zoom === 1, onClick: () => setZoom(1) },
+              { label: 'Во весь экран', shortcut: 'F11', onClick: () => api.toggleFullScreen?.() },
+            ]
+          : []),
+      ],
+    },
+    {
+      id: 'play',
+      label: 'Воспроизведение',
+      items: [
+        {
+          label: playback.pausedAll ? 'Продолжить всё' : 'Пауза всего',
+          hint: 'Заморозить картину — свет и воду — и таймеры; повторно — продолжить с того же места',
+          disabled: !hasProject,
+          onClick: () => send({ type: playback.pausedAll ? 'resumeAll' : 'pauseAll' }),
+        },
+        { label: 'Остановить воспроизведение', disabled: !hasProject, onClick: () => send({ type: 'stopAllPlayback' }) },
+        {
+          label: 'СТОП — погасить все приборы…',
+          disabled: !hasProject,
+          onClick: () => {
+            void (async () => {
+              const ok = await askConfirm('Остановить всё и погасить все приборы?', {
+                detail: 'Остановится шоу, плейлист, сцена и секвенсоры, все каналы всех вселенных уйдут в 0.',
+                okLabel: 'СТОП',
+              });
+              if (ok) send({ type: 'blackout' });
+            })();
+          },
+        },
+        sep,
+        { label: 'Почему не играет?', onClick: () => setWhyOpen(true) },
+      ],
+    },
+    {
+      id: 'help',
+      label: 'Справка',
+      items: [
+        { label: 'Руководство', shortcut: 'F1', onClick: () => openHelp('manual') },
+        { label: 'План проверки', onClick: () => openHelp('plan') },
+        { label: 'Установка на новый ПК', onClick: () => openHelp('setup') },
+        {
+          label: 'Экскурсия по программе',
+          hint: 'Коротко по главным вкладкам — та же, что при первом запуске',
+          disabled: unlicensed,
+          onClick: () => {
+            setProjectsOpen(false);
+            setTourStep(0);
+          },
+        },
+        sep,
+        { label: 'Лицензия…', onClick: () => setLicenseOpen(true) },
+        { kind: 'note', label: `Fountain Studio${version ? `, версия ${version}` : ''}` },
+      ],
+    },
+  ];
+
   return (
     <div className="app">
-      <header className="topbar">
-        <div className="brand" data-hint={version ? `Fountain Studio, версия ${version}` : undefined}>
-          <img
-            key={theme}
-            src={asset(theme === 'dark' ? 'FBEST_final.png' : 'FBEST_final2.png')}
-            alt=""
-            className="brand-logo"
-            onError={(e) => {
-              e.currentTarget.style.display = 'none';
-            }}
-          />
-          <span className="brand-name">Fountain Studio</span> <span className="brand-version">{version ? `версия ${version}` : ''}</span>
-          <button
-            className={theme === 'dark' ? 'theme-toggle theme-dark' : 'theme-toggle theme-light'}
-            data-hint={theme === 'dark' ? 'Тёмная тема — нажмите для светлой' : 'Светлая тема — нажмите для тёмной'}
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-          >
-            <span className="theme-knob">
-              {theme === 'dark' ? (
-                <span className="knob-moon">
-                  <img src={asset('moon.jpg')} alt="" className="knob-moon-img" />
-                </span>
-              ) : (
-                <span className="knob-sun">
-                  <img src={asset('sun.webp')} alt="" className="knob-sun-img" />
-                </span>
-              )}
-            </span>
-          </button>
-        </div>
+      {/*
+        Настольная программа: своя строка заголовка с меню вместо белой
+        системной (см. TitleBar). Логотип, тема, лицензия, справка и связь
+        переезжают туда — шапка под ней целиком отдана проекту и вкладкам.
+      */}
+      {desktop && (
+        <TitleBar
+          logo={brandLogo}
+          menus={menus}
+          title={`${engine.projects?.current ? `${engine.projects.current.name} — ` : ''}Fountain Studio${version ? ` ${version}` : ''}`}
+          right={
+            <>
+              {connIndicator}
+              {licenseButton}
+              {helpButton}
+              {themeToggle}
+            </>
+          }
+        />
+      )}
+      <header className={desktop ? 'topbar topbar-desktop' : 'topbar'}>
+        {!desktop && (
+          <div className="brand" data-hint={version ? `Fountain Studio, версия ${version}` : undefined}>
+            {brandLogo}
+            <span className="brand-name">Fountain Studio</span> <span className="brand-version">{version ? `версия ${version}` : ''}</span>
+            {themeToggle}
+          </div>
+        )}
         {/*
-          Значок — папка (проект и есть папка на диске). Раньше стоял эмодзи «🏛»:
-          непонятно, что значит, и сидел ниже середины кнопки (24.09.2026).
-          Значок в .btn-icon центрируется по кнопке точно.
+          Значок — папка (проект и есть папка на диске). Кнопка не сжимается
+          меньше своего значка (заказчик 25.09.2026: на узком окне значок папки
+          вылезал за рамку кнопки), а длинное имя обрезается многоточием —
+          полное в подсказке. Место на узком окне уступают вкладки (TabsBar).
         */}
         <button
           className={projectsOpen || noProject ? 'btn btn-small btn-icon project-btn active' : 'btn btn-small btn-icon project-btn'}
@@ -442,7 +711,6 @@ export function App() {
           onClick={() => setProjectsOpen(!projectsOpen)}
         >
           <FolderIcon />
-          {/* Длинное имя переносится на вторую строку, а не распирает шапку. */}
           <span className="project-btn-name">{engine.projects?.current ? engine.projects.current.name : 'Проекты'}</span>
         </button>
         {/*
@@ -468,60 +736,24 @@ export function App() {
         {/*
           Объект не открыт — переключать нечего: вкладки вели бы на пустые
           экраны. Оставляем только выбор объекта, лицензию и справку.
+          Не поместившиеся вкладки уходят в «Ещё» (TabsBar).
         */}
-        <nav className="tabs">
-          {(noProject || access === 'none' ? [] : access === 'pro' ? TABS.filter((t) => PRO_TABS.includes(t.id)) : TABS).map((t) => (
-            <button
-              key={t.id}
-              data-tour={t.id}
-              // Пока открыты «Проекты», вкладка не подсвечена: на экране не она.
-              className={effectiveTab === t.id && !projectsOpen ? 'tab active' : 'tab'}
-              data-hint={t.full}
-              onClick={() => {
-                // Щелчок по любой вкладке закрывает «Проекты» (заказчик 24.09.2026:
-                // крестика не было, и выйти можно было только повторным щелчком
-                // по имени проекта — догадаться об этом было трудно).
-                setProjectsOpen(false);
-                setTab(t.id);
-              }}
-            >
-              {t.label}
-            </button>
-          ))}
-        </nav>
-        <button
-          className={unlicensed || expiringSoon ? 'help-btn license-btn license-btn-warn' : 'help-btn license-btn'}
-          data-hint={
-            access === 'none'
-              ? licenseStatus?.expired
-                ? `${licenseStatus.reason ?? 'Срок подписки истёк'} — нажмите, чтобы продлить`
-                : 'Лицензия не активирована — нажмите, чтобы выбрать тариф'
-              : inGrace
-                ? `Оплата просрочена — программа закроется через ${licenseStatus?.graceDaysLeft ?? 0} дн.`
-                : expiringSoon
-                ? `Подписка заканчивается через ${daysLeft} дн. — напишите нам, чтобы продлить`
-                : access === 'pro'
-                  ? 'Тариф Pro — воспроизведение и расписание. Нужен полный доступ? Оформите Max'
-                  : 'Лицензия'
-          }
-          onClick={() => setLicenseOpen(true)}
-        >
-          {access === 'none' ? '🔒' : expiringSoon ? '⏳' : '🔑'}
-        </button>
-        <button className="help-btn" data-hint="Справка" aria-label="Справка" onClick={() => setHelpOpen(true)}>
-          <HelpIcon />
-        </button>
-        {/*
-          На узком окне (1366 px) надпись уезжала за край — остаётся цветная
-          точка, а слова в подсказке. Шире 1450 px видна и надпись.
-        */}
-        <div
-          className={connected ? 'conn conn-on' : 'conn conn-off'}
-          data-hint={connected ? 'Движок подключён: редактор видит и управляет им' : 'Нет связи с движком — редактор переподключается каждые 2 с'}
-        >
-          <span className="conn-dot">●</span>{' '}
-          <span className="conn-text">{connected ? 'движок подключён' : 'нет связи с движком…'}</span>
-        </div>
+        <TabsBar
+          tabs={shownTabs}
+          active={projectsOpen ? null : effectiveTab}
+          onPick={(id) => {
+            // Щелчок по любой вкладке закрывает «Проекты» (заказчик 24.09.2026).
+            setProjectsOpen(false);
+            setTab(id as Tab);
+          }}
+        />
+        {!desktop && (
+          <>
+            {licenseButton}
+            {helpButton}
+            {connIndicator}
+          </>
+        )}
       </header>
       <ConfirmHost />
       <HintHost />
@@ -596,7 +828,7 @@ export function App() {
           </button>
         </div>
       )}
-      {helpOpen && <HelpView onClose={() => setHelpOpen(false)} />}
+      {helpOpen && <HelpView initialDoc={helpDoc.doc} focusSearch={helpDoc.search} onClose={() => setHelpOpen(false)} />}
       {whyOpen && (
         <WhyQuietView
           engine={engine}

@@ -12,6 +12,7 @@ import { askConfirm } from '../components/ConfirmDialog';
 import { useDragOrder } from '../components/DragOrder';
 import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
 import type { EngineConnection } from '../useEngine';
+import { SidePanel } from '../components/SidePanel';
 
 /** Пн..Вс в порядке отображения; значения — как в Date.getDay() (0=Вс). */
 const DAYS: { d: number; label: string }[] = [
@@ -114,7 +115,7 @@ export function ScheduleView({ engine }: { engine: EngineConnection }) {
 
   return (
     <main className="view view-split">
-      <aside className="sidebar">
+      <SidePanel id="schedule" side="left" title="Расписание" width={264}>
         <div className="sidebar-actions">
           <button className="btn btn-icon" onClick={addSchedule}>
             <PlusIcon />
@@ -148,7 +149,7 @@ export function ScheduleView({ engine }: { engine: EngineConnection }) {
             </li>
           ))}
         </ul>
-      </aside>
+      </SidePanel>
 
       <section className="content">
         {selected && (

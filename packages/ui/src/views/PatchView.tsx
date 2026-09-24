@@ -755,7 +755,9 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
               </button>
             )}
           </div>
-          <table className="table">
+          {/* Узкое окно — таблица прокручивается вбок внутри себя, страница не едет. */}
+          <div className="table-scroll">
+          <table className="table devices-table">
             <thead>
               <tr>
                 <th>
@@ -950,6 +952,7 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
               })}
             </tbody>
           </table>
+          </div>
         </>
       )}
       {bulkOpen && (

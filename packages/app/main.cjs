@@ -290,13 +290,30 @@ function createTray() {
   tray.on('double-click', () => showWindow());
 }
 
+/** Высота своей строки заголовка (TitleBar.tsx) — кнопки Windows рисуются в неё. */
+const TITLEBAR_H = 32;
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1500,
     height: 900,
+    // Меньше окно не сжимается: шапка и вкладки проверены снимками до 800 × 560
+    // (заказчик 25.09.2026 — «на маленьком ноутбуке часть кнопок обрезается»).
+    minWidth: 800,
+    minHeight: 560,
     backgroundColor: '#0e1116',
     autoHideMenuBar: true,
     title: 'Fountain Studio',
+    /*
+     * Своя строка заголовка вместо белой системной (заказчик 25.09.2026:
+     * «бедная белая полоса, явно выделяется»). Так делают VS Code, Teams,
+     * Discord: окно без системного заголовка, а кнопки «свернуть / развернуть
+     * / закрыть» Windows рисует поверх нашей строки (Window Controls Overlay),
+     * в цветах программы. Строку с меню «Файл, Правка, Вид…» рисует редактор
+     * (TitleBar.tsx); цвета кнопок он присылает при смене темы.
+     */
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#1c1f26', symbolColor: '#d7dbe2', height: TITLEBAR_H },
     webPreferences: {
       // Мостик на один случай: пришёл путь к объекту из Проводника, и окно
       // должно попросить движок его открыть.
@@ -321,15 +338,22 @@ function createWindow() {
       });
     }
   });
+  /*
+   * Движок не на обычном порту (проверки: app-test, снимки окна) — окно
+   * должно подключаться к НЕМУ. Раньше редактор всегда шёл на 9520 и в
+   * проверке видел рабочий движок, а не свой (найдено 25.09.2026).
+   */
+  const query = ENGINE_PORT !== 9520 ? { engine: String(ENGINE_PORT) } : undefined;
   if (isDev) {
     // Vite может подняться позже Electron — пробуем, пока не откроется.
+    const url = query ? `${DEV_URL}/?engine=${ENGINE_PORT}` : DEV_URL;
     const tryLoad = () => {
-      win.loadURL(DEV_URL).catch(() => setTimeout(tryLoad, 1000));
+      win.loadURL(url).catch(() => setTimeout(tryLoad, 1000));
     };
     win.webContents.on('did-fail-load', () => setTimeout(tryLoad, 1000));
     tryLoad();
   } else {
-    win.loadFile(path.join(__dirname, 'ui', 'index.html'));
+    win.loadFile(path.join(__dirname, 'ui', 'index.html'), query ? { query } : undefined);
   }
   return win;
 }
@@ -360,6 +384,25 @@ if (!gotLock) {
       else win.webContents.send('open-project', dir);
     }
   });
+
+  // Строка заголовка и меню «Файл / Вид» редактора (TitleBar.tsx, preload.cjs).
+  const senderWin = (e) => BrowserWindow.fromWebContents(e.sender);
+  ipcMain.on('titlebar-colors', (e, c) => {
+    const win = senderWin(e);
+    if (!win || !c || typeof c.color !== 'string' || typeof c.symbolColor !== 'string') return;
+    try {
+      win.setTitleBarOverlay({ color: c.color, symbolColor: c.symbolColor, height: TITLEBAR_H });
+    } catch {
+      // Окно без наложенных кнопок (старый Electron) — цвета просто не меняются.
+    }
+  });
+  // «Закрыть окно» из меню — то же, что крестик: фонтан играет дальше.
+  ipcMain.on('window-close', (e) => senderWin(e)?.close());
+  ipcMain.on('window-fullscreen', (e) => {
+    const win = senderWin(e);
+    if (win) win.setFullScreen(!win.isFullScreen());
+  });
+  ipcMain.on('app-quit', () => void quitWithEngine(true));
 
   // Выбор папки объекта обычным окном Windows: путь руками никто вводить не должен.
   ipcMain.handle('choose-project-folder', async (_e, startIn) => {

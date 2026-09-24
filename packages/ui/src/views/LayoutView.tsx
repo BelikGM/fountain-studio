@@ -67,6 +67,7 @@ import type { EngineConnection } from '../useEngine';
 import { FountainScene, type SelectedElement } from '../three/FountainScene';
 import { buildDeviceIndex, createLiveHooks } from '../three/liveHooks';
 import { modelCatalog, type ModelEntry, type ModelSlot } from '../three/models';
+import { SidePanel } from '../components/SidePanel';
 
 type ElKind = 'nozzle' | 'light' | 'bowl' | 'group';
 type Selected = { type: ElKind; id: string } | null;
@@ -518,7 +519,7 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
       */}
       <ManualBlocked engine={engine} />
       <main className="view view-split" ref={rootRef}>
-      <aside className="sidebar">
+      <SidePanel id="layout-left" side="left" title="Элементы схемы" width={264}>
         <ElementList
           layout={layout}
           hidden={hidden}
@@ -533,7 +534,7 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
         <AddTools project={project} setLayout={setLayout} onSelect={setSelected} />
         <BindTools project={project} setLayout={setLayout} />
         <DxfImport project={project} setLayout={setLayout} />
-      </aside>
+      </SidePanel>
       <div className="content content-3d">
         <div className="canvas3d" ref={attachCanvas} />
         <button
@@ -611,7 +612,7 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
           <span className="canvas3d-dist">камера: {num(camDist, 1)} м от центра</span>
         </div>
       </div>
-      <aside className="sidebar sidebar-props">
+      <SidePanel id="layout-props" side="right" title="Свойства" width={330} minWidth={240} className="sidebar-props" collapsedOnNarrow>
         {/* Отмечено больше одного — показываем групповые свойства вместо свойств
             последнего кликнутого: правки и удаление относятся ко всему набору. */}
         {multiCount(multi) > 1 && (
@@ -696,7 +697,7 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
           <p className="dim">Команды прямо приборам на линии. На свойства чаш и форсунок не влияют.</p>
           <QuickAll project={project} send={send} where="layout" />
         </section>
-      </aside>
+      </SidePanel>
       </main>
     </>
   );

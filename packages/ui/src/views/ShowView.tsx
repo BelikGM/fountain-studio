@@ -42,6 +42,7 @@ import type { EngineConnection } from '../useEngine';
 import { extractVideoFrameSamples } from '../videoFrames';
 import { ShowVideoRender } from './ShowVideoRender';
 import { PauseIcon, PlayIcon, StopIcon, PlusIcon, MinusIcon, BoltIcon, VideoIcon, RecordIcon, CloseIcon, SlidersIcon, WaveIcon, MusicIcon, FilmIcon, KeyArrowIcon } from '../components/Icons';
+import { SidePanel } from '../components/SidePanel';
 
 /**
  * Ширина шапки дорожки. Та же цифра стоит в .tl-head в styles.css — по ней
@@ -170,7 +171,7 @@ export function ShowView({ engine, readOnly = false }: { engine: EngineConnectio
 
   return (
     <main className="view view-split">
-      <aside className="sidebar">
+      <SidePanel id="shows" side="left" title="Шоу" width={264}>
         {readOnly ? (
           <p className="dim">
             Тариф Pro: шоу можно выбирать и запускать, но не менять. Для правок нужен тариф Max.
@@ -226,7 +227,7 @@ export function ShowView({ engine, readOnly = false }: { engine: EngineConnectio
             </li>
           ))}
         </ul>
-      </aside>
+      </SidePanel>
 
       <section className="content content-show">
         {selected === null ? (

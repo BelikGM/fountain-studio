@@ -17,6 +17,7 @@ import { confirmDelete } from '../confirmDelete';
 import { SmoothnessField } from '../components/SmoothnessField';
 import type { EngineConnection } from '../useEngine';
 import { SequenceMatrix } from './SequenceMatrix';
+import { SidePanel } from '../components/SidePanel';
 
 /** Секвенсоры: последовательности сцен с длительностью и фейдом, транспорт запуска. */
 export function SequencesView({ engine }: { engine: EngineConnection }) {
@@ -75,7 +76,7 @@ export function SequencesView({ engine }: { engine: EngineConnection }) {
 
   return (
     <main className="view view-split">
-      <aside className="sidebar">
+      <SidePanel id="sequences" side="left" title="Секвенсоры" width={264}>
         <div className="sidebar-actions">
           <button className="btn btn-icon" onClick={addSequence}>
             <PlusIcon />
@@ -125,7 +126,7 @@ export function SequencesView({ engine }: { engine: EngineConnection }) {
             Стоп всё
           </button>
         )}
-      </aside>
+      </SidePanel>
 
       <section className="content">
         {groupsOpen ? (
@@ -458,7 +459,8 @@ function SequenceEditor({
         <SequenceMatrix project={project!} sequence={sequence} updateProject={engine.updateProject} />
       ) : (
         <>
-          <table className="table">
+          <div className="table-scroll">
+          <table className="table seq-steps">
             <thead>
               <tr>
                 <th></th>
@@ -557,6 +559,7 @@ function SequenceEditor({
               ))}
             </tbody>
           </table>
+          </div>
           <div className="form-row">
             <button
               className="btn btn-icon"

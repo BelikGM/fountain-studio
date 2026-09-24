@@ -8,6 +8,7 @@ import { ListFilter } from '../components/ListFilter';
 import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
 import { NextIcon, PlayIcon, PrevIcon, StopIcon, PlusIcon, CopyIcon, CloseIcon, KeyArrowIcon } from '../components/Icons';
+import { SidePanel } from '../components/SidePanel';
 
 /**
  * Плейлисты: последовательности шоу с паузами. Исполняет движок автономно
@@ -61,7 +62,7 @@ export function PlaylistsView({ engine, readOnly = false }: { engine: EngineConn
 
   return (
     <main className="view view-split">
-      <aside className="sidebar">
+      <SidePanel id="playlists" side="left" title="Плейлисты" width={264}>
         {readOnly ? (
           <p className="dim">
             Тариф Pro: плейлисты можно выбирать и запускать, но не менять. Для правок нужен тариф Max.
@@ -97,7 +98,7 @@ export function PlaylistsView({ engine, readOnly = false }: { engine: EngineConn
             </li>
           ))}
         </ul>
-      </aside>
+      </SidePanel>
 
       <section className="content">
         {selected === null ? (
