@@ -67,7 +67,9 @@ export function NumInput({
         onFocus?.(e);
       }}
       onChange={(e) => {
-        setText(e.target.value);
+        // Набранный текст держим, только пока поле в фокусе: иначе после
+        // смены значения снаружи (кнопка «40» рядом) поле показывало бы старое.
+        if (document.activeElement === e.target) setText(e.target.value);
         const v = parse(e.target.value);
         if (v !== null && inRange(v) && v !== value) onChange(v);
       }}

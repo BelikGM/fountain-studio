@@ -2,7 +2,8 @@ import { Fragment, useMemo, useRef, useState } from 'react';
 import { useCollapsiblePanels } from '../collapsiblePanels';
 import { ReaddressPanel } from '../components/ReaddressPanel';
 import { FigureWizard } from '../components/FigureWizard';
-import { ArrowRightIcon } from '../components/Icons';
+import { BulkDeleteDialog } from '../components/BulkDeleteDialog';
+import { ArrowRightIcon, PlusIcon, CloseIcon, SwapIcon, GearIcon, CopyIcon } from '../components/Icons';
 import { NumInput } from '../components/NumInput';
 import { RemapDialog } from '../components/RemapDialog';
 import {
@@ -20,6 +21,7 @@ import {
   nozzleValveIds,
   planDeviceWizard,
   profileMap,
+  removeDevices,
   shiftDeviceAddresses,
   swapDeviceAddresses,
   uid,
@@ -485,8 +487,8 @@ function DeviceWizard({ engine }: { engine: EngineConnection }) {
                       </label>
                     </td>
                     <td>
-                      <button className="btn btn-small" onClick={() => setRows(rows.filter((x) => x.key !== r.key))}>
-                        ✕
+                      <button className="btn btn-small btn-icon btn-glyph" onClick={() => setRows(rows.filter((x) => x.key !== r.key))}>
+                        <CloseIcon />
                       </button>
                     </td>
                   </tr>
@@ -495,8 +497,9 @@ function DeviceWizard({ engine }: { engine: EngineConnection }) {
             </tbody>
           </table>
           <div className="form-row" style={{ marginTop: 10 }}>
-            <button className="btn btn-small" onClick={() => setRows([...rows, newRow()])}>
-              + Строка
+            <button className="btn btn-small btn-icon" onClick={() => setRows([...rows, newRow()])}>
+              <PlusIcon />
+              Строка
             </button>
             <button className="btn active" disabled={rows.length === 0} onClick={place}>
               Добавить
@@ -555,6 +558,8 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
    * стоят на месте; вышли из поля — таблица пересортировывается.
    */
   const [frozenOrder, setFrozenOrder] = useState<string[] | null>(null);
+  /** Окно «Удалить приборы» (несколько сразу). */
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   // Copy/paste прибора (§27 доработки, УХ п.13) — вставка ищет свободный адрес
   // в той же вселенной, откуда скопирован (авто-адресация, как «Добавить устройства»).
@@ -703,12 +708,13 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
               Перепутаны или заменены приборы — обменять и сдвинуть адреса в схеме: отметьте приборы →
             </span>
             <button
-              className="btn"
+              className="btn btn-icon"
               disabled={selectedIds.length !== 2}
               data-hint="Обменять адреса и вселенные двух отмеченных устройств"
               onClick={doSwap}
             >
-              ⇄ Обменять адреса{selectedIds.length === 2 ? '' : ' (нужно 2)'}
+              <SwapIcon />
+              Обменять адреса{selectedIds.length === 2 ? '' : ' (нужно 2)'}
             </button>
             <label className="field">
               Сдвинуть на{' '}
@@ -727,6 +733,13 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                 снять выбор
               </button>
             )}
+            <button
+              className="btn btn-danger"
+              data-hint="Удалить несколько приборов сразу: отмеченные, все насосы, все клапаны, все светильники, приборы одной фигуры или все. Перед удалением покажет, что именно и где эти приборы используются"
+              onClick={() => setBulkOpen(true)}
+            >
+              Удалить приборы…
+            </button>
             {hasDeviceClip && (
               <button className="btn btn-small" onClick={pasteDevice}>
                 Вставить прибор
@@ -736,7 +749,15 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
           <table className="table">
             <thead>
               <tr>
-                <th></th>
+                <th>
+                  {/* Отметить все видимые строки — для обмена, сдвига и группового удаления. */}
+                  <input
+                    type="checkbox"
+                    data-hint={sorted.every((d) => selected.has(d.id)) ? 'Снять отметку со всех' : 'Отметить все приборы в списке'}
+                    checked={sorted.length > 0 && sorted.every((d) => selected.has(d.id))}
+                    onChange={(e) => setSelected(e.target.checked ? new Set(sorted.map((d) => d.id)) : new Set())}
+                  />
+                </th>
                 <th>Имя</th>
                 <th data-hint="Тип прибора — он задаёт, сколько у прибора каналов и что каждый из них значит">
                   Тип
@@ -831,11 +852,11 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                     </td>
                     <td className="cell-actions">
                       <button
-                        className={d.trim ? 'btn btn-small active' : 'btn btn-small'}
+                        className={d.trim ? 'btn btn-small active btn-icon btn-glyph' : 'btn btn-small btn-icon btn-glyph'}
                         data-hint="Калибровка: нижняя и верхняя граница каждого канала"
                         onClick={() => setTrimOpenId(trimOpen ? null : d.id)}
                       >
-                        ⚙
+                        <GearIcon />
                       </button>{' '}
                       {profile?.kind === 'pump' && (
                         <button
@@ -847,17 +868,17 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                         </button>
                       )}{' '}
                       <button
-                        className="btn btn-small"
+                        className="btn btn-small btn-icon btn-glyph"
                         data-hint="Копировать прибор"
                         onClick={() => {
                           copyToClipboard('device', d);
                           setHasDeviceClip(true);
                         }}
                       >
-                        ⧉
+                        <CopyIcon />
                       </button>{' '}
-                      <button className="btn btn-small" onClick={() => void removeDevice(d.id)}>
-                        ✕
+                      <button className="btn btn-small btn-icon btn-glyph" onClick={() => void removeDevice(d.id)}>
+                        <CloseIcon />
                       </button>
                     </td>
                   </tr>
@@ -890,6 +911,17 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
             </tbody>
           </table>
         </>
+      )}
+      {bulkOpen && (
+        <BulkDeleteDialog
+          project={project!}
+          selectedIds={selectedIds}
+          onClose={() => setBulkOpen(false)}
+          onDelete={(ids) => {
+            updateProject(removeDevices(project!, ids));
+            setSelected(new Set());
+          }}
+        />
       )}
     </section>
   );
@@ -1381,12 +1413,12 @@ function Profiles({
                 <td>
                   {!p.builtin && (
                     <button
-                      className="btn btn-small"
+                      className="btn btn-small btn-icon btn-glyph"
                       disabled={used}
                       data-hint={used ? 'Этот тип стоит у приборов — сначала смените им тип' : 'Удалить'}
                       onClick={() => removeProfile(p.id)}
                     >
-                      ✕
+                      <CloseIcon />
                     </button>
                   )}
                 </td>
@@ -1468,20 +1500,21 @@ function ProfileForm({
               ))}
             </select>
             <button
-              className="btn btn-small"
+              className="btn btn-small btn-icon btn-glyph"
               disabled={channels.length <= 1}
               onClick={() => setChannels(channels.filter((_, j) => j !== i))}
             >
-              ✕
+              <CloseIcon />
             </button>
           </div>
         ))}
         <div className="form-row">
           <button
-            className="btn"
+            className="btn btn-icon"
             onClick={() => setChannels([...channels, { name: `Канал ${channels.length + 1}`, role: 'custom' }])}
           >
-            + канал
+            <PlusIcon />
+            канал
           </button>
           <button className="btn active" onClick={createProfile} disabled={name.trim() === ''}>
             Создать тип

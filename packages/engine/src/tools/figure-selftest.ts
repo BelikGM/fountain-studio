@@ -17,7 +17,11 @@ import {
   figurePoints,
   planFigure,
   profileMap,
+  devicesDependents,
+  removeDevices,
   sharesEvenly,
+  shapePositions,
+  shapeVertices,
   type FigureSpec,
   type Project,
 } from '@fountain-studio/shared';
@@ -156,6 +160,72 @@ console.log('— геометрия: центр, поворот, наклон �
   check('поворот фигуры записан в контур', planFigure(emptyProject(), spec({ rotationDeg: 400 }), autoFigureShare(spec()), newId).group.rotationDeg === 40);
   const sq = figurePoints(spec({ shape: 'square', count: 8, size: 2 }));
   check('квадрат 8 — углы и середины сторон', sq.length === 8 && sq.some((p) => Math.abs(p.x + 2) < 1e-6 && Math.abs(p.y + 2) < 1e-6));
+}
+
+// ── Правильные фигуры: вершины заняты, стороны ровные ────────────────────
+// Заказчик 24.09.2026: «прямоугольник кривой, звезда ужасная». Звезда должна
+// быть правильной: все рёбра одной длины, все внешние углы равны между собой
+// и все внутренние — между собой.
+console.log('— правильные фигуры —');
+{
+  const V = shapeVertices('star', 3);
+  const len = V.map((p, i) => Math.hypot(V[(i + 1) % 10]!.x - p.x, V[(i + 1) % 10]!.y - p.y));
+  check('звезда: 10 рёбер одной длины', len.every((l) => Math.abs(l - len[0]!) < 1e-9), len.map((l) => l.toFixed(4)).join(' '));
+  const angle = (i: number): number => {
+    const p = V[i]!;
+    const a = V[(i + 9) % 10]!;
+    const b = V[(i + 1) % 10]!;
+    const u = { x: a.x - p.x, y: a.y - p.y };
+    const v = { x: b.x - p.x, y: b.y - p.y };
+    return (Math.acos((u.x * v.x + u.y * v.y) / (Math.hypot(u.x, u.y) * Math.hypot(v.x, v.y))) * 180) / Math.PI;
+  };
+  const tips = [0, 2, 4, 6, 8].map(angle);
+  const inner = [1, 3, 5, 7, 9].map(angle);
+  check('звезда: углы лучей все по 36°', tips.every((a) => Math.abs(a - 36) < 1e-6), tips.map((a) => a.toFixed(3)).join(' '));
+  check('звезда: углы впадин все равны (108° снаружи)', inner.every((a) => Math.abs(a - 108) < 1e-6), inner.map((a) => a.toFixed(3)).join(' '));
+
+  const onVertex = (pts: { x: number; y: number }[], v: { x: number; y: number }[]): boolean =>
+    v.every((q) => pts.some((p) => Math.hypot(p.x - q.x, p.y - q.y) < 1e-9));
+  const star36 = shapePositions('star', 36, 3);
+  check('звезда из 36: форсунки во всех 10 вершинах', star36.length === 36 && onVertex(star36, V));
+  const star5 = shapePositions('star', 5, 3);
+  check('звезда из 5: концы лучей', star5.length === 5 && onVertex(star5, [0, 2, 4, 6, 8].map((i) => V[i]!)));
+  const star30 = shapePositions('star', 30, 3);
+  const gaps = star30.map((p, i) => Math.hypot(star30[(i + 1) % 30]!.x - p.x, star30[(i + 1) % 30]!.y - p.y));
+  check('звезда из 30: шаг между форсунками везде одинаковый', gaps.every((g) => Math.abs(g - gaps[0]!) < 1e-9));
+
+  const rectV = shapeVertices('rect', 3, 0, 0, 0, 0.6);
+  const rect = shapePositions('rect', 36, 3, 0, 0, 0, 0.6);
+  check('прямоугольник из 36: все 4 угла заняты', rect.length === 36 && onVertex(rect, rectV));
+  const onSide = (y: number): number => rect.filter((p) => Math.abs(p.y - y) < 1e-9).length;
+  check('прямоугольник 6×3,6 м из 36: по 12 на длинных сторонах (с углами), 8 на коротких', onSide(-1.8) === 12 && onSide(1.8) === 12, `${onSide(-1.8)} / ${onSide(1.8)}`);
+  const tri = shapePositions('triangle', 7, 3);
+  check('треугольник из 7: три вершины заняты', tri.length === 7 && onVertex(tri, shapeVertices('triangle', 3)));
+  const rotStar = shapePositions('star', 10, 3, 1, 1, 30);
+  check('поворот и центр — вершины повёрнутой звезды', onVertex(rotStar, shapeVertices('star', 3, 1, 1, 30)));
+}
+
+// ── Групповое удаление приборов ──────────────────────────────────────────
+console.log('— групповое удаление —');
+{
+  const base = emptyProject();
+  const sp = spec({ count: 4, light: { count: 4, profileId: 'rgb', universe: 1, startAddress: null, mode: 'blocks' } });
+  const plan = planFigure(base, sp, autoFigureShare(sp), newId);
+  const pump = plan.devices.find((d) => d.profileId === 'pump')!;
+  const lights = plan.devices.filter((d) => d.profileId === 'rgb');
+  const project: Project = {
+    ...base,
+    devices: [...base.devices, ...plan.devices],
+    layout: { ...base.layout, nozzles: plan.nozzles, nozzleGroups: [plan.group] },
+    scenes: [{ id: 's1', name: 'Сцена', values: { [pump.id]: [200], [lights[0]!.id]: [255, 0, 0] } } as Project['scenes'][number]],
+  };
+  const deps = devicesDependents(project, lights.map((l) => l.id));
+  check('перед удалением видно, где используются', deps.some((d) => d.startsWith('сцены (1)')) && deps.some((d) => d.startsWith('форсунки на 3D-схеме (4)')), deps.join('; '));
+  const after = removeDevices(project, lights.map((l) => l.id));
+  check('светильники удалены, насос остался', after.devices.length === 1 && after.devices[0]!.id === pump.id);
+  check('у форсунок светильники отвязаны, насос на месте', after.layout.nozzles.every((n) => n.lightDeviceId === null && n.pumpDeviceId === pump.id));
+  check('из сцены значения светильника ушли, насоса — остались', !(lights[0]!.id in after.scenes[0]!.values) && pump.id in after.scenes[0]!.values);
+  check('контур и форсунки не тронуты', after.layout.nozzles.length === 4 && after.layout.nozzleGroups.length === 1);
 }
 
 // ── Ручная правка раздачи ────────────────────────────────────────────────

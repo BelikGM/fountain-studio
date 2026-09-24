@@ -9,6 +9,8 @@ import {
   nozzleDefaults,
   NOZZLE_KINDS,
   planFigure,
+  shapeEvenStep,
+  shapeVertices,
   sharesEvenly,
   uid,
   universeShort,
@@ -209,6 +211,30 @@ export function FigureWizard({ engine }: { engine: EngineConnection }) {
               ))}
             </span>
           </div>
+          {(() => {
+            // У правильной фигуры стороны ровные, когда форсунок кратно числу
+            // вершин: у звезды — 10 (5 лучей + 5 впадин), квадрата — 4,
+            // треугольника — 3. Вершины заняты при любом числе, но остальные
+            // иначе лягут на стороны неровно (заказчик 24.09.2026).
+            const step = shapeEvenStep(spec.shape);
+            if (step <= 1 || n < step || n % step === 0) return null;
+            const lo = Math.floor(n / step) * step;
+            const hi = lo + step;
+            return (
+              <p className="warn figure-hint">
+                Ровно по сторонам {spec.shape === 'star' ? 'звезда' : spec.shape === 'square' ? 'квадрат' : 'треугольник'} ляжет
+                при числе, кратном {step}:{' '}
+                <button className="link-btn" onClick={() => update({ count: lo })}>
+                  {lo}
+                </button>{' '}
+                или{' '}
+                <button className="link-btn" onClick={() => update({ count: hi })}>
+                  {hi}
+                </button>
+                . Сейчас вершины заняты, а на сторонах форсунок поровну не выйдет.
+              </p>
+            );
+          })()}
           <div className="form-row">
             <label className="field" data-hint={spec.shape === 'ring' ? 'Радиус кольца, м' : 'Половина стороны фигуры, м'}>
               {spec.shape === 'ring' ? 'Радиус, м:' : 'Размер, м:'}{' '}
@@ -358,7 +384,15 @@ export function FigureWizard({ engine }: { engine: EngineConnection }) {
             </tbody>
           </table>
         </div>
-        <FigurePreview points={points} share={share} cx={spec.cx} cy={spec.cy} pumps={spec.pump.count} />
+        <FigurePreview
+          points={points}
+          share={share}
+          cx={spec.cx}
+          cy={spec.cy}
+          pumps={spec.pump.count}
+          outline={spec.shape === 'ring' ? null : shapeVertices(spec.shape, spec.size, spec.cx, spec.cy, spec.rotationDeg, spec.aspect)}
+          ringRadius={spec.shape === 'ring' && n > 1 ? spec.size : 0}
+        />
       </div>
 
       <details className="figure-share">
@@ -457,16 +491,21 @@ function FigurePreview({
   cx,
   cy,
   pumps,
+  outline,
+  ringRadius,
 }: {
   points: { x: number; y: number }[];
   share: FigureShare;
   cx: number;
   cy: number;
   pumps: number;
+  /** Вершины фигуры — контур рисуется тонкой линией, чтобы форму было видно сразу. */
+  outline: { x: number; y: number }[] | null;
+  ringRadius: number;
 }) {
   const size = 220;
   const pad = 28;
-  const span = Math.max(0.5, ...points.map((p) => Math.max(Math.abs(p.x - cx), Math.abs(p.y - cy))));
+  const span = Math.max(0.5, ...[...points, ...(outline ?? [])].map((p) => Math.max(Math.abs(p.x - cx), Math.abs(p.y - cy))));
   const scale = (size / 2 - pad) / span;
   // Y схемы — вверх, у SVG — вниз.
   const px = (x: number): number => size / 2 + (x - cx) * scale;
@@ -477,6 +516,10 @@ function FigurePreview({
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="Вид сверху">
         <line x1={size / 2 - 5} y1={size / 2} x2={size / 2 + 5} y2={size / 2} className="figure-preview-center" />
         <line x1={size / 2} y1={size / 2 - 5} x2={size / 2} y2={size / 2 + 5} className="figure-preview-center" />
+        {outline && outline.length > 1 && (
+          <polygon points={outline.map((p) => `${px(p.x)},${py(p.y)}`).join(' ')} className="figure-preview-outline" />
+        )}
+        {ringRadius > 0 && <circle cx={size / 2} cy={size / 2} r={ringRadius * scale} className="figure-preview-outline" />}
         {points.map((p, i) => {
           const pump = share.pump[i]?.[0];
           const fill = pump === undefined ? 'var(--fg-dim)' : PUMP_COLORS[pump % PUMP_COLORS.length];

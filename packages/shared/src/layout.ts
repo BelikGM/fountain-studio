@@ -675,7 +675,8 @@ function shapeOutline(shape: LayoutShape, radius: number, aspect: number): { x: 
       // Правильная пятиконечная: внутренний радиус = R / φ², все десять
       // сторон одинаковой длины, поэтому равномерная раскладка попадает точно
       // на вершины при количестве, кратном десяти.
-      const inner = radius * 0.382;
+      // Точно R / φ² = R·(3 − √5)/2: с округлённым 0,382 углы лучей выходили 36,004°.
+      const inner = (radius * (3 - Math.sqrt(5))) / 2;
       const out: { x: number; y: number }[] = [];
       for (let i = 0; i < 10; i++) {
         out.push(pt(Math.PI / 2 + (i * Math.PI) / 5, i % 2 === 0 ? radius : inner));
@@ -688,8 +689,45 @@ function shapeOutline(shape: LayoutShape, radius: number, aspect: number): { x: 
 }
 
 /**
- * Точки фигуры: count штук, равномерно по периметру, начиная с первой вершины.
- * Для кольца — прежняя раскладка по углу.
+ * Вершины фигуры с поворотом и сдвигом в центр — для расстановки и для
+ * контура на виде сверху. У кольца вершин нет — пусто.
+ */
+export function shapeVertices(
+  shape: LayoutShape,
+  radius: number,
+  centerX = 0,
+  centerY = 0,
+  startDeg = 0,
+  aspect = 0.6,
+): { x: number; y: number }[] {
+  const a0 = (startDeg * Math.PI) / 180;
+  return shapeOutline(shape, radius, aspect).map((p) => ({
+    x: centerX + p.x * Math.cos(a0) - p.y * Math.sin(a0),
+    y: centerY + p.x * Math.sin(a0) + p.y * Math.cos(a0),
+  }));
+}
+
+/**
+ * Сколько форсунок нужно, чтобы фигура легла ровно: на каждой стороне
+ * одинаково. Для прямоугольника — любое (стороны разные, делим по длине).
+ */
+export function shapeEvenStep(shape: LayoutShape): number {
+  return shape === 'star' ? 10 : shape === 'triangle' ? 3 : shape === 'square' ? 4 : 1;
+}
+
+/**
+ * Точки фигуры: count штук по периметру.
+ *
+ * ВЕРШИНЫ ЗАНЯТЫ ВСЕГДА (заказчик 24.09.2026: «прямоугольник кривой, звезда
+ * ужасная»). Раньше точки шли равномерно по периметру от первой вершины, и
+ * при числе, не кратном числу сторон, ни одна не попадала в углы: у
+ * прямоугольника срезались углы, у звезды пропадали лучи. Теперь сначала
+ * ставится по форсунке в каждую вершину, остальные делятся между сторонами
+ * по их длине; у правильной фигуры (все стороны равны) лишние форсунки
+ * разносятся по сторонам равномерно, а не скапливаются в одном месте.
+ *
+ * Меньше форсунок, чем вершин: у звезды из пяти — концы лучей; иначе —
+ * равномерно по периметру, как раньше. Кольцо — по углу, как было.
  */
 export function shapePositions(
   shape: LayoutShape,
@@ -704,26 +742,54 @@ export function shapePositions(
   const n = Math.max(1, Math.round(count));
   if (shape === 'ring') return ringPositions(n, radius, centerX, centerY, startDeg);
 
-  const pts = shapeOutline(shape, radius, aspect);
-  if (pts.length === 0) return [];
-  // Поворот всей фигуры.
-  const a0 = (startDeg * Math.PI) / 180;
-  const rot = pts.map((p) => ({
-    x: p.x * Math.cos(a0) - p.y * Math.sin(a0),
-    y: p.x * Math.sin(a0) + p.y * Math.cos(a0),
-  }));
+  const rot = shapeVertices(shape, radius, 0, 0, startDeg, aspect);
+  if (rot.length === 0) return [];
+  const V = rot.length;
+  const at = (p: { x: number; y: number }): { x: number; y: number } => ({ x: centerX + p.x, y: centerY + p.y });
 
   // Длины сторон и общий периметр.
   const seg: number[] = [];
   let total = 0;
-  for (let i = 0; i < rot.length; i++) {
+  for (let i = 0; i < V; i++) {
     const a = rot[i]!;
-    const b = rot[(i + 1) % rot.length]!;
+    const b = rot[(i + 1) % V]!;
     const len = Math.hypot(b.x - a.x, b.y - a.y);
     seg.push(len);
     total += len;
   }
 
+  if (n >= V) {
+    // По форсунке в каждую вершину, остальные — по сторонам пропорционально длине.
+    const m = n - V;
+    const quota = seg.map((len) => (m * len) / total);
+    const per = quota.map((q) => Math.floor(q + 1e-9));
+    const left = m - per.reduce((s, x) => s + x, 0);
+    const rema = quota.map((q, i) => q - per[i]!);
+    const regular = rema.every((r) => Math.abs(r - rema[0]!) < 1e-6);
+    if (regular) {
+      // Все стороны равны: лишние — через равные промежутки по кругу.
+      for (let k = 0; k < left; k++) per[Math.floor(((k + 0.5) * V) / left) % V]!++;
+    } else {
+      const order = rema.map((r, i) => ({ r, i })).sort((a, b) => b.r - a.r || a.i - b.i);
+      for (let k = 0; k < left; k++) per[order[k]!.i]!++;
+    }
+    const out: { x: number; y: number }[] = [];
+    for (let i = 0; i < V; i++) {
+      const a = rot[i]!;
+      const b = rot[(i + 1) % V]!;
+      out.push(at(a));
+      for (let j = 1; j <= per[i]!; j++) {
+        const t = j / (per[i]! + 1);
+        out.push(at({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }));
+      }
+    }
+    return out;
+  }
+
+  // Звезда из пяти — концы лучей (у звезды вершины чередуются: луч, впадина).
+  if (shape === 'star' && n === 5) return rot.filter((_, i) => i % 2 === 0).map(at);
+
+  // Меньше, чем вершин, — равномерно по периметру.
   const out: { x: number; y: number }[] = [];
   for (let k = 0; k < n; k++) {
     let d = (total * k) / n;
@@ -734,9 +800,9 @@ export function shapePositions(
     }
     if (i >= seg.length) i = seg.length - 1;
     const a = rot[i]!;
-    const b = rot[(i + 1) % rot.length]!;
+    const b = rot[(i + 1) % V]!;
     const t = seg[i]! > 1e-9 ? d / seg[i]! : 0;
-    out.push({ x: centerX + a.x + (b.x - a.x) * t, y: centerY + a.y + (b.y - a.y) * t });
+    out.push(at({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }));
   }
   return out;
 }

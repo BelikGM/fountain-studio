@@ -1,5 +1,5 @@
 import { nozzleLightIds, nozzlePump2Ids, nozzlePumpIds, nozzleValveIds } from './layout';
-import type { Project } from './project';
+import { sanitizeProject, type Project } from './project';
 
 /**
  * «Кто использует эту сущность» — для предупреждения перед удалением сцены/
@@ -85,5 +85,38 @@ export function deviceDependents(project: Project, deviceId: string): string[] {
       nozzlePump2Ids(n).includes(deviceId),
   ).length;
   if (nozzles > 0) out.push(`форсунки на 3D-схеме (${nozzles})`);
+  return out;
+}
+
+/**
+ * Удалить сразу несколько приборов (заказчик 24.09.2026: «38 приборов, а
+ * удалять можно только по одному»). Проект проходит через тот же
+ * sanitizeProject, что и в движке при каждом сохранении: из сцен, форсунок и
+ * прожекторов 3D, служебного света и огибающих шоу ссылки на удалённые
+ * приборы уходят так же, как их убрал бы движок, — редактор и движок видят
+ * один и тот же проект. Одна правка: Ctrl+Z возвращает всё разом.
+ */
+export function removeDevices(project: Project, ids: Iterable<string>): Project {
+  const drop = new Set(ids);
+  return sanitizeProject({ ...project, devices: project.devices.filter((d) => !drop.has(d.id)) });
+}
+
+/** Что затронет удаление набора приборов — для окна подтверждения. */
+export function devicesDependents(project: Project, ids: Iterable<string>): string[] {
+  const set = new Set(ids);
+  const out: string[] = [];
+  const scenes = project.scenes.filter((s) => Object.keys(s.values).some((id) => set.has(id))).length;
+  if (scenes > 0) out.push(`сцены (${scenes})`);
+  const envelopes = project.shows.reduce(
+    (n, sh) => n + sh.tracks.filter((t) => t.kind === 'envelope' && set.has(t.deviceId)).length,
+    0,
+  );
+  if (envelopes > 0) out.push(`огибающие в шоу (${envelopes}) — они удалятся`);
+  const nozzles = project.layout.nozzles.filter((n) =>
+    [...nozzlePumpIds(n), ...nozzleValveIds(n), ...nozzleLightIds(n), ...nozzlePump2Ids(n)].some((id) => set.has(id)),
+  ).length;
+  if (nozzles > 0) out.push(`форсунки на 3D-схеме (${nozzles}) — останутся, но без этих приборов`);
+  const lights = project.layout.lights.filter((l) => l.deviceId !== null && set.has(l.deviceId)).length;
+  if (lights > 0) out.push(`прожекторы на 3D-схеме (${lights})`);
   return out;
 }
