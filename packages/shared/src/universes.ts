@@ -69,7 +69,12 @@ export function universeShort(u: { id: number; label?: string | null }): string 
  * Пустая строка — «имени нет».
  */
 export function storedUniverseLabel(u: { id: number; label?: string | null }): string {
-  return universeCustomName(u) ?? '';
+  const label = (u.label ?? '').trim();
+  // Выбрасываем только «Линия N» — так вселенные называла сама программа в
+  // старых версиях. «Вселенная 1», вписанную человеком, храним как есть:
+  // раньше она стиралась, и поле имени очищалось прямо под пальцами
+  // (заказчик 24.09.2026: «пишу "Вселенная", жму 1 — поле пустое»).
+  return /^линия\s*\d+$/i.test(label) && isAutoLabel(u.id, label) ? '' : label;
 }
 
 /**

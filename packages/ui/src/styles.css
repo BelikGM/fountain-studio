@@ -1457,6 +1457,18 @@ h2.panel-head-search {
 
 .row-error td { background: var(--danger-bg); }
 .row-playing td { background: var(--ok-bg); }
+/* Строка правки, которой ещё нет в движке (вселенные в «Настройках»): жёлтый
+   фон и полоска слева — видно, что именно ждёт «Применить». */
+.row-pending td { background: var(--warn-bg); }
+.row-pending td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+/* Только что применённая строка: зелёная вспышка, гаснет сама. */
+.row-applied td { animation: row-applied-flash 4s ease-out; }
+@keyframes row-applied-flash {
+  0%, 40% { background: var(--ok-bg); }
+  100% { background: transparent; }
+}
+.badge-pending { color: var(--warn-text); border-color: var(--warn); background: transparent; white-space: nowrap; }
+.badge-applied { color: var(--ok); border-color: var(--ok-border); background: transparent; white-space: nowrap; }
 
 /* Сырой DMX-поток (§27 доработки) — все 512 адресов сразу, без страниц. */
 .dmx-stream-grid {

@@ -45,6 +45,12 @@ export interface DraftState {
   message: string;
   /** Что именно поменялось — из ответа движка. */
   changes: string[];
+  /**
+   * Вселенные, которые только что применились, — их строки несколько секунд
+   * подсвечены «✔ применена». Раньше после «Применить» таблица не менялась
+   * вовсе, и было непонятно, сохранилось ли что-нибудь (заказчик 24.09.2026).
+   */
+  appliedIds: number[];
 }
 
 /**
@@ -54,7 +60,12 @@ export interface DraftState {
  */
 const REPLY_TIMEOUT_MS = 5000;
 
-let state: DraftState = { draft: null, status: 'idle', message: '', changes: [] };
+let state: DraftState = { draft: null, status: 'idle', message: '', changes: [], appliedIds: [] };
+/** Какие вселенные ушли в движок последним «Применить». */
+let sentIds: number[] = [];
+let appliedTimer: ReturnType<typeof setTimeout> | null = null;
+/** Сколько держится отметка «✔ применена». */
+const APPLIED_MARK_MS = 4000;
 const listeners = new Set<() => void>();
 let replyTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -72,7 +83,7 @@ function copy(d: SettingsDraft): SettingsDraft {
 
 /** Запомнить незавершённую правку (вызывается на каждое изменение). */
 export function keepSettingsDraft(next: SettingsDraft): void {
-  set({ draft: copy(next), status: 'idle', message: '', changes: [] });
+  set({ draft: copy(next), status: 'idle', message: '', changes: [], appliedIds: [] });
 }
 
 /** Текущая правка; null — правок нет. */
@@ -84,16 +95,22 @@ export function takeSettingsDraft(): SettingsDraft | null {
 export function clearSettingsDraft(): void {
   if (replyTimer) clearTimeout(replyTimer);
   replyTimer = null;
-  set({ draft: null, status: 'idle', message: '', changes: [] });
+  set({ draft: null, status: 'idle', message: '', changes: [], appliedIds: [] });
 }
 
 /**
  * Отправить правку в движок. Черновик НЕ стирается: это сделает ответ
  * «применено» (см. onConfigResult). Нет связи — говорим сразу.
  */
-export function applySettingsDraft(send: (msg: ClientMessage) => void, connected: boolean): void {
+export function applySettingsDraft(
+  send: (msg: ClientMessage) => void,
+  connected: boolean,
+  /** Какие вселенные в правке новые или изменённые — их строки подсветятся после ответа. */
+  changedIds: number[] = [],
+): void {
   const d = state.draft;
   if (!d) return;
+  sentIds = changedIds;
   if (!connected) {
     set({
       ...state,
@@ -104,7 +121,13 @@ export function applySettingsDraft(send: (msg: ClientMessage) => void, connected
     return;
   }
   set({ ...state, status: 'pending', message: '', changes: [] });
-  send({ type: 'updateConfig', tickMs: d.tickMs, universes: d.universes });
+  // Пробелы по краям имени убираем только при отправке: пока человек печатает,
+  // «Вселенная » с пробелом на конце — нормальное промежуточное состояние.
+  send({
+    type: 'updateConfig',
+    tickMs: d.tickMs,
+    universes: d.universes.map((u) => ({ ...u, label: (u.label ?? '').trim() })),
+  });
   if (replyTimer) clearTimeout(replyTimer);
   replyTimer = setTimeout(() => {
     replyTimer = null;
@@ -126,8 +149,14 @@ export function onConfigResult(ok: boolean, message: string, changes: string[]):
   if (!state.draft || state.status === 'idle') return;
   if (replyTimer) clearTimeout(replyTimer);
   replyTimer = null;
-  if (ok) set({ draft: null, status: 'applied', message, changes });
-  else set({ ...state, status: 'error', message, changes: [] });
+  if (ok) {
+    set({ draft: null, status: 'applied', message, changes, appliedIds: sentIds });
+    if (appliedTimer) clearTimeout(appliedTimer);
+    appliedTimer = setTimeout(() => {
+      appliedTimer = null;
+      if (state.appliedIds.length > 0) set({ ...state, appliedIds: [] });
+    }, APPLIED_MARK_MS);
+  } else set({ ...state, status: 'error', message, changes: [] });
 }
 
 function subscribe(l: () => void): () => void {

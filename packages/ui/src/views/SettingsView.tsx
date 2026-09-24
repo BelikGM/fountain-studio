@@ -21,6 +21,7 @@ import {
   FAILSAFE_TIMEOUT_MAX_SEC,
   describeLinesChange,
   nextUniverse,
+  sameOutputs,
   storedUniverseLabel,
   universeTitle,
   clampVolumeDb,
@@ -2378,6 +2379,18 @@ function driverProblemText(p: UsbDriverProblem): string {
   }
 }
 
+/**
+ * Подсказка к столбцу «Выход на устройстве». Раньше он назывался «№ в
+ * протоколе», и заказчик не понял его даже с подсказкой (24.09.2026): «номер
+ * внутри протокола» — слова программиста. Здесь — что это на железе и пример.
+ */
+const OUT_ON_DEVICE_HINT =
+  'Какой именно выход устройства получает эту вселенную.\n' +
+  '• Интерфейс FountanPlay — разъём DMX на коробке. У USB2DMX их два: вселенная 1 — «Выход 1», вселенная 2 — «Выход 2». У USB1DMX разъём один, у USB3DMX — три.\n' +
+  '• Art-Net — номер вселенной, выставленный на порту ноды (у первого порта обычно 0, у второго 1). Должен совпадать с настройкой самой ноды.\n' +
+  '• sACN — номер вселенной sACN (с 1), как настроен приёмник.\n' +
+  '• USB-DMX ENTTEC и Open DMX — у адаптера один разъём, выбирать нечего.';
+
 /** Варианты выбора интерфейса FountanPlay: FTDI по серийному номеру и COM-порты FTDI. */
 function musidoraTargets(scan: UsbDmxScan | null, current: string): { value: string; label: string }[] {
   const list: { value: string; label: string }[] = [];
@@ -2543,7 +2556,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
    * пережить уход и быть видна на других вкладках. Пока правки нет —
    * показываем то, что работает в движке.
    */
-  const { draft, status, message, changes } = useSettingsDraft();
+  const { draft, status, message, changes, appliedIds } = useSettingsDraft();
   /** Панели сворачиваются до плашки с названием (см. collapsiblePanels.ts). */
   const rootRef = useRef<HTMLElement>(null);
   useCollapsiblePanels(rootRef, 'settings');
@@ -2612,6 +2625,19 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
 
   const valid = universes.length > 0 && tickMs >= 10 && tickMs <= 1000;
   const pending = describeLinesChange(engineConfig, { tickMs, universes });
+  /**
+   * Чем строка правки отличается от того, что работает в движке: новая или
+   * изменённая. Такие строки подсвечены, пока не нажато «Применить», — между
+   * «добавил» и «добавил и применил» должна быть видимая разница.
+   */
+  const applied = new Map(engineConfig.universes.map((u) => [u.id, u]));
+  const rowState = (u: ConfigUniverse): 'new' | 'changed' | null => {
+    if (!dirty) return null;
+    const was = applied.get(u.id);
+    if (!was) return 'new';
+    return !sameOutputs(u.outputs, was.outputs) || storedUniverseLabel(u) !== storedUniverseLabel(was) ? 'changed' : null;
+  };
+  const changedIds = universes.filter((u) => rowState(u) !== null).map((u) => u.id);
 
   return (
     <main className="view view-settings" ref={rootRef}>
@@ -2632,23 +2658,23 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
               <th>Имя</th>
               <th>Протокол</th>
               <th data-hint="IP Art-Net ноды, COM-порт адаптера или какой из интерфейсов FountanPlay">Адрес</th>
-              <th data-hint="Номер внутри протокола: у Art-Net считают с 0, у sACN — с 1. У интерфейса FountanPlay — номер разъёма DMX на коробке">
-                № в протоколе
-              </th>
+              <th data-hint={OUT_ON_DEVICE_HINT}>Выход на устройстве</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
             {universes.map((u) => {
               const out = u.outputs[0];
+              const rs = rowState(u);
+              const justApplied = !dirty && appliedIds.includes(u.id);
               return (
-                <tr key={u.id}>
+                <tr key={u.id} className={rs ? 'row-pending' : justApplied ? 'row-applied' : undefined}>
                   <td className="dim">{u.id}</td>
                   <td>
                     <input
                       className="input"
                       style={{ width: 140 }}
-                      value={storedUniverseLabel(u)}
+                      value={dirty ? (u.label ?? '') : storedUniverseLabel(u)}
                       placeholder="без имени"
                       data-hint="Необязательно. Своё имя показывается рядом с номером везде, где выбирают вселенную: «Вселенная 2 · Северная чаша»."
                       onChange={(e) => patchUniverse(u.id, { label: e.target.value })}
@@ -2678,13 +2704,28 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
                     </select>
                   </td>
                   <td>
-                    {out?.type === 'musidora' ? (
+                    {out?.type === 'musidora' && musidoraTargets(engine.usbScan, out.path ?? '').length === 0 ? (
+                      /*
+                       * Выбирать не из чего: подключённых переходников FTDI нет —
+                       * список с единственным «Авто» только путал. Появятся — будет
+                       * выпадающий список с серийными номерами.
+                       */
+                      <span
+                        className="dim"
+                        data-hint={
+                          'Программа сама найдёт интерфейс FountanPlay — первый свободный USB-переходник FTDI.\n' +
+                          'Выбирать тут нечего, пока к компьютеру не подключено несколько таких переходников (например, ещё и USB-RS485 для частотников). Тогда здесь появится список с их серийными номерами.'
+                        }
+                      >
+                        авто
+                      </span>
+                    ) : out?.type === 'musidora' ? (
                       <select
                         style={{ width: 150 }}
                         value={out.path ?? ''}
                         data-hint={
-                          '«Авто» — первое свободное FTDI-устройство, как делает FontanPlay.\n' +
-                          'Если к компьютеру подключено несколько FTDI (например, ещё и USB-RS485), выберите интерфейс по серийному номеру. Вселенным одного интерфейса ставьте одно и то же значение.'
+                          '«Авто» — программа сама берёт первый свободный USB-переходник FTDI, как делает FontanPlay.\n' +
+                          'Подключено несколько переходников (например, ещё и USB-RS485 для частотников) — выберите интерфейс FountanPlay по серийному номеру. Вселенным одного интерфейса ставьте одно и то же значение.'
                         }
                         onChange={(e) => patchOutput(u.id, { path: e.target.value })}
                       >
@@ -2719,9 +2760,9 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
                       <select
                         value={String(out.musidoraOut ?? 1)}
                         data-hint={
-                          'Номер РАЗЪЁМА DMX на самом интерфейсе: у USB1DMX он один (1), у USB2DMX — два (1 и 2), у USB3DMX — три.\n' +
-                          'Второй разъём — это отдельная вселенная с тем же интерфейсом и выходом 2.\n' +
-                          'Ставьте номер строго по числу разъёмов на коробке. Если выбрать выход, которого на интерфейсе нет, его данные могут лечь на первый выход и перебить его — в FontanPlay это заметно потому, что она всегда шлёт все три выхода, даже когда разъём один. Наша программа шлёт только те выходы, что вы завели здесь.'
+                          'В какой разъём DMX на коробке FountanPlay уходит эта вселенная.\n' +
+                          'Пример: у USB2DMX два разъёма. Вселенная 1 — «Выход 1», вселенная 2 — «Выход 2». У USB1DMX разъём один — всегда «Выход 1»; у USB3DMX — три.\n' +
+                          'Номер больше, чем разъёмов на коробке, не ставьте: данные лягут на первый разъём и перебьют его.'
                         }
                         onChange={(e) => patchOutput(u.id, { musidoraOut: Number(e.target.value) })}
                       >
@@ -2745,7 +2786,18 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
                       />
                     )}
                   </td>
-                  <td>
+                  <td className="cell-actions">
+                    {rs === 'new' && (
+                      <span className="badge badge-pending" data-hint="Строка ещё только в правке: движок о ней не знает. Нажмите «Применить» под таблицей.">
+                        новая · не применена
+                      </span>
+                    )}
+                    {rs === 'changed' && (
+                      <span className="badge badge-pending" data-hint="Правка ещё не дошла до движка. Нажмите «Применить» под таблицей.">
+                        не применена
+                      </span>
+                    )}
+                    {justApplied && <span className="badge badge-applied">✔ применена</span>}{' '}
                     {u.outputs.length > 1 && (
                       <span className="badge" data-hint="У вселенной несколько выходов; здесь редактируется первый, остальные сохраняются как есть">
                         ещё {countOf(u.outputs.length - 1, 'выход', 'выхода', 'выходов')}
@@ -2792,7 +2844,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
           status={status}
           message={message}
           changes={changes}
-          onApply={() => applySettingsDraft(send, engine.connected)}
+          onApply={() => applySettingsDraft(send, engine.connected, changedIds)}
           onDiscard={clearSettingsDraft}
         />
         {usbInUse && <UsbDmxStatus scan={engine.usbScan} universes={engineConfig.universes} />}
