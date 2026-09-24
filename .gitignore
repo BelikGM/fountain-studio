@@ -29,6 +29,7 @@ packages/app/engine.cjs
 packages/app/playback-worker.cjs
 packages/app/ui/
 packages/app/release/
+packages/app/release-test/
 
 # Лицензирование: приватный ключ издателя лицензий в репозиторий не кладём
 # никогда. Кто им владеет — тот может выпускать лицензии на продукт, поэтому
