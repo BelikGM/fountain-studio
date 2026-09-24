@@ -6,6 +6,15 @@ import {
 import { VENDOR_EMAIL } from './plans';
 import { comboFromEvent, getCombo } from './hotkeys';
 import { registerTabNavigator } from './navigate';
+import { FolderIcon, SaveIcon } from './components/Icons';
+
+/**
+ * Картинки из public/ — от адреса страницы, а не от корня. Установленная
+ * программа открывает редактор из файла (file://), и «/FBEST_final.png» там
+ * указывал на корень диска: логотип и значки темы не находились (найдено
+ * 24.09.2026). BASE_URL — «/» у сервера разработки и «./» у сборки.
+ */
+const asset = (name: string): string => `${import.meta.env.BASE_URL}${name}`;
 import { isOperatorLocked } from './operatorMode';
 import { useEngine } from './useEngine';
 import { KeysView, keyLabel } from './views/KeysView';
@@ -274,6 +283,10 @@ export function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem('fs-theme', theme);
+    // Значок вкладки браузера — по теме, как и логотип в шапке (заказчик
+    // 24.09.2026): в светлой теме — светлый, в тёмной — тёмный.
+    const icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (icon) icon.href = asset(theme === 'dark' ? 'favicon-dark.png' : 'favicon-light.png');
   }, [theme]);
 
   useEffect(() => {
@@ -392,14 +405,14 @@ export function App() {
         <div className="brand" data-hint={version ? `Fountain Studio, версия ${version}` : undefined}>
           <img
             key={theme}
-            src={theme === 'dark' ? '/FBEST_final.png' : '/FBEST_final2.png'}
+            src={asset(theme === 'dark' ? 'FBEST_final.png' : 'FBEST_final2.png')}
             alt=""
             className="brand-logo"
             onError={(e) => {
               e.currentTarget.style.display = 'none';
             }}
           />
-          Fountain Studio <span className="brand-version">{version ? `версия ${version}` : ''}</span>
+          <span className="brand-name">Fountain Studio</span> <span className="brand-version">{version ? `версия ${version}` : ''}</span>
           <button
             className={theme === 'dark' ? 'theme-toggle theme-dark' : 'theme-toggle theme-light'}
             data-hint={theme === 'dark' ? 'Тёмная тема — нажмите для светлой' : 'Светлая тема — нажмите для тёмной'}
@@ -408,23 +421,29 @@ export function App() {
             <span className="theme-knob">
               {theme === 'dark' ? (
                 <span className="knob-moon">
-                  <img src="/moon.jpg" alt="" className="knob-moon-img" />
+                  <img src={asset('moon.jpg')} alt="" className="knob-moon-img" />
                 </span>
               ) : (
                 <span className="knob-sun">
-                  <img src="/sun.webp" alt="" className="knob-sun-img" />
+                  <img src={asset('sun.webp')} alt="" className="knob-sun-img" />
                 </span>
               )}
             </span>
           </button>
         </div>
+        {/*
+          Значок — папка (проект и есть папка на диске). Раньше стоял эмодзи «🏛»:
+          непонятно, что значит, и сидел ниже середины кнопки (24.09.2026).
+          Значок в .btn-icon центрируется по кнопке точно.
+        */}
         <button
-          className={projectsOpen || noProject ? 'btn btn-small active' : 'btn btn-small'}
-          style={{ marginLeft: 10 }}
-          data-hint="Проекты: открыть другой фонтан, создать новый или посмотреть, где лежит папка текущего."
+          className={projectsOpen || noProject ? 'btn btn-small btn-icon project-btn active' : 'btn btn-small btn-icon project-btn'}
+          data-hint={`${engine.projects?.current ? `Проект «${engine.projects.current.name}». ` : ''}Проекты: открыть другой фонтан, создать новый или посмотреть, где лежит папка текущего.`}
           onClick={() => setProjectsOpen(!projectsOpen)}
         >
-          {engine.projects?.current ? `🏛 ${engine.projects.current.name}` : '🏛 Проекты'}
+          <FolderIcon />
+          {/* Длинное имя переносится на вторую строку, а не распирает шапку. */}
+          <span className="project-btn-name">{engine.projects?.current ? engine.projects.current.name : 'Проекты'}</span>
         </button>
         {/*
           Правки ещё не на диске — видно сразу, в шапке, рядом с именем
@@ -434,8 +453,8 @@ export function App() {
         */}
         {engine.projects?.current && engine.projectDirty.dirty && (
           <button
-            className="btn btn-small btn-warn"
-            style={{ marginLeft: 6 }}
+            className="btn btn-small btn-warn btn-icon btn-save"
+            aria-label="Сохранить"
             data-hint={
               engine.engineConfig?.autosaveEnabled
                 ? `Есть несохранённые правки. Автосохранение — раз в ${engine.engineConfig.autosaveSec} с; нажмите, чтобы сохранить сейчас (Ctrl+S).`
@@ -443,7 +462,7 @@ export function App() {
             }
             onClick={() => send({ type: 'saveNow' })}
           >
-            ● Сохранить
+            <SaveIcon />
           </button>
         )}
         {/*

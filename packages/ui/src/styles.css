@@ -112,6 +112,27 @@ body {
   margin-left: 8px;
 }
 
+/* Кнопка проекта в шапке: имя может быть любым, поэтому она единственная в
+   шапке, кто сжимается, — длинное имя переносится на две строки (полное — в
+   подсказке), а не выталкивает вкладки за край окна. */
+.project-btn {
+  margin-left: 8px;
+  min-width: 0;
+  max-width: 190px;
+  flex-shrink: 1;
+  white-space: normal;
+  text-align: left;
+  line-height: 1.15;
+}
+.project-btn-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.btn-save { margin-left: 6px; padding-left: 6px; padding-right: 6px; flex-shrink: 0; }
+
 /* Статус связи не сжимается и не переносится: на окне 1600 px вкладки
    выдавливали его за край, и было видно «движок подклю». */
 .conn {
@@ -2229,6 +2250,7 @@ input[type='range']:disabled { opacity: 0.4; cursor: default; }
    статус связи) уезжает за экран. Ширины проверены снимками 1366/1600/1920. */
 @media (max-width: 1750px) {
   .tab { padding: 5px 9px; }
+  .tabs { gap: 2px; }
 }
 @media (max-width: 1500px) {
   .tab { padding: 4px 6px; font-size: 12px; }
@@ -2236,11 +2258,18 @@ input[type='range']:disabled { opacity: 0.4; cursor: default; }
 @media (max-width: 1450px) {
   .conn-text { display: none; }
   .conn-dot { font-size: 14px; }
+  /* Номер версии — в подсказку к названию: на 1366 px без этого не помещалось
+     имя проекта при несохранённых правках (замер 24.09.2026). */
+  .brand-version { display: none; }
 }
 /* 1280 px (ноутбук или 1920 с масштабом 150 %): номер версии уходит в подсказку
    к названию программы, а место в шапке нужно вкладкам. */
 @media (max-width: 1320px) {
   .brand-version { display: none; }
+  /* И название программы: логотип остаётся, название и версия — в подсказке.
+     Иначе при несохранённых правках не помещалось имя ПРОЕКТА (замер 24.09.2026),
+     а оно человеку нужнее. */
+  .brand-name { display: none; }
   .tab { padding: 4px 5px; }
 }
 
