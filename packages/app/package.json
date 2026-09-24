@@ -63,13 +63,15 @@
       "node_modules/@koromix/koffi-win32-x64/**"
     ],
     "win": {
-      "target": "nsis",
-      "signAndEditExecutable": false
+      "target": "nsis"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "FountainStudio-Setup-${version}.exe"
+      "artifactName": "FountainStudio-Setup-${version}.exe",
+      "language": "1049",
+      "installerLanguages": ["ru_RU"],
+      "shortcutName": "Fountain Studio"
     },
     "fileAssociations": [
       {

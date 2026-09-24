@@ -19,6 +19,11 @@ audio/
 backups/
 logs/
 
+# Оформление установщика и значок программы — исходники сборки, а не её
+# результат: их читает electron-builder (buildResources). Правило «build/»
+# выше их прятало. Пересобираются scripts/make-brand-assets.cjs.
+!packages/app/build/
+
 # Артефакты сборки настольного приложения (packages/app)
 packages/app/engine.cjs
 packages/app/playback-worker.cjs
