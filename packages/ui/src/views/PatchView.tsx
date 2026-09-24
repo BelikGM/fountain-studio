@@ -559,10 +559,12 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
    */
   const [frozenOrder, setFrozenOrder] = useState<string[] | null>(null);
   /**
-   * Адрес, который набирается прямо сейчас, — и вне 1–512 тоже. Такой в
-   * прибор не уходит, и раньше рядом висела ошибка ПРОШЛОГО промежуточного
-   * числа: набрали «513» — видно «пересечение» прибора на 51 (заказчик
-   * 24.09.2026). Теперь рядом пишется настоящая причина — «вне 1–512».
+   * Адрес, который набирается прямо сейчас. В прибор он уходит только при
+   * выходе из поля или Enter (commitOnBlur): раньше каждое промежуточное
+   * число сразу ставило прибор на новый адрес, и, набирая «513» поверх «51»,
+   * прибор на миг вставал на 51 — соседний прибор на 51 краснел
+   * «пересечением» (заказчик 24–25.09.2026). Теперь проверка набранного —
+   * только в своей строке, как предпросмотр; остальные строки не трогаются.
    */
   const [addrDraft, setAddrDraft] = useState<{ id: string; v: number } | null>(null);
   /** Окно «Удалить приборы» (несколько сразу). */
@@ -781,9 +783,20 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
             <tbody>
               {sorted.map((d) => {
                 const range = deviceRange(d, profiles);
-                const typed = addrDraft?.id === d.id ? addrDraft.v : null;
-                const typedOut = typed !== null && (typed < 1 || typed > DMX_UNIVERSE_SIZE);
-                const bad = typedOut || issues.collisions.has(d.id) || issues.outOfRange.has(d.id);
+                const typedRaw = addrDraft?.id === d.id ? addrDraft.v : null;
+                // Набирается другое число — показываем, что будет с ним, а не с прошлым.
+                const typed = typedRaw !== null && typedRaw !== d.address ? typedRaw : null;
+                const size = range.end - range.start + 1;
+                const typedOut = typed !== null && (typed < 1 || typed + size - 1 > DMX_UNIVERSE_SIZE);
+                const typedClash =
+                  typed !== null && !typedOut
+                    ? sorted.find((o) => {
+                        if (o.id === d.id || o.universe !== d.universe) return false;
+                        const r = deviceRange(o, profiles);
+                        return r.start <= typed + size - 1 && r.end >= typed;
+                      }) ?? null
+                    : null;
+                const bad = typed !== null ? typedOut || typedClash !== null : issues.collisions.has(d.id) || issues.outOfRange.has(d.id);
                 const profile = profiles.get(d.profileId);
                 const trimOpen = trimOpenId === d.id;
                 const modbusOpen = modbusOpenId === d.id;
@@ -841,12 +854,22 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                         onBlur={() => setFrozenOrder(null)}
                         onDraft={(v) => setAddrDraft(v === null ? null : { id: d.id, v })}
                         onChange={(v) => patchDevice(d.id, { address: v })}
+                        commitOnBlur
+                        hint="Адрес первого канала. Меняется, когда выйдете из поля или нажмёте Enter; Esc — оставить как было"
                       />
                     </td>
-                    {typedOut ? (
-                      <td className="dim" data-hint={`Адрес прибора — от 1 до ${DMX_UNIVERSE_SIZE}: во вселенной DMX всего ${DMX_UNIVERSE_SIZE} адресов. Выйдете из поля — адрес подрежется до ближайшего допустимого.`}>
-                        {typed}–{typed! + range.end - range.start}
-                        <span className="error-text"> вне 1–{DMX_UNIVERSE_SIZE}</span>
+                    {typed !== null ? (
+                      <td
+                        className="dim"
+                        data-hint={
+                          typedOut
+                            ? `Адрес прибора — от 1 до ${DMX_UNIVERSE_SIZE}: во вселенной DMX всего ${DMX_UNIVERSE_SIZE} адресов. Выйдете из поля — адрес подрежется до ближайшего допустимого.`
+                            : 'Так будет, когда выйдете из поля или нажмёте Enter'
+                        }
+                      >
+                        {typed}–{typed + size - 1}
+                        {typedOut && <span className="error-text"> вне 1–{DMX_UNIVERSE_SIZE}</span>}
+                        {typedClash && <span className="error-text"> пересечение с «{typedClash.name}»</span>}
                       </td>
                     ) : (
                       <td className="dim">

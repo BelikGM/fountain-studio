@@ -17,6 +17,8 @@ import {
   autoShare,
   autoShareSingle,
   autoFigureShare,
+  contourOverlaps,
+  contourOwnDevices,
   DEFAULT_FIGURE_DIMS,
   emptyProject,
   figureDimsError,
@@ -27,6 +29,7 @@ import {
   planFigure,
   profileMap,
   devicesDependents,
+  removeContour,
   removeDevices,
   sharesEvenly,
   type FigureDims,
@@ -328,6 +331,41 @@ console.log('— групповое удаление —');
   check('у форсунок светильники отвязаны, насос на месте', after.layout.nozzles.every((n) => n.lightDeviceId === null && n.pumpDeviceId === pump.id));
   check('из сцены значения светильника ушли, насоса — остались', !(lights[0]!.id in after.scenes[0]!.values) && pump.id in after.scenes[0]!.values);
   check('контур и форсунки не тронуты', after.layout.nozzles.length === 4 && after.layout.nozzleGroups.length === 1);
+}
+
+// ── Удаление контура с выбором (заказчик 25.09.2026) ─────────────────────
+console.log('— удаление контура: только контур / с элементами / с приборами —');
+{
+  const base = emptyProject();
+  // Два кольца; насос общий для обоих (его удалять нельзя — он нужен второму).
+  const a = spec({ name: 'Кольцо', count: 4, light: { count: 4, profileId: 'rgb', universe: 1, startAddress: null, mode: 'blocks' } });
+  const pa = planFigure(base, a, autoFigureShare(a), newId);
+  const withA: Project = { ...base, devices: pa.devices, layout: { ...base.layout, nozzles: pa.nozzles, nozzleGroups: [pa.group] } };
+  const b = spec({ name: 'Кольцо 2', count: 3, pump: { count: 0, profileId: 'pump', universe: 1, startAddress: null, mode: 'blocks' }, light: { count: 3, profileId: 'rgb', universe: 1, startAddress: null, mode: 'blocks' } });
+  const pb = planFigure(withA, b, autoFigureShare(b), newId);
+  const sharedPump = pa.devices.find((d) => d.profileId === 'pump')!;
+  const nozzlesB = pb.nozzles.map((n) => ({ ...n, pumpDeviceId: sharedPump.id }));
+  const project: Project = {
+    ...withA,
+    devices: [...withA.devices, ...pb.devices],
+    layout: { ...withA.layout, nozzles: [...withA.layout.nozzles, ...nozzlesB], nozzleGroups: [...withA.layout.nozzleGroups, pb.group] },
+  };
+  const own = contourOwnDevices(project, pb.group.id);
+  check('свои приборы второго кольца — 3 светильника, общий насос не свой', own.length === 3 && !own.includes(sharedPump.id), own.length + '');
+  const g = removeContour(project, pb.group.id, 'group');
+  check('«только контур»: группировки нет, форсунки и приборы на месте', g.layout.nozzleGroups.length === 1 && g.layout.nozzles.length === 7 && g.devices.length === project.devices.length);
+  const e = removeContour(project, pb.group.id, 'elements');
+  check('«с элементами»: 3 форсунки ушли со схемы, приборы на месте', e.layout.nozzles.length === 4 && e.devices.length === project.devices.length && e.layout.nozzleGroups.length === 1);
+  const all = removeContour(project, pb.group.id, 'all');
+  check('«с приборами»: ушли и 3 светильника, общий насос остался', all.devices.length === project.devices.length - 3 && all.devices.some((d) => d.id === sharedPump.id));
+  check('у первого кольца всё на месте', all.layout.nozzles.filter((n) => n.pumpDeviceId === sharedPump.id).length === 4 && all.layout.nozzleGroups[0]!.nozzleIds.length === 4);
+  const overlapProject: Project = {
+    ...project,
+    layout: { ...project.layout, nozzleGroups: [...project.layout.nozzleGroups, { ...pb.group, id: 'x', name: 'Общий', nozzleIds: [nozzlesB[0]!.id] }] },
+  };
+  check('элемент в двух контурах — видно, из какого ещё он пропадёт', same(contourOverlaps(overlapProject, pb.group.id), ['Общий']));
+  const cleaned = removeContour(overlapProject, pb.group.id, 'elements');
+  check('…и из того контура он вычищен', cleaned.layout.nozzleGroups.find((x) => x.id === 'x')!.nozzleIds.length === 0);
 }
 
 // ── Ручная правка раздачи ────────────────────────────────────────────────

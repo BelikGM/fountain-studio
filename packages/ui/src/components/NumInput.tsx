@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type FocusEvent } from 'react';
+import { useRef, useState, type CSSProperties, type FocusEvent } from 'react';
 
 /**
  * Числовое поле, в котором можно спокойно набрать число целиком.
@@ -32,6 +32,7 @@ export function NumInput({
   onFocus,
   onBlur,
   onDraft,
+  commitOnBlur = false,
 }: {
   value: number;
   onChange: (v: number) => void;
@@ -47,9 +48,18 @@ export function NumInput({
   onBlur?: (e: FocusEvent<HTMLInputElement>) => void;
   /** Что набрано, пока поле в фокусе (и вне пределов тоже); null — поле отпущено или пусто. */
   onDraft?: (v: number | null) => void;
+  /**
+   * Наружу — только при выходе из поля или Enter, без промежуточных чисел.
+   * Для адреса прибора (заказчик 25.09.2026): набирая «513» поверх «51…»,
+   * поле на миг ставило прибор на 51, и соседний прибор на 51 краснел
+   * «пересечением». Esc — вернуть, как было.
+   */
+  commitOnBlur?: boolean;
 }) {
   /** Набранный текст, пока поле в фокусе; null — показываем значение. */
   const [text, setText] = useState<string | null>(null);
+  /** Esc: выйти из поля, ничего не меняя (blur срабатывает раньше, чем обновится text). */
+  const cancel = useRef(false);
   const parse = (t: string): number | null => {
     if (t.trim() === '') return null;
     const v = Number(t.replace(',', '.'));
@@ -84,10 +94,22 @@ export function NumInput({
         // смены значения снаружи (кнопка «40» рядом) поле показывало бы старое.
         if (document.activeElement === e.target) setText(e.target.value);
         onDraft?.(v);
-        if (v !== null && inRange(v) && v !== value) onChange(v);
+        if (!commitOnBlur && v !== null && inRange(v) && v !== value) onChange(v);
       }}
+      onKeyDown={
+        commitOnBlur
+          ? (e) => {
+              if (e.key === 'Enter') e.currentTarget.blur();
+              else if (e.key === 'Escape') {
+                cancel.current = true;
+                e.currentTarget.blur();
+              }
+            }
+          : undefined
+      }
       onBlur={(e) => {
-        const v = text === null ? null : parse(text);
+        const v = text === null || cancel.current ? null : parse(text);
+        cancel.current = false;
         setText(null);
         onDraft?.(null);
         if (v !== null && clamp(v) !== value) onChange(clamp(v));

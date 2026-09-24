@@ -2013,6 +2013,8 @@ h2.panel-head-search {
   justify-content: center;
   z-index: 50;
 }
+/* Подтверждение — всегда самое верхнее окно (его открывают и из других окон). */
+.modal-overlay.confirm-overlay { z-index: 80; }
 .modal {
   background: var(--bg-panel);
   border: 1px solid var(--border);
@@ -2608,6 +2610,11 @@ section.panel-flash { box-shadow: 0 0 0 1px var(--accent); transition: box-shado
 .figure-preview-outline { fill: none; stroke: var(--fg-dim); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.7; }
 .figure-hint { margin: 4px 0 6px; font-size: 12px; }
 /* Окно «Удалить приборы»: список «что удалить» и сводка по выбранному. */
-.bulk-delete-modal { width: 560px; }
+.bulk-delete-modal { width: min(560px, calc(100vw - 32px)); }
+/* Галочка «и их приборы» — под своим вариантом, с отступом: видно, к чему относится. */
+.contour-delete-sub { padding-left: 22px; }
+/* Подзаголовок внутри списка «Состав» контура: «В контуре (12)», «Остальные (36)». */
+.list-subhead { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-dim); margin: 6px 0 2px; }
+.list-subhead:first-child { margin-top: 0; }
 .bulk-delete-scopes { display: flex; flex-direction: column; gap: 6px; }
 .bulk-delete-preview { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; background: var(--bg); border-radius: 4px; font-size: 13px; max-height: 180px; overflow-y: auto; }

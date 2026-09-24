@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { countOf, devicesDependents, profileMap, type DeviceKind, type Project } from '@fountain-studio/shared';
 import { askConfirm } from './ConfirmDialog';
 
@@ -58,10 +58,26 @@ export function BulkDeleteDialog({
   const scope = scopes.find((s) => s.id === scopeId) ?? scopes[0]!;
   const names = scope.ids.map((id) => project.devices.find((d) => d.id === id)?.name ?? id);
   const deps = devicesDependents(project, scope.ids);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   const run = async (): Promise<void> => {
     if (scope.ids.length === 0) return;
-    const ok = await askConfirm(`Удалить ${countOf(scope.ids.length, 'прибор', 'прибора', 'приборов')}?`, {
+    const ids = scope.ids;
+    /*
+     * Окно выбора закрывается СРАЗУ, подтверждение встаёт вместо него
+     * (заказчик 25.09.2026). Раньше подтверждение открывалось под этим окном:
+     * фон темнел ещё сильнее, а «Удалить 10 приборов» будто не срабатывала —
+     * до подтверждения добирались только через «Отмена». «Отмена» в
+     * подтверждении отменяет удаление целиком, к выбору не возвращает.
+     */
+    onClose();
+    const ok = await askConfirm(`Удалить ${countOf(ids.length, 'прибор', 'прибора', 'приборов')}?`, {
       detail:
         `${scope.label}: ${names.slice(0, 6).join(', ')}${names.length > 6 ? ` и ещё ${names.length - 6}` : ''}.` +
         (deps.length > 0 ? ` Используются: ${deps.join('; ')}.` : '') +
@@ -69,8 +85,7 @@ export function BulkDeleteDialog({
       okLabel: 'Удалить',
     });
     if (!ok) return;
-    onDelete(scope.ids);
-    onClose();
+    onDelete(ids);
   };
 
   return (

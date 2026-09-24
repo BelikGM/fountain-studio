@@ -101,6 +101,72 @@ export function removeDevices(project: Project, ids: Iterable<string>): Project 
   return sanitizeProject({ ...project, devices: project.devices.filter((d) => !drop.has(d.id)) });
 }
 
+/**
+ * Приборы, привязанные ТОЛЬКО к элементам контура: ни одной форсунке и ни
+ * одному прожектору вне контура они не нужны. Их и предлагаем удалить вместе
+ * с контуром — общий насос, который питает и другое кольцо, не трогаем.
+ */
+export function contourOwnDevices(project: Project, groupId: string): string[] {
+  const g = project.layout.nozzleGroups.find((x) => x.id === groupId);
+  if (!g) return [];
+  const inN = new Set(g.nozzleIds);
+  const inL = new Set(g.lightIds);
+  const mine = new Set<string>();
+  const others = new Set<string>();
+  for (const n of project.layout.nozzles) {
+    for (const id of [...nozzlePumpIds(n), ...nozzlePump2Ids(n), ...nozzleValveIds(n), ...nozzleLightIds(n)]) {
+      (inN.has(n.id) ? mine : others).add(id);
+    }
+  }
+  for (const l of project.layout.lights) if (l.deviceId) (inL.has(l.id) ? mine : others).add(l.deviceId);
+  const exists = new Set(project.devices.map((d) => d.id));
+  return [...mine].filter((id) => !others.has(id) && exists.has(id));
+}
+
+/**
+ * Что удалить вместе с контуром (заказчик 25.09.2026: «удалил контур — а
+ * форсунки остались, и искать их приходится по одной»):
+ *  · 'group' — только группировку, элементы остаются на своих местах;
+ *  · 'elements' — и форсунки с прожекторами контура со схемы;
+ *  · 'all' — и приборы, привязанные только к ним (contourOwnDevices).
+ * Удалённые элементы вычищаются и из других контуров. Одна правка — Ctrl+Z
+ * возвращает всё разом.
+ */
+export type ContourRemoval = 'group' | 'elements' | 'all';
+
+export function removeContour(project: Project, groupId: string, what: ContourRemoval): Project {
+  const g = project.layout.nozzleGroups.find((x) => x.id === groupId);
+  if (!g) return project;
+  const layout = project.layout;
+  if (what === 'group') return { ...project, layout: { ...layout, nozzleGroups: layout.nozzleGroups.filter((x) => x.id !== groupId) } };
+  const noz = new Set(g.nozzleIds);
+  const lig = new Set(g.lightIds);
+  const devices = what === 'all' ? contourOwnDevices(project, groupId) : [];
+  const next: Project = {
+    ...project,
+    layout: {
+      ...layout,
+      nozzles: layout.nozzles.filter((n) => !noz.has(n.id)),
+      lights: layout.lights.filter((l) => !lig.has(l.id)),
+      nozzleGroups: layout.nozzleGroups
+        .filter((x) => x.id !== groupId)
+        .map((x) => ({ ...x, nozzleIds: x.nozzleIds.filter((id) => !noz.has(id)), lightIds: x.lightIds.filter((id) => !lig.has(id)) })),
+    },
+  };
+  return devices.length > 0 ? removeDevices(next, devices) : next;
+}
+
+/** Другие контуры, в которые входят элементы этого (их элементы тоже пропадут). */
+export function contourOverlaps(project: Project, groupId: string): string[] {
+  const g = project.layout.nozzleGroups.find((x) => x.id === groupId);
+  if (!g) return [];
+  const noz = new Set(g.nozzleIds);
+  const lig = new Set(g.lightIds);
+  return project.layout.nozzleGroups
+    .filter((x) => x.id !== groupId && (x.nozzleIds.some((id) => noz.has(id)) || x.lightIds.some((id) => lig.has(id))))
+    .map((x) => x.name);
+}
+
 /** Что затронет удаление набора приборов — для окна подтверждения. */
 export function devicesDependents(project: Project, ids: Iterable<string>): string[] {
   const set = new Set(ids);

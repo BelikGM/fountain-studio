@@ -84,7 +84,9 @@ export function ConfirmHost() {
 
   if (!req) return null;
   return (
-    <div className="modal-overlay" onClick={() => close(false)}>
+    // confirm-overlay — поверх любых других окон: подтверждение, открытое из
+    // окна, не должно прятаться под ним.
+    <div className="modal-overlay confirm-overlay" onClick={() => close(false)}>
       <div className="modal confirm-modal" onClick={(e) => e.stopPropagation()}>
         <div className="confirm-text">{req.text}</div>
         {req.detail && <p className="dim confirm-detail">{req.detail}</p>}

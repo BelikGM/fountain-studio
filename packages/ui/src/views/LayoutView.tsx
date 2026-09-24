@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { isCollapsedKey, rememberCollapsedKey, useCollapsiblePanels } from '../collapsiblePanels';
 import { NumInput } from '../components/NumInput';
 import { FigureDimsFields, metersText } from '../components/FigureDimsFields';
+import { ContourDeleteDialog } from '../components/ContourDeleteDialog';
 import { requestTab } from '../navigate';
 import {
   BOWL_DEFAULTS,
@@ -668,6 +669,7 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
                 project={project}
                 layout={layout}
                 setLayout={setLayout}
+                setProject={updateProject}
                 onSelect={setSelected}
                 send={send}
                 frames={frames}
@@ -3231,6 +3233,7 @@ function GroupProps({
   project,
   layout,
   setLayout,
+  setProject,
   onSelect,
   send,
   frames,
@@ -3239,6 +3242,8 @@ function GroupProps({
   project: Project;
   layout: FountainLayout;
   setLayout: (l: FountainLayout) => void;
+  /** Удаление контура с приборами меняет не только схему. */
+  setProject: (p: Project) => void;
   onSelect: (s: Selected) => void;
   send: EngineConnection['send'];
   /** Живые кадры DMX — нужны отладке, чтобы показывать фактическое состояние приборов. */
@@ -3246,6 +3251,14 @@ function GroupProps({
 }) {
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  /*
+   * «Состав»: сначала то, что в контуре, потом остальное (заказчик 25.09.2026:
+   * отмеченные галочками форсунки второго кольца стояли в самом низу, под
+   * всеми форсунками первого). Пока мышь над списком, порядок заморожен —
+   * иначе снятая галочка уезжала бы из-под курсора в другой раздел.
+   */
+  const [frozen, setFrozen] = useState<{ nozzles: Set<string>; lights: Set<string> } | null>(null);
   // Форсунки контура — их свойства правятся общим блоком NozzleBulkFields,
   // тем же, что и у временного выделения: раньше здесь была отдельная секция
   // с полями-заготовками и кнопками «— всем», из-за чего набор свойств у
@@ -3370,20 +3383,34 @@ function GroupProps({
           {allIn ? 'снять все' : 'все'}
         </button>
       </h3>
-      <div className="utility-device-list">
-        {layout.nozzles.map((n) => (
-          <label key={n.id} className="field">
-            <input type="checkbox" checked={group.nozzleIds.includes(n.id)} onChange={() => toggleNozzle(n.id)} />{' '}
-            {n.name}
+      {(() => {
+        const inN = frozen?.nozzles ?? new Set(group.nozzleIds);
+        const inL = frozen?.lights ?? new Set(group.lightIds);
+        // Входящие — в порядке контура (Ф1, Ф2…), остальные — как на схеме.
+        const memberN = [...inN].map((id) => layout.nozzles.find((n) => n.id === id)).filter((n): n is Nozzle => !!n);
+        const memberL = [...inL].map((id) => layout.lights.find((x) => x.id === id)).filter((x): x is LayoutLight => !!x);
+        const restN = layout.nozzles.filter((n) => !inN.has(n.id));
+        const restL = layout.lights.filter((x) => !inL.has(x.id));
+        const row = (id: string, name: string, on: boolean, toggle: () => void) => (
+          <label key={id} className="field">
+            <input type="checkbox" checked={on} onChange={toggle} /> {name}
           </label>
-        ))}
-        {layout.lights.map((l) => (
-          <label key={l.id} className="field">
-            <input type="checkbox" checked={group.lightIds.includes(l.id)} onChange={() => toggleLight(l.id)} />{' '}
-            {l.name}
-          </label>
-        ))}
-      </div>
+        );
+        return (
+          <div
+            className="utility-device-list"
+            onPointerEnter={() => setFrozen({ nozzles: new Set(group.nozzleIds), lights: new Set(group.lightIds) })}
+            onPointerLeave={() => setFrozen(null)}
+          >
+            {memberN.length + memberL.length > 0 && <div className="list-subhead">В контуре ({memberN.length + memberL.length})</div>}
+            {memberN.map((n) => row(n.id, n.name, group.nozzleIds.includes(n.id), () => toggleNozzle(n.id)))}
+            {memberL.map((x) => row(x.id, x.name, group.lightIds.includes(x.id), () => toggleLight(x.id)))}
+            {restN.length + restL.length > 0 && <div className="list-subhead">Остальные ({restN.length + restL.length})</div>}
+            {restN.map((n) => row(n.id, n.name, group.nozzleIds.includes(n.id), () => toggleNozzle(n.id)))}
+            {restL.map((x) => row(x.id, x.name, group.lightIds.includes(x.id), () => toggleLight(x.id)))}
+          </div>
+        );
+      })()}
 
       <h3>Общие свойства форсунок контура</h3>
       <div className="field-grid">
@@ -3450,24 +3477,23 @@ function GroupProps({
       <div className="sidebar-actions">
         <button
           className="btn btn-small btn-danger"
-          data-hint="Форсунки и прожекторы останутся на схеме"
-          onClick={() => {
-            void (async () => {
-              const ok = await askConfirm(`Удалить контур «${group.name}»?`, {
-                detail:
-                  `Удалится только сам контур — группировка. Его элементы (форсунок ${group.nozzleIds.length}, ` +
-                  `прожекторов ${group.lightIds.length}) останутся на схеме на своих местах.`,
-                okLabel: 'Удалить контур',
-              });
-              if (!ok) return;
-              setLayout({ ...layout, nozzleGroups: layout.nozzleGroups.filter((g) => g.id !== group.id) });
-              onSelect(null);
-            })();
-          }}
+          data-hint="Удалить только контур или вместе с форсунками, прожекторами и их приборами — выбор в окне"
+          onClick={() => setDeleting(true)}
         >
-          Удалить контур
+          Удалить контур…
         </button>
       </div>
+      {deleting && (
+        <ContourDeleteDialog
+          project={project}
+          group={group}
+          onClose={() => setDeleting(false)}
+          onApply={(next) => {
+            setProject(next);
+            onSelect(null);
+          }}
+        />
+      )}
     </section>
   );
 }
