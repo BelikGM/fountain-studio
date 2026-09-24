@@ -7,7 +7,7 @@ import { useDragOrder } from '../components/DragOrder';
 import { ListFilter } from '../components/ListFilter';
 import { confirmDelete } from '../confirmDelete';
 import type { EngineConnection } from '../useEngine';
-import { NextIcon, PlayIcon, PrevIcon, StopIcon } from '../components/Icons';
+import { NextIcon, PlayIcon, PrevIcon, StopIcon, PlusIcon, CopyIcon, CloseIcon, KeyArrowIcon } from '../components/Icons';
 
 /**
  * Плейлисты: последовательности шоу с паузами. Исполняет движок автономно
@@ -68,8 +68,9 @@ export function PlaylistsView({ engine, readOnly = false }: { engine: EngineConn
           </p>
         ) : (
           <div className="sidebar-actions">
-            <button className="btn" onClick={addPlaylist}>
-              + Плейлист
+            <button className="btn btn-icon" onClick={addPlaylist}>
+              <PlusIcon />
+              Плейлист
             </button>
             <button className="btn" onClick={() => void removePlaylist()} disabled={!selected}>
               Удалить
@@ -319,31 +320,31 @@ function PlaylistEditor({
                         <span className="dim">—</span>
                       ) : (
                         <>
-                      <button className="btn btn-small" disabled={i === 0} onClick={() => moveItem(i, -1)}>
-                        ↑
+                      <button className="btn btn-small btn-icon btn-glyph" disabled={i === 0} onClick={() => moveItem(i, -1)}>
+                        <KeyArrowIcon dir="up" />
                       </button>
                       <button
-                        className="btn btn-small"
+                        className="btn btn-small btn-icon btn-glyph"
                         disabled={i === playlist.items.length - 1}
                         onClick={() => moveItem(i, 1)}
                       >
-                        ↓
+                        <KeyArrowIcon dir="down" />
                       </button>
                       <button
-                        className="btn btn-small"
+                        className="btn btn-small btn-icon btn-glyph"
                         data-hint="Копировать пункт"
                         onClick={() => {
                           copyToClipboard('playlistItem', item);
                           setHasItemClip(true);
                         }}
                       >
-                        ⧉
+                        <CopyIcon />
                       </button>
                       <button
-                        className="btn btn-small"
+                        className="btn btn-small btn-icon btn-glyph"
                         onClick={() => onChange({ ...playlist, items: playlist.items.filter((_, j) => j !== i) })}
                       >
-                        ✕
+                        <CloseIcon />
                       </button>
                         </>
                       )}
@@ -356,12 +357,13 @@ function PlaylistEditor({
           {!readOnly && (
             <div className="form-row">
               <button
-                className="btn"
+                className="btn btn-icon"
                 onClick={() =>
                   onChange({ ...playlist, items: [...playlist.items, { showId: shows[0]!.id, gapMs: 5000 }] })
                 }
               >
-                + Шоу в плейлист
+                <PlusIcon />
+                Шоу в плейлист
               </button>
               {hasItemClip && (
                 <button className="btn btn-small" onClick={pasteItem}>

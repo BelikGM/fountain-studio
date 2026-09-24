@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { askConfirm } from '../components/ConfirmDialog';
+import { ArrowLeftIcon, CloseIcon, PlusIcon } from '../components/Icons';
 import type { EngineConnection } from '../useEngine';
 
 /**
@@ -115,8 +116,15 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
 
   return (
     <main className="view">
-      <section className="panel">
+      <section className="panel panel-closable">
         <h2>{projects.current ? 'Проекты' : 'С какого проекта начнём?'}</h2>
+        {/* Крестик — как у любого окна поверх вкладки (раньше закрыть можно было
+            только повторным щелчком по имени проекта в шапке). */}
+        {onClose && (
+          <button className="panel-close" aria-label="Закрыть" data-hint="Закрыть и вернуться к вкладке" onClick={onClose}>
+            <CloseIcon size={14} />
+          </button>
+        )}
         <p className="dim">
           Проект — это папка на диске: в ней схема и адреса, вселенные DMX, музыка шоу, журнал и
           резервные копии. Папку можно унести на флешке или прислать коллеге — у него откроется то же
@@ -158,8 +166,9 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
                 Закрыть проект
               </button>
               {onClose && (
-                <button className="btn btn-small" onClick={onClose}>
-                  ← Вернуться к работе
+                <button className="btn btn-small btn-icon" onClick={onClose}>
+                  <ArrowLeftIcon />
+                  Вернуться к работе
                 </button>
               )}
             </div>
@@ -315,14 +324,15 @@ export function ProjectsView({ engine, onClose }: { engine: EngineConnection; on
         ) : (
           <div className="form-row">
             <button
-              className="btn"
+              className="btn btn-icon"
               onClick={() => {
                 setName('');
                 setDestDir('');
                 setCreating(true);
               }}
             >
-              + Новый проект
+              <PlusIcon />
+              Новый проект
             </button>
           </div>
         )}

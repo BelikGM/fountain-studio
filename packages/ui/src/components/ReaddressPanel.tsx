@@ -1,3 +1,4 @@
+import { SwapIcon } from './Icons';
 import { useState } from 'react';
 import { allProfiles, profileMap, type PatchedDevice, type Project,
   universeShort,
@@ -169,11 +170,11 @@ export function ReaddressPanel({
             </span>
             {i < order.length - 1 && (
               <button
-                className="btn btn-small readdress-swap"
+                className="btn btn-small readdress-swap btn-icon btn-glyph"
                 data-hint="Поменять эти два вида местами"
                 onClick={() => swap(i, 1)}
               >
-                <span>⇄</span>
+                <SwapIcon />
               </button>
             )}
           </span>

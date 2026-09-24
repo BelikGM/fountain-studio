@@ -51,6 +51,8 @@ export interface DraftState {
    * вовсе, и было непонятно, сохранилось ли что-нибудь (заказчик 24.09.2026).
    */
   appliedIds: number[];
+  /** Из них — новые вселенные: у них отметка «✔ добавлена», а не «✔ применена». */
+  appliedNewIds: number[];
 }
 
 /**
@@ -60,9 +62,10 @@ export interface DraftState {
  */
 const REPLY_TIMEOUT_MS = 5000;
 
-let state: DraftState = { draft: null, status: 'idle', message: '', changes: [], appliedIds: [] };
+let state: DraftState = { draft: null, status: 'idle', message: '', changes: [], appliedIds: [], appliedNewIds: [] };
 /** Какие вселенные ушли в движок последним «Применить». */
 let sentIds: number[] = [];
+let sentNewIds: number[] = [];
 let appliedTimer: ReturnType<typeof setTimeout> | null = null;
 /** Сколько держится отметка «✔ применена». */
 const APPLIED_MARK_MS = 4000;
@@ -83,7 +86,7 @@ function copy(d: SettingsDraft): SettingsDraft {
 
 /** Запомнить незавершённую правку (вызывается на каждое изменение). */
 export function keepSettingsDraft(next: SettingsDraft): void {
-  set({ draft: copy(next), status: 'idle', message: '', changes: [], appliedIds: [] });
+  set({ draft: copy(next), status: 'idle', message: '', changes: [], appliedIds: [], appliedNewIds: [] });
 }
 
 /** Текущая правка; null — правок нет. */
@@ -95,7 +98,7 @@ export function takeSettingsDraft(): SettingsDraft | null {
 export function clearSettingsDraft(): void {
   if (replyTimer) clearTimeout(replyTimer);
   replyTimer = null;
-  set({ draft: null, status: 'idle', message: '', changes: [], appliedIds: [] });
+  set({ draft: null, status: 'idle', message: '', changes: [], appliedIds: [], appliedNewIds: [] });
 }
 
 /**
@@ -107,10 +110,13 @@ export function applySettingsDraft(
   connected: boolean,
   /** Какие вселенные в правке новые или изменённые — их строки подсветятся после ответа. */
   changedIds: number[] = [],
+  /** Из них новые — чтобы после ответа отметить «✔ добавлена». */
+  newIds: number[] = [],
 ): void {
   const d = state.draft;
   if (!d) return;
   sentIds = changedIds;
+  sentNewIds = newIds;
   if (!connected) {
     set({
       ...state,
@@ -150,11 +156,11 @@ export function onConfigResult(ok: boolean, message: string, changes: string[]):
   if (replyTimer) clearTimeout(replyTimer);
   replyTimer = null;
   if (ok) {
-    set({ draft: null, status: 'applied', message, changes, appliedIds: sentIds });
+    set({ draft: null, status: 'applied', message, changes, appliedIds: sentIds, appliedNewIds: sentNewIds });
     if (appliedTimer) clearTimeout(appliedTimer);
     appliedTimer = setTimeout(() => {
       appliedTimer = null;
-      if (state.appliedIds.length > 0) set({ ...state, appliedIds: [] });
+      if (state.appliedIds.length > 0) set({ ...state, appliedIds: [], appliedNewIds: [] });
     }, APPLIED_MARK_MS);
   } else set({ ...state, status: 'error', message, changes: [] });
 }

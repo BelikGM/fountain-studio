@@ -14,6 +14,7 @@
  *     "url": "http://127.0.0.1:5180/?engine=9531",   // ?engine= — порт движка
  *     "out": "C:/.../папка-для-снимков",
  *     "width": 1600, "height": 1000,
+ *     "scale": 1.25,                                    // масштаб экрана (по умолчанию 1)
  *     "steps": [
  *       { "tab": "Настройки" },                        // нажать вкладку по подписи
  *       { "click": "+ Вселенная" },                    // нажать кнопку по тексту
@@ -24,7 +25,8 @@
  *       { "eval": "document.title" },                  // выполнить JS, результат в вывод
  *       { "shot": "settings.png" },                    // снять видимую часть окна
  *       { "shot": "x.png", "clip": {"x":0,"y":0,"width":400,"height":200}, "zoom": 2 }, // фрагмент крупно
- *       { "fit": "settings" }                          // найти обрезанные подписи
+ *       { "fit": "settings" },                         // найти обрезанные подписи
+ *       { "align": "settings" }                        // проверить выравнивание по пикселям
  *     ]
  *   }
  *
@@ -48,7 +50,9 @@ fs.mkdirSync(out, { recursive: true });
 
 // Свой профиль: ни настройки, ни localStorage установленной программы не трогаем.
 app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'fs-shot-profile-')));
-app.commandLine.appendSwitch('force-device-scale-factor', '1');
+// Масштаб экрана Windows: 1 = 100 %, 1.25 = 125 %… Округление пикселей при
+// разных масштабах разное, и выравнивание надо смотреть хотя бы при двух.
+app.commandLine.appendSwitch('force-device-scale-factor', String(sc.scale || 1));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -152,6 +156,163 @@ const FIT = `
   })()
 `;
 
+/**
+ * Выравнивание по ПИКСЕЛЯМ (шаг { "align": "подпись" }).
+ *
+ * Зачем. Заказчик раз за разом находил глазами то, что по DOM выглядит
+ * ровным: «новая · не применена» в плашке ниже середины, «+» в кнопке не
+ * посередине своего места, стрелки ниже текста (24.09.2026). Причина — метрики
+ * шрифта: у Segoe UI строчный бокс несимметричен, и текст, отцентрованный по
+ * боксу, на глаз сидит ниже. DOM этого не видит, поэтому проверяем снимок.
+ *
+ * Как. Для каждой видимой кнопки, плашки и вкладки берём её прямоугольник на
+ * снимке (без рамки), фон — самый частый цвет внутри, «чернила» — всё, что
+ * заметно отличается от фона. Основная полоса чернил — строки, где их не
+ * меньше трети от самой густой строки: так выносные элементы («р», «у», «д»)
+ * и точки не сдвигают оценку, а меряется то, что глаз считает серединой
+ * текста. Сравниваем середину полосы с серединой рамки (по вертикали), поля
+ * слева и справа (по горизонтали), а у кнопок «значок + подпись» — поле
+ * слева до значка и зазор от значка до подписи.
+ */
+const ALIGN_TARGETS = `
+  (function () {
+    const out = [];
+    const sel = 'button, .btn, .badge, .tab, [role=button], h2.panel-toggle';
+    // Ссылки внутри строки (.link-btn, .statusbar-link) стоят по линии текста соседей, а не по своей рамке.
+    const skip = '.fader-track, .color-swatch, .color-swatch-pick, .fader-toggle, input, select, .eq-slider, .theme-toggle, .list-item, .link-btn, .statusbar-link';
+    // Открыто окно поверх страницы — проверяем только его: всё под затемнением
+    // и выглядит, и меряется иначе.
+    const modal = document.querySelector('.modal-overlay .modal');
+    for (const e of (modal ?? document).querySelectorAll(sel)) {
+      if (e.offsetParent === null || e.matches(skip) || e.closest('.hint-bubble')) continue;
+      const r = e.getBoundingClientRect();
+      if (r.width < 12 || r.height < 12 || r.bottom <= 0 || r.right <= 0 || r.top >= innerHeight || r.left >= innerWidth) continue;
+      if (r.top < 0 || r.left < 0 || r.bottom > innerHeight || r.right > innerWidth) continue;
+      const cs = getComputedStyle(e);
+      if (cs.visibility === 'hidden' || parseFloat(cs.opacity) < 0.5) continue;
+      const text = (e.innerText || e.getAttribute('aria-label') || '').trim().replace(/\\s+/g, ' ').slice(0, 50);
+      const kids = [...e.children].filter((c) => c.offsetParent !== null || c.tagName === 'svg');
+      const iconFirst = kids.length > 0 && kids[0].tagName.toLowerCase() === 'svg' && text !== '';
+      const chevron = !!e.querySelector(':scope > .panel-chevron');
+      const iconOnly = !!e.querySelector('svg') && (e.innerText || '').trim() === '';
+      out.push({
+        text: text || (e.querySelector('svg') ? '[значок]' : '[пусто]'),
+        cls: (e.className && e.className.baseVal === undefined ? e.className : '').toString().split(' ').slice(0, 3).join('.'),
+        x: r.left, y: r.top, w: r.width, h: r.height,
+        bt: parseFloat(cs.borderTopWidth), br: parseFloat(cs.borderRightWidth), bb: parseFloat(cs.borderBottomWidth), bl: parseFloat(cs.borderLeftWidth),
+        radius: parseFloat(cs.borderTopLeftRadius) || 0,
+        centered: !e.matches('h2') && (cs.textAlign === 'center' || cs.justifyContent === 'center' || e.tagName === 'BUTTON'),
+        iconFirst,
+        chevron,
+        iconOnly,
+      });
+    }
+    return out;
+  })()
+`;
+
+function alignReport(img, targets, dpr, tol) {
+  const { width: W, height: H } = img.getSize();
+  const px = img.toBitmap(); // BGRA
+  const bad = [];
+  for (const t of targets) {
+    // Внутренность без рамки и скруглений, в пикселях снимка.
+    const inset = Math.max(1, Math.min(3, t.radius / 2));
+    const x0 = Math.ceil((t.x + t.bl + inset) * dpr);
+    const x1 = Math.floor((t.x + t.w - t.br - inset) * dpr);
+    const y0 = Math.ceil((t.y + t.bt + 1) * dpr);
+    const y1 = Math.floor((t.y + t.h - t.bb - 1) * dpr);
+    if (x1 - x0 < 4 || y1 - y0 < 4 || x1 > W || y1 > H) continue;
+    // Фон — самый частый цвет (с грубым квантованием).
+    const hist = new Map();
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const i = (y * W + x) * 4;
+        const k = ((px[i + 2] >> 3) << 10) | ((px[i + 1] >> 3) << 5) | (px[i] >> 3);
+        hist.set(k, (hist.get(k) || 0) + 1);
+      }
+    }
+    let bgK = 0;
+    let bgN = -1;
+    for (const [k, n] of hist) if (n > bgN) { bgN = n; bgK = k; }
+    const bgR = ((bgK >> 10) & 31) * 8 + 4, bgG = ((bgK >> 5) & 31) * 8 + 4, bgB = (bgK & 31) * 8 + 4;
+    const ink = (x, y) => {
+      const i = (y * W + x) * 4;
+      return Math.abs(px[i + 2] - bgR) + Math.abs(px[i + 1] - bgG) + Math.abs(px[i] - bgB) > 90;
+    };
+    const cols = new Array(x1 - x0).fill(0);
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) if (ink(x, y)) cols[x - x0]++;
+    const inkCols = cols.map((n, i) => (n > 0 ? i : -1)).filter((i) => i >= 0);
+    if (inkCols.length === 0) continue;
+    // Отрезки чернил по столбцам: значок, слова подписи, стрелка.
+    const segs = [];
+    let s0 = inkCols[0], p = inkCols[0];
+    for (const c of inkCols.slice(1)) {
+      if (c - p > 2 * dpr) { segs.push([s0, p]); s0 = c; }
+      p = c;
+    }
+    segs.push([s0, p]);
+    // Полоса по строкам в заданных столбцах: core — только густые строки (середина текста для глаза), иначе — все.
+    const band = (c0, c1, core) => {
+      const rows = [];
+      for (let y = y0; y < y1; y++) {
+        let n = 0;
+        for (let x = x0 + c0; x <= x0 + c1; x++) if (ink(x, y)) n++;
+        rows.push(n);
+      }
+      const max = Math.max(...rows);
+      if (max === 0) return null;
+      // Густые строки — не меньше половины самой густой: одна заглавная в начале
+      // слова («Поток») не утягивает полосу вверх.
+      const r = rows.map((n, i) => (n >= (core ? max / 2 : 1) ? i : -1)).filter((i) => i >= 0);
+      return { top: r[0], bot: r[r.length - 1], mid: (r[0] + r[r.length - 1] + 1) / 2 };
+    };
+    const issues = [];
+    const boxMid = (y1 - y0) / 2;
+    // Что с чем сравнивать: значок перед подписью, стрелка после заголовка — с текстом;
+    // текст — с серединой рамки (у заголовка панели рамки нет — только значок с текстом).
+    const iconSeg = t.iconFirst && segs.length >= 2 ? segs[0] : t.chevron && segs.length >= 2 ? segs[segs.length - 1] : null;
+    const textCols = iconSeg === segs[0] && iconSeg ? [segs[1][0], segs[segs.length - 1][1]] : iconSeg ? [segs[0][0], segs[segs.length - 2][1]] : [inkCols[0], inkCols[inkCols.length - 1]];
+    // Кнопка из одного значка — берём весь значок: у стрелки «густые» только
+    // строки наконечника, и середина по ним уезжала к острию.
+    const iconOnly = t.iconOnly && !iconSeg;
+    const text = band(textCols[0], textCols[1], !iconOnly);
+    if (!text) continue;
+    // Подпись без строчных букв («3D», «36», «СТОП»): её полоса — высота
+    // заглавных, она по устройству шрифта выше середины строчных примерно на
+    // пиксель, а стоит на той же линии, что и соседи. Допуск для неё шире.
+    const capsOnly = !/[a-zа-яё]/.test(t.text);
+    if (!t.chevron) {
+      const dy = (text.mid - boxMid) / dpr;
+      if (Math.abs(dy) >= tol + (capsOnly ? 1 : 0)) issues.push(`${iconSeg ? 'подпись ' : ''}по вертикали ${dy > 0 ? 'ниже' : 'выше'} середины на ${Math.abs(dy).toFixed(1)} px`);
+    }
+    if (iconSeg) {
+      const ic = band(iconSeg[0], iconSeg[1], false);
+      if (ic) {
+        const d = (ic.mid - text.mid) / dpr;
+        if (Math.abs(d) >= tol) issues.push(`${t.chevron ? 'стрелка' : 'значок'} ${d > 0 ? 'ниже' : 'выше'} текста на ${Math.abs(d).toFixed(1)} px`);
+      }
+    }
+    // Поля считаем от внутреннего края рамки (x0 отступает ещё и от скругления).
+    const padL = x0 / dpr - (t.x + t.bl);
+    const padR = t.x + t.w - t.br - x1 / dpr;
+    if (t.centered && !t.iconFirst && !t.chevron) {
+      const left = inkCols[0] / dpr + padL;
+      const right = (x1 - x0 - 1 - inkCols[inkCols.length - 1]) / dpr + padR;
+      if (Math.abs(left - right) >= 3) issues.push(`по горизонтали: слева ${left.toFixed(1)} px, справа ${right.toFixed(1)} px`);
+    }
+    if (t.iconFirst && segs.length >= 2) {
+      const lead = segs[0][0] / dpr + padL;
+      const gap = (segs[1][0] - segs[0][1] - 1) / dpr;
+      const right = (x1 - x0 - 1 - inkCols[inkCols.length - 1]) / dpr + padR;
+      if (Math.abs(lead - gap) >= 2) issues.push(`значок не посередине своего места: слева ${lead.toFixed(1)} px, до подписи ${gap.toFixed(1)} px`);
+      else if (Math.abs(lead - right) >= 3) issues.push(`поля неравные: слева ${lead.toFixed(1)} px, справа ${right.toFixed(1)} px`);
+    }
+    if (issues.length > 0) bad.push({ text: t.text, cls: t.cls, issues, rect: { x: t.x, y: t.y, w: t.w, h: t.h } });
+  }
+  return bad;
+}
+
 app.whenReady().then(async () => {
   const win = new BrowserWindow({
     width: sc.width || 1600,
@@ -230,6 +391,29 @@ app.whenReady().then(async () => {
         const file = path.join(out, step.shot);
         fs.writeFileSync(file, img.toPNG());
         log(`снимок: ${file}`);
+      }
+      if (step.align) {
+        win.webContents.invalidate();
+        await sleep(300);
+        const targets = await win.webContents.executeJavaScript(ALIGN_TARGETS);
+        const img = await win.webContents.capturePage();
+        const dpr = img.getSize().width / (await win.webContents.executeJavaScript('innerWidth'));
+        // Допуск: при масштабе 100 % шаг — целый пиксель, и отклонение ровно на
+        // 1 px — это округление (полпикселя не нарисовать); при 125–150 % шаг мельче.
+        const tol = step.tol ?? (dpr >= 1.24 ? 1 : 1.5);
+        const bad = alignReport(img, targets, dpr, tol);
+        if (bad.length === 0) log(`✔ ${step.align}: выровнено (${targets.length} кнопок и плашек, масштаб ${dpr})`);
+        bad.forEach((b, i) => {
+          log(`✖ ${step.align}: «${b.text}» (${b.cls}) — ${b.issues.join('; ')}`);
+          // Вырезка крупно — посмотреть глазами, что именно не так.
+          if (step.crops) {
+            const r = b.rect;
+            const crop = img.crop({ x: Math.max(0, Math.round((r.x - 4) * dpr)), y: Math.max(0, Math.round((r.y - 4) * dpr)), width: Math.round((r.w + 8) * dpr), height: Math.round((r.h + 8) * dpr) });
+            const name = `${step.align}-${i}`.replace(/[^0-9a-zа-яё-]+/gi, '_') + '.png';
+            fs.mkdirSync(path.join(out, 'crops'), { recursive: true });
+            fs.writeFileSync(path.join(out, 'crops', name), crop.resize({ width: crop.getSize().width * 4, quality: 'good' }).toPNG());
+          }
+        });
       }
       if (step.fit) {
         const bad = await win.webContents.executeJavaScript(FIT);

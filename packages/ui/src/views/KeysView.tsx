@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { uid, type KeyAction, type KeyBinding } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
+import { PlusIcon, CloseIcon } from '../components/Icons';
 
 const ACTION_LABEL: Record<KeyAction['type'], string> = {
   scene: 'Сцена (вкл/выкл)',
@@ -140,8 +141,8 @@ export function KeysView({ engine }: { engine: EngineConnection }) {
                   )}
                 </td>
                 <td>
-                  <button className="btn btn-small" onClick={() => update(project.keys.filter((k) => k.id !== b.id))}>
-                    ✕
+                  <button className="btn btn-small btn-icon btn-glyph" onClick={() => update(project.keys.filter((k) => k.id !== b.id))}>
+                    <CloseIcon />
                   </button>
                 </td>
               </tr>
@@ -149,8 +150,9 @@ export function KeysView({ engine }: { engine: EngineConnection }) {
           </tbody>
         </table>
         <div className="form-row" style={{ marginTop: 10 }}>
-          <button className="btn" onClick={addBinding}>
-            + Привязка
+          <button className="btn btn-icon" onClick={addBinding}>
+            <PlusIcon />
+            Привязка
           </button>
         </div>
       </div>

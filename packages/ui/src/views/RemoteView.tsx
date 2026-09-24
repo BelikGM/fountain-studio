@@ -1,3 +1,4 @@
+import { PlusIcon, CloseIcon } from '../components/Icons';
 import { useRef, useState } from 'react';
 import { useCollapsiblePanels } from '../collapsiblePanels';
 import {
@@ -341,8 +342,8 @@ function OscPanel({
                 onChange={(action) => update(project.oscBindings.map((x) => (x.id === b.id ? { ...x, action } : x)))}
               />
               <td>
-                <button className="btn btn-small" onClick={() => update(project.oscBindings.filter((x) => x.id !== b.id))}>
-                  ✕
+                <button className="btn btn-small btn-icon btn-glyph" onClick={() => update(project.oscBindings.filter((x) => x.id !== b.id))}>
+                  <CloseIcon />
                 </button>
               </td>
             </tr>
@@ -351,10 +352,11 @@ function OscPanel({
       </table>
       <div className="form-row" style={{ marginTop: 10 }}>
         <button
-          className="btn"
+          className="btn btn-icon"
           onClick={() => update([...project.oscBindings, { id: uid(), address: '/', action: defaultAction() }])}
         >
-          + Привязка OSC
+          <PlusIcon />
+          Привязка OSC
         </button>
       </div>
     </section>
@@ -409,8 +411,8 @@ function MqttPanel({
                 onChange={(action) => update(project.mqttBindings.map((x) => (x.id === b.id ? { ...x, action } : x)))}
               />
               <td>
-                <button className="btn btn-small" onClick={() => update(project.mqttBindings.filter((x) => x.id !== b.id))}>
-                  ✕
+                <button className="btn btn-small btn-icon btn-glyph" onClick={() => update(project.mqttBindings.filter((x) => x.id !== b.id))}>
+                  <CloseIcon />
                 </button>
               </td>
             </tr>
@@ -419,10 +421,11 @@ function MqttPanel({
       </table>
       <div className="form-row" style={{ marginTop: 10 }}>
         <button
-          className="btn"
+          className="btn btn-icon"
           onClick={() => update([...project.mqttBindings, { id: uid(), topic: '', action: defaultAction() }])}
         >
-          + Привязка MQTT
+          <PlusIcon />
+          Привязка MQTT
         </button>
       </div>
     </section>
@@ -547,8 +550,8 @@ function DmxTriggerPanel({
                 onChange={(action) => update(project.dmxTriggers.map((x) => (x.id === t.id ? { ...x, action } : x)))}
               />
               <td>
-                <button className="btn btn-small" onClick={() => update(project.dmxTriggers.filter((x) => x.id !== t.id))}>
-                  ✕
+                <button className="btn btn-small btn-icon btn-glyph" onClick={() => update(project.dmxTriggers.filter((x) => x.id !== t.id))}>
+                  <CloseIcon />
                 </button>
               </td>
             </tr>
@@ -557,7 +560,7 @@ function DmxTriggerPanel({
       </table>
       <div className="form-row" style={{ marginTop: 10 }}>
         <button
-          className="btn"
+          className="btn btn-icon"
           onClick={() =>
             update([
               ...project.dmxTriggers,
@@ -566,7 +569,8 @@ function DmxTriggerPanel({
           }
           disabled={universes.length === 0}
         >
-          + Команда по каналу
+          <PlusIcon />
+          Команда по каналу
         </button>
       </div>
     </section>

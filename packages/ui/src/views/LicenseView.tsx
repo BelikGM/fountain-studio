@@ -1,3 +1,4 @@
+import { UploadIcon } from '../components/Icons';
 import { useState } from 'react';
 import { EXPIRY_WARNING_DAYS, GRACE_PERIOD_DAYS, daysUntilExpiry } from '@fountain-studio/shared';
 import { PLANS, VENDOR_EMAIL, priceLine } from '../plans';
@@ -112,7 +113,7 @@ export function LicenseView({ engine, onClose }: { engine: EngineConnection; onC
             <div className="form-row">
               <span>ID этого компьютера:</span>
               <code className="license-machine-id">{licenseStatus.machineId}</code>
-              <button className="btn" onClick={() => void copyMachineId()}>
+              <button className="btn btn-icon" onClick={() => void copyMachineId()}>
                 {copied ? '✔ скопировано' : 'Копировать'}
               </button>
             </div>
@@ -120,7 +121,8 @@ export function LicenseView({ engine, onClose }: { engine: EngineConnection; onC
 
             <div className="form-row">
               <label className="btn">
-                {busy ? 'Проверяю…' : '⬆ Загрузить файл лицензии…'}
+                <UploadIcon />
+                {busy ? 'Проверяю…' : 'Загрузить файл лицензии…'}
                 <input
                   type="file"
                   accept=".json"

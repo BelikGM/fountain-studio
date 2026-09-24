@@ -1,5 +1,6 @@
 import type { ColorSwatch, Project } from '@fountain-studio/shared';
 import { COLOR_PRESETS, hexToRgb, rgbToHex } from '../colorPresets';
+import { PlusIcon } from './Icons';
 
 /**
  * Образцы цвета: встроенные пресеты плюс СВОИ цвета объекта.
@@ -64,7 +65,8 @@ export function ColorPalette({
       ))}
       <button
         type="button"
-        className="btn btn-small color-add"
+        className="btn btn-small btn-icon btn-glyph color-add"
+        aria-label="Сохранить цвет в палитру"
         disabled={already}
         data-hint={
           already
@@ -73,7 +75,7 @@ export function ColorPalette({
         }
         onClick={save}
       >
-        +
+        <PlusIcon />
       </button>
     </div>
   );

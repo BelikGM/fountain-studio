@@ -6,7 +6,7 @@ import {
 import { VENDOR_EMAIL } from './plans';
 import { comboFromEvent, getCombo } from './hotkeys';
 import { registerTabNavigator } from './navigate';
-import { FolderIcon, SaveIcon } from './components/Icons';
+import { FolderIcon, HelpIcon, SaveIcon } from './components/Icons';
 
 /**
  * Картинки из public/ — от адреса страницы, а не от корня. Установленная
@@ -453,7 +453,7 @@ export function App() {
         */}
         {engine.projects?.current && engine.projectDirty.dirty && (
           <button
-            className="btn btn-small btn-warn btn-icon btn-save"
+            className="btn btn-small btn-warn btn-icon btn-glyph btn-save"
             aria-label="Сохранить"
             data-hint={
               engine.engineConfig?.autosaveEnabled
@@ -474,9 +474,16 @@ export function App() {
             <button
               key={t.id}
               data-tour={t.id}
-              className={effectiveTab === t.id ? 'tab active' : 'tab'}
+              // Пока открыты «Проекты», вкладка не подсвечена: на экране не она.
+              className={effectiveTab === t.id && !projectsOpen ? 'tab active' : 'tab'}
               data-hint={t.full}
-              onClick={() => setTab(t.id)}
+              onClick={() => {
+                // Щелчок по любой вкладке закрывает «Проекты» (заказчик 24.09.2026:
+                // крестика не было, и выйти можно было только повторным щелчком
+                // по имени проекта — догадаться об этом было трудно).
+                setProjectsOpen(false);
+                setTab(t.id);
+              }}
             >
               {t.label}
             </button>
@@ -501,8 +508,8 @@ export function App() {
         >
           {access === 'none' ? '🔒' : expiringSoon ? '⏳' : '🔑'}
         </button>
-        <button className="help-btn" data-hint="Справка" onClick={() => setHelpOpen(true)}>
-          ?
+        <button className="help-btn" data-hint="Справка" aria-label="Справка" onClick={() => setHelpOpen(true)}>
+          <HelpIcon />
         </button>
         {/*
           На узком окне (1366 px) надпись уезжала за край — остаётся цветная
@@ -620,8 +627,9 @@ export function App() {
                 : 'Что сделать перед тем, как закрыть проект?'}
             </p>
             <div className="confirm-actions confirm-actions-column">
-              <button className="btn active" autoFocus onClick={pendingProjectSwitch.save}>
-                💾 Сохранить и {pendingProjectSwitch.targetName ? 'открыть' : 'закрыть'}
+              <button className="btn active btn-icon" autoFocus onClick={pendingProjectSwitch.save}>
+                <SaveIcon />
+                Сохранить и {pendingProjectSwitch.targetName ? 'открыть' : 'закрыть'}
               </button>
               <button className="btn" onClick={pendingProjectSwitch.discard}>
                 Не сохранять и {pendingProjectSwitch.targetName ? 'открыть' : 'закрыть'}

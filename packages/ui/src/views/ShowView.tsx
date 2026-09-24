@@ -41,7 +41,7 @@ import { SmoothnessField } from '../components/SmoothnessField';
 import type { EngineConnection } from '../useEngine';
 import { extractVideoFrameSamples } from '../videoFrames';
 import { ShowVideoRender } from './ShowVideoRender';
-import { PauseIcon, PlayIcon, StopIcon } from '../components/Icons';
+import { PauseIcon, PlayIcon, StopIcon, PlusIcon, MinusIcon, BoltIcon, VideoIcon, RecordIcon, CloseIcon, SlidersIcon, WaveIcon, MusicIcon, FilmIcon, KeyArrowIcon } from '../components/Icons';
 
 /**
  * Ширина шапки дорожки. Та же цифра стоит в .tl-head в styles.css — по ней
@@ -177,8 +177,9 @@ export function ShowView({ engine, readOnly = false }: { engine: EngineConnectio
           </p>
         ) : (
           <div className="sidebar-actions">
-            <button className="btn" onClick={addShow}>
-              + Шоу
+            <button className="btn btn-icon" onClick={addShow}>
+              <PlusIcon />
+              Шоу
             </button>
             <button className="btn" onClick={duplicateShow} disabled={!selected}>
               Дублировать
@@ -1140,10 +1141,14 @@ function ShowEditor({
           onChange={(e) => onChange({ ...show, name: e.target.value })}
         />
         {readOnly ? (
-          <span className="dim">{show.audioFile ? `♪ ${show.audioFile}` : 'без музыки'}</span>
+          <span className="dim btn-icon">
+            {show.audioFile && <MusicIcon />}
+            {show.audioFile ?? 'без музыки'}
+          </span>
         ) : (
-        <label className="btn">
-          {show.audioFile ? `♪ ${show.audioFile}` : '♪ Загрузить аудио…'}
+        <label className="btn btn-icon">
+          <MusicIcon />
+          {show.audioFile ? show.audioFile : 'Загрузить аудио…'}
           <input
             type="file"
             accept="audio/*"
@@ -1195,8 +1200,8 @@ function ShowEditor({
           <span className="badge badge-live">движок: {engineShow.playing ? 'играет' : 'пауза'}</span>
         )}
         <span className="spacer" />
-        <button className="btn btn-small" onClick={() => setPxPerSec((z) => Math.max(4, z / 1.5))}>
-          −
+        <button className="btn btn-small btn-icon btn-glyph" onClick={() => setPxPerSec((z) => Math.max(4, z / 1.5))}>
+          <MinusIcon />
         </button>
         <span className="dim">масштаб</span>
         <button className="btn btn-small" onClick={() => setPxPerSec((z) => Math.min(400, z * 1.5))}>
@@ -1204,21 +1209,24 @@ function ShowEditor({
         </button>
         {!readOnly && (
           <>
-            <button className="btn" onClick={addBlocksTrack}>
-              + Дорожка блоков
+            <button className="btn btn-icon" onClick={addBlocksTrack}>
+              <PlusIcon />
+              Дорожка блоков
             </button>
-            <button className="btn" onClick={addEnvelopeTrack} disabled={devices.length === 0}>
-              + Огибающая
+            <button className="btn btn-icon" onClick={addEnvelopeTrack} disabled={devices.length === 0}>
+              <PlusIcon />
+              Огибающая
             </button>
           </>
         )}
         <button
-          className="btn"
+          className="btn btn-icon"
           onClick={autoStage}
           disabled={!buffer}
           data-hint="Черновик шоу по музыке: трек разбирается на доли и части, картина воды переключается между фигурами по сетке, свет — отдельным слоем по частям. Сцены-фигуры добавятся в объект с «⚡» в имени. Дальше правится руками"
         >
-          ⚡ Автопостановка
+          <BoltIcon />
+          Автопостановка
         </button>
         {bpm > 0 && (
           <label className="field" data-hint="Темп определён автоматически по аудиодорожке (та же оценка, что у «Автопостановки»)">
@@ -1226,8 +1234,9 @@ function ShowEditor({
             долям ({bpm} BPM)
           </label>
         )}
-        <label className={videoBusy ? 'btn' : 'btn'} data-hint="Черновик шоу по видеоролику: яркость и цвет кадров — на дорожки, монтажные склейки — вспышками. Дальше правится руками">
-          {videoBusy ? '🎬 Читаю…' : '🎬 Из видео'}
+        <label className="btn btn-icon" data-hint="Черновик шоу по видеоролику: яркость и цвет кадров — на дорожки, монтажные склейки — вспышками. Дальше правится руками">
+          <FilmIcon />
+          {videoBusy ? 'Читаю…' : 'Из видео'}
           <input
             type="file"
             accept="video/*"
@@ -1241,7 +1250,7 @@ function ShowEditor({
           />
         </label>
         <button
-          className="btn"
+          className="btn btn-icon"
           onClick={() => {
             if (playing) pause();
             setVideoRenderOpen(true);
@@ -1249,7 +1258,8 @@ function ShowEditor({
           disabled={durMs <= 0}
           data-hint="Записать 3D-сцену на время шоу в видеофайл — показать заказчику программу до выезда на объект"
         >
-          🎥 Видеоролик шоу
+          <VideoIcon />
+          Видеоролик шоу
         </button>
         <span className="spacer" />
         {blocksTracks.length > 0 && (
@@ -1268,12 +1278,13 @@ function ShowEditor({
           </select>
         )}
         <button
-          className={recording ? 'btn btn-danger active' : 'btn'}
+          className={recording ? 'btn btn-danger active btn-icon' : 'btn btn-icon'}
           onClick={toggleRecording}
           disabled={blocksTracks.length === 0}
           data-hint="Живая запись: клавиши с вкладки «Клавиатура» (сцены и секвенсоры) пишутся в выбранную дорожку блоков; у огибающих с включённой записью — тяните ползунок"
         >
-          {recording ? '⏺ Идёт запись' : '⏺ Запись'}
+          <RecordIcon />
+          {recording ? 'Идёт запись' : 'Запись'}
         </button>
       </div>
       {autoStatus && <div className="dim" style={{ padding: '4px 12px' }}>{autoStatus}</div>}
@@ -1308,8 +1319,8 @@ function ShowEditor({
                   <button className="btn btn-small" onClick={applyCut} disabled={!buffer}>
                     ✂ Вырезать
                   </button>
-                  <button className="btn btn-small" onClick={() => setSel(null)}>
-                    ✕
+                  <button className="btn btn-small btn-icon btn-glyph" onClick={() => setSel(null)}>
+                    <CloseIcon />
                   </button>
                 </div>
               )}
@@ -1434,36 +1445,37 @@ function ShowEditor({
                   {track.kind === 'blocks' && (
                     <button
                       className={
-                        track.effects.length > 0 || effectsOpenId === track.id ? 'btn btn-small active' : 'btn btn-small'
+                        track.effects.length > 0 || effectsOpenId === track.id ? 'btn btn-small active btn-icon' : 'btn btn-small btn-icon'
                       }
                       data-hint="Плавность на этой дорожке: где смягчить резкие перепады значений"
                       onClick={() => setEffectsOpenId(effectsOpenId === track.id ? null : track.id)}
                     >
-                      🎚{track.effects.length > 0 ? ` ${track.effects.length}` : ''}
+                      <SlidersIcon />
+                      {track.effects.length > 0 ? `${track.effects.length}` : ''}
                     </button>
                   )}
                   {track.kind === 'envelope' && track.points.length > 2 && (
                     <button
-                      className={smoothOpenId === track.id ? 'btn btn-small active' : 'btn btn-small'}
+                      className={smoothOpenId === track.id ? 'btn btn-small active btn-icon btn-glyph' : 'btn btn-small btn-icon btn-glyph'}
                       data-hint="Прореживание и сглаживание записанной вживую огибающей"
                       onClick={() => setSmoothOpenId(smoothOpenId === track.id ? null : track.id)}
                     >
-                      ∿
+                      <WaveIcon />
                     </button>
                   )}
-                  <button className="btn btn-small" disabled={ti === 0} onClick={() => moveTrack(ti, -1)}>
-                    ↑
+                  <button className="btn btn-small btn-icon btn-glyph" disabled={ti === 0} onClick={() => moveTrack(ti, -1)}>
+                    <KeyArrowIcon dir="up" />
                   </button>
                   <button
-                    className="btn btn-small"
+                    className="btn btn-small btn-icon btn-glyph"
                     disabled={ti === show.tracks.length - 1}
                     onClick={() => moveTrack(ti, 1)}
                   >
-                    ↓
+                    <KeyArrowIcon dir="down" />
                   </button>
                   {!readOnly && (
-                    <button className="btn btn-small" onClick={() => removeTrack(track.id)}>
-                      ✕
+                    <button className="btn btn-small btn-icon btn-glyph" onClick={() => removeTrack(track.id)}>
+                      <CloseIcon />
                     </button>
                   )}
                 </div>
@@ -2173,13 +2185,14 @@ function TrackEffectsPanel({
               onChange={(ev) => patch(e.id, { endMs: Math.max(e.startMs + 100, Number(ev.target.value) * 1000) })}
             />
           </label>
-          <button className="btn btn-small" onClick={() => onChange(track.effects.filter((x) => x.id !== e.id))}>
-            ✕
+          <button className="btn btn-small btn-icon btn-glyph" onClick={() => onChange(track.effects.filter((x) => x.id !== e.id))}>
+            <CloseIcon />
           </button>
         </div>
       ))}
-      <button className="btn btn-small" onClick={addZone}>
-        + Зона
+      <button className="btn btn-small btn-icon" onClick={addZone}>
+        <PlusIcon />
+        Зона
       </button>
     </div>
   );

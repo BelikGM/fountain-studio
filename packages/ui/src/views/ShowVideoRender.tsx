@@ -5,7 +5,7 @@ import { keptSegments, type Show,
 import { FountainScene } from '../three/FountainScene';
 import { buildDeviceIndex, createLiveHooks, type DeviceIndexEntry } from '../three/liveHooks';
 import type { EngineConnection } from '../useEngine';
-import { StopIcon } from '../components/Icons';
+import { StopIcon, RecordIcon, DownloadIcon } from '../components/Icons';
 
 const CANVAS_W = 960;
 const CANVAS_H = 540;
@@ -225,8 +225,9 @@ export function ShowVideoRender({
         <div ref={containerRef} className="video-render-canvas" style={{ width: CANVAS_W, height: CANVAS_H }} />
         <div className="form-row">
           {status === 'idle' && (
-            <button className="btn active" onClick={start}>
-              ⏺ Начать запись
+            <button className="btn active btn-icon" onClick={start}>
+              <RecordIcon />
+              Начать запись
             </button>
           )}
           {status === 'recording' && (
@@ -245,7 +246,8 @@ export function ShowVideoRender({
             <>
               <span className="ok-text">Готово ({fileExt})</span>
               <a className="btn active" href={resultUrl} download={`${safeName}.${fileExt}`}>
-                ⬇ Скачать {safeName}.{fileExt}
+                <DownloadIcon />
+                Скачать {safeName}.{fileExt}
               </a>
             </>
           )}

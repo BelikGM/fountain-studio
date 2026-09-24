@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useCollapsiblePanels } from '../collapsiblePanels';
-import { KeyArrowIcon } from '../components/Icons';
+import { KeyArrowIcon, PlusIcon, DownloadIcon, UploadIcon, CloseIcon } from '../components/Icons';
 import { requestTab } from '../navigate';
 import {
   FRAME_MODE_ABOUT,
@@ -385,11 +385,13 @@ function ExportImportPanel({ engine }: { engine: EngineConnection }) {
         или передачи заказчику.
       </p>
       <div className="form-row">
-        <button className="btn" onClick={() => void doExport()} disabled={exporting}>
-          {exporting ? 'Собираю…' : '⬇ Экспортировать в файл'}
+        <button className="btn btn-icon" onClick={() => void doExport()} disabled={exporting}>
+          <DownloadIcon />
+          {exporting ? 'Собираю…' : 'Экспортировать в файл'}
         </button>
         <label className="btn">
-          {importing ? 'Импортирую…' : '⬆ Импортировать из файла…'}
+          <UploadIcon />
+          {importing ? 'Импортирую…' : 'Импортировать из файла…'}
           <input
             type="file"
             accept=".zip"
@@ -480,11 +482,13 @@ function AppSettingsBackupPanel({ engine }: { engine: EngineConnection }) {
         блокировка режима оператора с паролем — она про этот компьютер.
       </p>
       <div className="form-row">
-        <button className="btn" onClick={() => void doExport()} disabled={saving}>
-          {saving ? 'Собираю…' : '⬇ Сохранить в файл'}
+        <button className="btn btn-icon" onClick={() => void doExport()} disabled={saving}>
+          <DownloadIcon />
+          {saving ? 'Собираю…' : 'Сохранить в файл'}
         </button>
         <label className="btn">
-          {restoring ? 'Восстанавливаю…' : '⬆ Восстановить из файла…'}
+          <UploadIcon />
+          {restoring ? 'Восстанавливаю…' : 'Восстановить из файла…'}
           <input
             type="file"
             accept=".zip"
@@ -2501,9 +2505,12 @@ function LinesApplyBar({
   status,
   message,
   changes,
+  addOnly,
   onApply,
   onDiscard,
 }: {
+  /** Сколько новых вселенных, если в правке ТОЛЬКО они; 0 — обычная правка. */
+  addOnly: number;
   dirty: boolean;
   valid: boolean;
   pending: string[];
@@ -2514,22 +2521,26 @@ function LinesApplyBar({
   onDiscard: () => void;
 }) {
   const nothing = dirty && pending.length === 0;
+  const applyLabel = addOnly === 0 ? 'Применить' : addOnly === 1 ? 'Добавить вселенную' : 'Добавить вселенные';
   return (
     <div className={dirty ? 'lines-apply lines-apply-dirty' : 'lines-apply'}>
       <div className="form-row">
         <button className="btn active" disabled={!dirty || !valid || status === 'pending'} onClick={onApply}>
-          {status === 'pending' ? 'Применяю…' : 'Применить'}
+          {status === 'pending' ? (addOnly ? 'Добавляю…' : 'Применяю…') : applyLabel}
         </button>
         <button className="btn" disabled={!dirty || status === 'pending'} onClick={onDiscard}>
-          Отменить правки
+          {addOnly ? 'Не добавлять' : 'Отменить правки'}
         </button>
         {!dirty && status !== 'applied' && <span className="dim">Правок нет — работает то, что в таблице.</span>}
         {dirty && !valid && <span className="error-text">Нужна хотя бы одна вселенная и такт 10–1000 мс.</span>}
       </div>
       {dirty && valid && !nothing && (
         <p className="warn">
-          Не применено: {pending.join('; ')}. Пока не нажать «Применить», этого нет ни на других
-          вкладках, ни на приборах. Воспроизведение при применении не останавливается.
+          {addOnly
+            ? `${addOnly > 1 ? 'Ещё не добавлены' : 'Ещё не добавлена'}: ${pending.map((p) => p.replace(/^добавлена /, '')).join('; ')}`
+            : `Не применено: ${pending.join('; ')}`}
+          . Пока не нажать «{applyLabel}», этого нет ни на
+          других вкладках, ни на приборах. Воспроизведение при этом не останавливается.
         </p>
       )}
       {nothing && <p className="dim">Правка совпадает с тем, что уже работает, — применять нечего.</p>}
@@ -2556,7 +2567,7 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
    * пережить уход и быть видна на других вкладках. Пока правки нет —
    * показываем то, что работает в движке.
    */
-  const { draft, status, message, changes, appliedIds } = useSettingsDraft();
+  const { draft, status, message, changes, appliedIds, appliedNewIds } = useSettingsDraft();
   /** Панели сворачиваются до плашки с названием (см. collapsiblePanels.ts). */
   const rootRef = useRef<HTMLElement>(null);
   useCollapsiblePanels(rootRef, 'settings');
@@ -2638,6 +2649,18 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
     return !sameOutputs(u.outputs, was.outputs) || storedUniverseLabel(u) !== storedUniverseLabel(was) ? 'changed' : null;
   };
   const changedIds = universes.filter((u) => rowState(u) !== null).map((u) => u.id);
+  const newIds = universes.filter((u) => rowState(u) === 'new').map((u) => u.id);
+  /**
+   * В правке только НОВЫЕ вселенные — это «добавить», а не «применить правку»
+   * (заказчик 24.09.2026: «создаю с нуля — должна быть кнопка «Добавить», а
+   * «Применить» — когда меняю выход»). Меняется подпись кнопки и пометки.
+   */
+  const addOnly =
+    dirty &&
+    newIds.length > 0 &&
+    newIds.length === changedIds.length &&
+    tickMs === engineConfig.tickMs &&
+    engineConfig.universes.every((u) => universes.some((x) => x.id === u.id));
 
   return (
     <main className="view view-settings" ref={rootRef}>
@@ -2788,8 +2811,11 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
                   </td>
                   <td className="cell-actions">
                     {rs === 'new' && (
-                      <span className="badge badge-pending" data-hint="Строка ещё только в правке: движок о ней не знает. Нажмите «Применить» под таблицей.">
-                        новая · не применена
+                      <span
+                        className="badge badge-pending"
+                        data-hint={`Строка ещё только в правке: движок о ней не знает. Нажмите «${addOnly ? (newIds.length > 1 ? 'Добавить вселенные' : 'Добавить вселенную') : 'Применить'}» под таблицей.`}
+                      >
+                        {addOnly ? 'новая · не добавлена' : 'новая · не применена'}
                       </span>
                     )}
                     {rs === 'changed' && (
@@ -2797,19 +2823,21 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
                         не применена
                       </span>
                     )}
-                    {justApplied && <span className="badge badge-applied">✔ применена</span>}{' '}
+                    {justApplied && (
+                      <span className="badge badge-applied">{appliedNewIds.includes(u.id) ? '✔ добавлена' : '✔ применена'}</span>
+                    )}{' '}
                     {u.outputs.length > 1 && (
                       <span className="badge" data-hint="У вселенной несколько выходов; здесь редактируется первый, остальные сохраняются как есть">
                         ещё {countOf(u.outputs.length - 1, 'выход', 'выхода', 'выходов')}
                       </span>
                     )}{' '}
                     <button
-                      className="btn btn-small"
+                      className="btn btn-small btn-icon btn-glyph"
                       disabled={universes.length <= 1}
                       data-hint={universes.length <= 1 ? 'Нужна хотя бы одна вселенная' : 'Удалить вселенную'}
                       onClick={() => void removeUniverse(u.id)}
                     >
-                      ✕
+                      <CloseIcon />
                     </button>
                   </td>
                 </tr>
@@ -2818,8 +2846,9 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
           </tbody>
         </table>
         <div className="form-row" style={{ marginTop: 10 }}>
-          <button className="btn" onClick={addUniverse}>
-            + Вселенная
+          <button className="btn btn-icon" onClick={addUniverse}>
+            <PlusIcon />
+            Вселенная
           </button>
         </div>
         <div className="form-row">
@@ -2844,7 +2873,8 @@ export function SettingsView({ engine }: { engine: EngineConnection }) {
           status={status}
           message={message}
           changes={changes}
-          onApply={() => applySettingsDraft(send, engine.connected, changedIds)}
+          addOnly={addOnly ? newIds.length : 0}
+          onApply={() => applySettingsDraft(send, engine.connected, changedIds, newIds)}
           onDiscard={clearSettingsDraft}
         />
         {usbInUse && <UsbDmxStatus scan={engine.usbScan} universes={engineConfig.universes} />}

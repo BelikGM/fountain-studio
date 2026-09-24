@@ -12,7 +12,7 @@ import {
 import { clipboardHasKind, copyToClipboard, pasteFromClipboard } from '../clipboard';
 import { useDragOrder } from '../components/DragOrder';
 import { ListFilter } from '../components/ListFilter';
-import { PauseIcon, PencilIcon, PlayIcon, StopIcon, TrashIcon } from '../components/Icons';
+import { PauseIcon, PencilIcon, PlayIcon, StopIcon, TrashIcon, PlusIcon, CopyIcon, CloseIcon, KeyArrowIcon } from '../components/Icons';
 import { confirmDelete } from '../confirmDelete';
 import { SmoothnessField } from '../components/SmoothnessField';
 import type { EngineConnection } from '../useEngine';
@@ -77,8 +77,9 @@ export function SequencesView({ engine }: { engine: EngineConnection }) {
     <main className="view view-split">
       <aside className="sidebar">
         <div className="sidebar-actions">
-          <button className="btn" onClick={addSequence}>
-            + Секвенсор
+          <button className="btn btn-icon" onClick={addSequence}>
+            <PlusIcon />
+            Секвенсор
           </button>
           <button className="btn" onClick={duplicateSequence} disabled={!selected}>
             Дублировать
@@ -298,8 +299,9 @@ function SequenceGroupsPanel({ engine }: { engine: EngineConnection }) {
               </div>
             );
           })}
-          <button className="btn" onClick={addGroup}>
-            + Группа
+          <button className="btn btn-icon" onClick={addGroup}>
+            <PlusIcon />
+            Группа
           </button>
         </>
       )}
@@ -524,31 +526,31 @@ function SequenceEditor({
                     />
                   </td>
                   <td>
-                    <button className="btn btn-small" disabled={i === 0} onClick={() => moveStep(i, -1)}>
-                      ↑
+                    <button className="btn btn-small btn-icon btn-glyph" disabled={i === 0} onClick={() => moveStep(i, -1)}>
+                      <KeyArrowIcon dir="up" />
                     </button>
                     <button
-                      className="btn btn-small"
+                      className="btn btn-small btn-icon btn-glyph"
                       disabled={i === sequence.steps.length - 1}
                       onClick={() => moveStep(i, 1)}
                     >
-                      ↓
+                      <KeyArrowIcon dir="down" />
                     </button>
                     <button
-                      className="btn btn-small"
+                      className="btn btn-small btn-icon btn-glyph"
                       data-hint="Копировать шаг"
                       onClick={() => {
                         copyToClipboard('sequenceStep', step);
                         setHasStepClip(true);
                       }}
                     >
-                      ⧉
+                      <CopyIcon />
                     </button>
                     <button
-                      className="btn btn-small"
+                      className="btn btn-small btn-icon btn-glyph"
                       onClick={() => onChange({ ...sequence, steps: sequence.steps.filter((_, j) => j !== i) })}
                     >
-                      ✕
+                      <CloseIcon />
                     </button>
                   </td>
                 </tr>
@@ -557,7 +559,7 @@ function SequenceEditor({
           </table>
           <div className="form-row">
             <button
-              className="btn"
+              className="btn btn-icon"
               onClick={() =>
                 onChange({
                   ...sequence,
@@ -565,7 +567,8 @@ function SequenceEditor({
                 })
               }
             >
-              + Шаг
+              <PlusIcon />
+              Шаг
             </button>
             {hasStepClip && (
               <button className="btn btn-small" onClick={pasteStep}>

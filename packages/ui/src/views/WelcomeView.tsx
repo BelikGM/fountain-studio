@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { UploadIcon } from '../components/Icons';
 import { ANNUAL_DISCOUNT, CUSTOM_DEV_NOTE, PLANS, VENDOR_CONTACTS, priceLine } from '../plans';
 import type { EngineConnection } from '../useEngine';
 
@@ -110,8 +111,9 @@ export function WelcomeView({ engine }: { engine: EngineConnection }) {
         </div>
 
         <div className="form-row" style={{ marginTop: 18 }}>
-          <label className="btn active">
-            {busy ? 'Проверяю…' : '⬆ У меня уже есть файл лицензии — загрузить'}
+          <label className="btn btn-icon active">
+            <UploadIcon />
+            {busy ? 'Проверяю…' : 'У меня уже есть файл лицензии — загрузить'}
             <input
               type="file"
               accept=".json"

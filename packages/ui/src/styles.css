@@ -1,4 +1,12 @@
 :root {
+  /* На сколько поднимать текст в кнопках, вкладках и плашках — см.
+     «Оптическая середина текста» у .btn. У мелкого шрифта перекос меньше,
+     поэтому и подъём меньше: значения подобраны пиксельной проверкой при
+     масштабе экрана 100 % и 150 %. */
+  --lift-btn: 0.75px;
+  --lift-small: 0.5px;
+  --lift-tab: 0.75px;
+  --lift-badge: 0.75px;
   color-scheme: dark;
   --topbar-h: 44px;
   --bg: #14161a;
@@ -131,7 +139,7 @@ body {
   overflow: hidden;
   overflow-wrap: anywhere;
 }
-.btn-save { margin-left: 6px; padding-left: 6px; padding-right: 6px; flex-shrink: 0; }
+.btn-save { margin-left: 6px; flex-shrink: 0; }
 
 /* Статус связи не сжимается и не переносится: на окне 1600 px вкладки
    выдавливали его за край, и было видно «движок подклю». */
@@ -455,6 +463,8 @@ body {
 
 /* СТОП (§27 доработки) — заметно отделён от соседних кнопок, чтобы не задеть случайно. */
 .btn-blackout { margin-left: 18px; }
+/* «СТОП» — одни заглавные: квадрат ставим по их середине, а не по строчным. */
+.btn-blackout.btn-icon > svg { transform: translateY(-0.5px); }
 
 /* Панель «Все приборы по типу» на Пульте (§27 доработки) — раньше была
    строкой в общем тулбаре, слишком тесно; теперь отдельный блок со своими
@@ -494,15 +504,30 @@ body {
   opacity: 0.7;
 }
 
+/* ── Оптическая середина текста ────────────────────────────────────────
+   У Segoe UI верх строчного бокса (под высокие буквы и акценты) больше низа,
+   и текст, отцентрованный по боксу, на глаз сидит на 1 px НИЖЕ середины
+   кнопки. Пиксельная проверка (scripts/ui-shot.cjs, шаг align) нашла это на
+   всех вкладках разом: кнопки, вкладки, плашки (заказчик 24.09.2026: «текст
+   опять не выровнен по вертикали — это повсеместная ошибка»). Поэтому у
+   кнопок, вкладок и плашек отступ сверху на 1 px меньше, чем снизу: высота та
+   же, текст — посередине. Значки (SVG) центруются по геометрии отдельно —
+   см. .btn-icon > svg. Правило для нового кода — docs/ВЁРСТКА.md. */
 .btn {
   background: var(--bg-track);
   color: var(--fg);
   border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 5px 12px;
+  padding: calc(5px - var(--lift-btn)) 12px calc(5px + var(--lift-btn));
   cursor: pointer;
   font-size: 13px;
+  line-height: normal;
 }
+/* Кнопка выбора файла — это <label>, а не <button>. Кнопкам браузер ставит
+   свой шрифт (Arial), а <label> наследует шрифт страницы (Segoe UI) — и такая
+   «кнопка» была на 2 px выше соседних, а подпись в ней ниже (замер 24.09.2026).
+   Делаем её такой же, как все кнопки. */
+label.btn { font-family: Arial, sans-serif; }
 
 /* Кнопка со значком транспорта: флекс центрует SVG и подпись по вертикали
    независимо от шрифта. Прежние символы ▶ ⏸ ■ в тексте выравнивались по
@@ -519,7 +544,29 @@ body {
    «Пауза»), сверху — нет. Отсюда и остаточное ощущение, что значок ниже
    подписи. Сдвиг ровно на эти 0.5px совмещает верх и низ значка с верхом и
    низом букв (проверено замером: deltaTop = deltaBottom = 0). */
-.btn-icon > svg { flex: none; transform: translateY(-0.5px); }
+/* Значок поднимается вместе с текстом (отступы у .btn) и стоит вровень с
+   серединой строчных букв подписи. Сдвиг 0,5 px вниз подобран пиксельной
+   проверкой при масштабе 100 % и 150 % (24.09.2026): и 0, и 0,75 px дают
+   больше расхождений значка с текстом. */
+.btn-icon > svg { flex: none; transform: translateY(0.5px); }
+/* Значок перед подписью — посередине своего места: поле слева до значка,
+   зазор до подписи и поле справа одинаковые (заказчик 24.09.2026: «у плюсика
+   разные расстояния слева до края и справа до букв»). У SVG внутри есть поле
+   около 1 px, поэтому зазор на 1 px меньше поля кнопки. */
+/* Справа поле на 2 px шире: у значков внутри есть своё пустое поле (у
+   треугольника «Пуск» — 3 px), и на глаз расстояния «край — значок —
+   подпись — край» сходятся именно так (замер по пикселям). */
+.btn.btn-icon { gap: 7px; padding-left: 8px; padding-right: 10px; }
+.btn.btn-small.btn-icon { gap: 5px; padding-left: 6px; padding-right: 8px; }
+/* Кнопка из одного значка («✕», «⚙», «⧉», дискета): значок ровно посередине
+   кнопки, а высота — как у соседних кнопок с подписью: невидимый символ
+   держит строку той же высоты. Значок опускаем на 1 px — ровно на столько,
+   на сколько отступами поднят текст (см. .btn). */
+.btn.btn-glyph { gap: 0; padding-left: 7px; padding-right: 7px; }
+.btn.btn-small.btn-glyph { gap: 0; padding-left: 5px; padding-right: 5px; }
+.btn.btn-glyph::after { content: "\200b"; }
+.btn.btn-glyph > svg { transform: translateY(var(--lift-btn)); }
+.btn.btn-small.btn-glyph > svg { transform: translateY(var(--lift-small)); }
 
 .btn:hover { border-color: var(--accent); }
 .btn.active {
@@ -569,7 +616,7 @@ body {
 }
 .btn-big {
   font-size: 17px;
-  padding: 22px 18px;
+  padding: calc(22px - var(--lift-btn)) 18px calc(22px + var(--lift-btn));
   border-radius: 10px;
 }
 
@@ -757,7 +804,7 @@ select {
   color: var(--fg-dim);
   border: 1px solid transparent;
   border-radius: 4px;
-  padding: 5px 14px;
+  padding: calc(5px - var(--lift-tab)) 14px calc(5px + var(--lift-tab));
   cursor: pointer;
   font-size: 13px;
 }
@@ -927,10 +974,9 @@ select {
 .color-swatch-own {
   display: inline-flex;
 }
-.color-add {
-  padding: 0 7px;
-  line-height: 1.4;
-}
+/* «Сохранить цвет»: кнопка-значок высотой с образцы цвета рядом. */
+.btn.btn-small.color-add { padding-top: 0; padding-bottom: 0; align-self: stretch; }
+.btn.btn-small.color-add > svg { transform: none; }
 
 /* Ветер в 3D-виде: полоска поверх сцены, слева вверху. Нарочно поверх, а не
    в боковой панели — крутить её надо, глядя на воду. */
@@ -1346,7 +1392,7 @@ h2.panel-head-search {
   color: var(--fg-dim);
   border: 1px solid var(--border);
   border-radius: 3px;
-  padding: 1px 5px;
+  padding: calc(1px - var(--lift-badge)) 5px calc(1px + var(--lift-badge));
   margin-left: 6px;
   vertical-align: middle;
 }
@@ -1451,7 +1497,7 @@ h2.panel-head-search {
   font-weight: 600;
 }
 
-.btn-small { padding: 2px 8px; font-size: 12px; }
+.btn-small { padding: calc(2px - var(--lift-small)) 8px calc(2px + var(--lift-small)); font-size: 12px; }
 .btn:disabled { opacity: 0.45; cursor: default; }
 .btn:disabled:hover { border-color: var(--border); }
 
@@ -2001,7 +2047,7 @@ h2.panel-head-search {
 .days { display: flex; gap: 2px; }
 /* Дни в расписании — плотнее: вместе с остальными колонками таблица должна
    помещаться в окно 1280 px. */
-.days .btn-small { padding: 2px 5px; }
+.days .btn-small { padding: calc(2px - var(--lift-small)) 5px calc(2px + var(--lift-small)); }
 .schedule-action { display: flex; flex-direction: column; gap: 3px; }
 .schedule-action .schedule-name { width: 100%; }
 /* В списке расписаний галочка и имя — рядом, а не по краям строки. */
@@ -2154,7 +2200,10 @@ input[type='range']:disabled { opacity: 0.4; cursor: default; }
   flex-wrap: wrap;
   gap: 4px;
 }
-.shape-presets .btn { min-width: 34px; padding: 2px 6px; }
+.shape-presets .btn { min-width: 34px; padding: calc(2px - var(--lift-small)) 6px calc(2px + var(--lift-small)); }
+/* Кнопки из одних цифр: строчных букв нет — поднимать нечего, цифры центруем
+   ровно (иначе при масштабе 150 % они вставали выше середины). */
+.shape-presets .btn, .figure-devices .btn { --lift-small: 0px; }
 
 /* Рамка выделения на схеме — обычный div поверх холста. */
 .canvas3d-band {
@@ -2249,11 +2298,11 @@ input[type='range']:disabled { opacity: 0.4; cursor: default; }
 /* Шапка на узких окнах: вкладки плотнее, иначе правый край (ключ, справка,
    статус связи) уезжает за экран. Ширины проверены снимками 1366/1600/1920. */
 @media (max-width: 1750px) {
-  .tab { padding: 5px 9px; }
+  .tab { padding: calc(5px - var(--lift-tab)) 9px calc(5px + var(--lift-tab)); }
   .tabs { gap: 2px; }
 }
 @media (max-width: 1500px) {
-  .tab { padding: 4px 6px; font-size: 12px; }
+  .tab { padding: calc(4px - var(--lift-tab)) 6px calc(4px + var(--lift-tab)); font-size: 12px; }
 }
 @media (max-width: 1450px) {
   .conn-text { display: none; }
@@ -2270,7 +2319,7 @@ input[type='range']:disabled { opacity: 0.4; cursor: default; }
      Иначе при несохранённых правках не помещалось имя ПРОЕКТА (замер 24.09.2026),
      а оно человеку нужнее. */
   .brand-name { display: none; }
-  .tab { padding: 4px 5px; }
+  .tab { padding: calc(4px - var(--lift-tab)) 5px calc(4px + var(--lift-tab)); }
 }
 
 /* Выбор COM-порта: поле «вручную» и кнопка возврата к списку — в одну строку. */
@@ -2345,12 +2394,14 @@ input[type='range']:disabled { opacity: 0.4; cursor: default; }
   height: 7px;
   border-right: 2px solid var(--fg-dim);
   border-bottom: 2px solid var(--fg-dim);
-  transform: translateY(-2px) rotate(45deg);
+  transform: translateY(-1px) rotate(45deg);
   opacity: 0.4;
   transition: transform 0.22s ease, opacity 0.15s ease;
 }
 .panel-toggle:hover .panel-chevron { opacity: 0.9; }
-section[data-collapsed='1'] > h2 .panel-chevron { transform: rotate(-45deg); }
+/* Сдвиги стрелки — по пиксельной проверке: середина «галочки» на уровне
+   середины строчных букв заголовка (24.09.2026). */
+section[data-collapsed='1'] > h2 .panel-chevron { transform: translateY(-1.5px) rotate(-45deg); }
 section.panel-collapsed > :not(h2) { display: none !important; }
 section.panel-collapsed > h2 { margin-bottom: 0; }
 /* Панель, к которой перешли кнопкой «Перейти», коротко подсвечивается. */
@@ -2515,3 +2566,30 @@ section.panel-flash { box-shadow: 0 0 0 1px var(--accent); transition: box-shado
 .list-nested-wrap { list-style: none; padding: 0 0 2px 14px; }
 .list-nested { border-left: 1px solid var(--border); padding-left: 6px; }
 .list-nested .list-item { padding: 4px 8px; font-size: 12px; }
+
+/* Панель поверх вкладки («Проекты») — с крестиком в правом верхнем углу. */
+.panel-closable { position: relative; }
+.panel-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.panel-close:hover { color: var(--fg); border-color: var(--border); background: var(--bg-track); }
+/* Контур фигуры на виде сверху — тонкой линией под точками форсунок. */
+.figure-preview-outline { fill: none; stroke: var(--fg-dim); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.7; }
+.figure-hint { margin: 4px 0 6px; font-size: 12px; }
+/* Окно «Удалить приборы»: список «что удалить» и сводка по выбранному. */
+.bulk-delete-modal { width: 560px; }
+.bulk-delete-scopes { display: flex; flex-direction: column; gap: 6px; }
+.bulk-delete-preview { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; background: var(--bg); border-radius: 4px; font-size: 13px; max-height: 180px; overflow-y: auto; }

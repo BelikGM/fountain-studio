@@ -1,3 +1,4 @@
+import { PlusIcon, CloseIcon } from '../components/Icons';
 import { useMemo, useState } from 'react';
 import {
   findScheduleCollisions,
@@ -115,8 +116,9 @@ export function ScheduleView({ engine }: { engine: EngineConnection }) {
     <main className="view view-split">
       <aside className="sidebar">
         <div className="sidebar-actions">
-          <button className="btn" onClick={addSchedule}>
-            + Расписание
+          <button className="btn btn-icon" onClick={addSchedule}>
+            <PlusIcon />
+            Расписание
           </button>
           <button className="btn" onClick={duplicate} disabled={!selected} data-hint="Копия создаётся выключенной — чтобы её записи не столкнулись с оригиналом">
             Дублировать
@@ -398,8 +400,8 @@ function ScheduleEditor({
                   )}
                 </td>
                 <td>
-                  <button className="btn btn-small" data-hint="Удалить запись" onClick={() => setEntries(entries.filter((x) => x.id !== e.id))}>
-                    ✕
+                  <button className="btn btn-small btn-icon btn-glyph" data-hint="Удалить запись" onClick={() => setEntries(entries.filter((x) => x.id !== e.id))}>
+                    <CloseIcon />
                   </button>
                 </td>
               </tr>
@@ -408,8 +410,9 @@ function ScheduleEditor({
         </tbody>
       </table>
       <div className="form-row" style={{ marginTop: 10 }}>
-        <button className="btn" onClick={addEntry}>
-          + Запись
+        <button className="btn btn-icon" onClick={addEntry}>
+          <PlusIcon />
+          Запись
         </button>
       </div>
     </div>

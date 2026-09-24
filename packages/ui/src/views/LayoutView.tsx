@@ -55,7 +55,7 @@ import { SmartSearch } from '../components/SmartSearch';
 import { noteManual } from '../manualActivity';
 import { hexToRgb } from '../colorPresets';
 import { askConfirm, type ConfirmOptions } from '../components/ConfirmDialog';
-import { EyeIcon, PencilIcon, TrashIcon, UploadIcon, WindIcon } from '../components/Icons';
+import { EyeIcon, PencilIcon, TrashIcon, UploadIcon, WindIcon, PlusIcon, ResetViewIcon, CloseIcon } from '../components/Icons';
 import { loadHidden, saveHidden } from '../three/hiddenElements';
 import { H } from '../propHints';
 import { comboFromEvent, getCombo } from '../hotkeys';
@@ -533,11 +533,12 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
       <div className="content content-3d">
         <div className="canvas3d" ref={attachCanvas} />
         <button
-          className="btn btn-small canvas3d-reset"
+          className="btn btn-small canvas3d-reset btn-icon"
           data-hint="Вернуть камеру к исходному положению"
           onClick={() => sceneRef.current?.resetCamera()}
         >
-          ⟲ Камера
+          <ResetViewIcon />
+          Камера
         </button>
         {/* Свёрнуто — только значок; дует ветер — значок и скорость, чтобы было
             понятно, почему струи сносит. Наведение раскрывает полосу целиком. */}
@@ -589,13 +590,13 @@ export function LayoutView({ engine }: { engine: EngineConnection }) {
             />
             <b className="canvas3d-wind-val canvas3d-wind-deg">{shownDir}°</b>
             <button
-              className="btn btn-small"
+              className="btn btn-small btn-icon btn-glyph"
               tabIndex={windOpen ? 0 : -1}
               disabled={shownSpeed <= 0 || windMode === 'sensor'}
               data-hint="Убрать ветер"
               onClick={() => setSpeed(0)}
             >
-              ✕
+              <CloseIcon />
             </button>
           </div>
         </div>
@@ -1072,8 +1073,9 @@ function ElementList({
         <p className="dim">отмечено: {multiCount(multi)} — свойства и удаление справа</p>
       )}
       <div className="form-row form-row-spaced">
-        <button className="btn btn-small" onClick={addGroup}>
-          + Контур
+        <button className="btn btn-small btn-icon" onClick={addGroup}>
+          <PlusIcon />
+          Контур
         </button>
         <span className="spacer" />
         <button className="btn btn-small btn-danger" onClick={() => void clearAll()} data-hint="Удалить со схемы всё: форсунки, прожекторы, чаши и контуры">
@@ -1256,9 +1258,9 @@ function AddTools({
     <section className="panel">
       <h2>Добавить</h2>
       <div className="sidebar-actions">
-        <button className="btn btn-small" onClick={addNozzle}>+ Форсунка</button>
-        <button className="btn btn-small" onClick={addLight}>+ Прожектор</button>
-        <button className="btn btn-small" onClick={addBowl}>+ Чаша</button>
+        <button className="btn btn-small btn-icon" onClick={addNozzle}><PlusIcon />Форсунка</button>
+        <button className="btn btn-small btn-icon" onClick={addLight}><PlusIcon />Прожектор</button>
+        <button className="btn btn-small btn-icon" onClick={addBowl}><PlusIcon />Чаша</button>
       </div>
       <h3>Расставить фигурой</h3>
       <p className="dim sidebar-note">

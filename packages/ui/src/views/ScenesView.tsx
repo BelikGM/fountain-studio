@@ -25,7 +25,7 @@ import {
   num,
 } from '@fountain-studio/shared';
 import { ListFilter } from '../components/ListFilter';
-import { PencilIcon, PlayIcon, StopIcon, TrashIcon } from '../components/Icons';
+import { PencilIcon, PlayIcon, StopIcon, TrashIcon, PlusIcon, BoltIcon } from '../components/Icons';
 import { hexToRgb, rgbToHex } from '../colorPresets';
 import { ColorPalette } from '../components/ColorPalette';
 import { confirmDelete } from '../confirmDelete';
@@ -153,8 +153,9 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
     <main className="view view-split">
       <aside className="sidebar">
         <div className="sidebar-actions">
-          <button className="btn" onClick={addScene}>
-            + Сцена
+          <button className="btn btn-icon" onClick={addScene}>
+            <PlusIcon />
+            Сцена
           </button>
           <button className="btn" onClick={duplicateScene} disabled={!selected}>
             Дублировать
@@ -259,11 +260,12 @@ export function ScenesView({ engine }: { engine: EngineConnection }) {
                 Взять значения с «Отладки»
               </button>
               <button
-                className={showGenerator ? 'btn btn-small active' : 'btn btn-small'}
+                className={showGenerator ? 'btn btn-small active btn-icon' : 'btn btn-small btn-icon'}
                 onClick={() => setShowGenerator(!showGenerator)}
                 data-hint="Создать сцены по расстановке на 3D-схеме: наоборот, зеркало, волна по кольцу"
               >
-                ⚡ Генератор
+                <BoltIcon />
+                Генератор
               </button>
               <span className="spacer" />
               <button
