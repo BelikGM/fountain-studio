@@ -2534,16 +2534,32 @@ section.panel-flash { box-shadow: 0 0 0 1px var(--accent); transition: box-shado
 .figure-preview svg { background: var(--bg-track); border: 1px solid var(--border); border-radius: 6px; }
 .figure-preview-center { stroke: var(--fg-dim); stroke-width: 1; }
 .figure-preview-label { fill: var(--fg); font-size: 10px; }
+/* Клапан — светлый квадратик с тёмной каймой: виден и рядом с цветной точкой, и на любом фоне. */
+.figure-preview-valve { fill: var(--fg); stroke: var(--bg-track); stroke-width: 1; }
+.figure-preview-axes line { stroke-width: 1.5; }
+.figure-preview-axes .axis-x { stroke: #e0524f; }
+.figure-preview-axes .axis-y { stroke: #4fbf5a; }
+.figure-preview-axes text { font-size: 9px; }
+.figure-preview-axes .axis-x-label { fill: #e0524f; }
+.figure-preview-axes .axis-y-label { fill: #4fbf5a; }
+.figure-preview-caption { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 12px; max-width: 240px; text-align: center; }
+.figure-legend { display: flex; gap: 12px; }
+.figure-legend > span { display: inline-flex; align-items: center; gap: 4px; }
 .figure-share { margin: 10px 0; }
 .figure-share > summary { cursor: pointer; color: var(--accent); }
+.figure-share-tables { display: flex; flex-wrap: wrap; gap: 8px 28px; align-items: flex-start; }
 .figure-share-table { margin-top: 6px; width: auto; }
 .figure-share-table td { padding-right: 18px; }
 .figure-share-table select { margin-right: 4px; }
-.figure-slot-empty { opacity: 0.55; }
+/* Пустой выбор «+» — узкий: раскрытый список всё равно показывает варианты целиком. */
+.figure-slot-empty { opacity: 0.55; width: 52px; }
 /* Ссылка-кнопка внутри текста: ведёт на другую вкладку, выглядит как ссылка. */
 .link-btn { display: inline; background: none; border: none; padding: 0; margin: 0; font: inherit; color: var(--accent); cursor: pointer; text-align: left; text-decoration: underline dotted; text-underline-offset: 2px; }
 .link-btn:hover { text-decoration-style: solid; }
+/* Название раздела в ссылке переносится целиком, а не рвётся посередине. */
+.nowrap { white-space: nowrap; }
 .sidebar-note { font-size: 12px; margin: 0 0 8px; line-height: 1.4; }
+.sidebar-note + .sidebar-note { margin-top: -4px; }
 /* Контур в списке 3D раскрывается стрелкой: под ним — его форсунки и прожекторы. */
 .list-expand {
   flex: none;

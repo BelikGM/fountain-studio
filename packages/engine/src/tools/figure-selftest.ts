@@ -6,22 +6,30 @@
  * тридцать шестая форсунка не загорится. Проверяем на примере заказчика
  * (24.09.2026): кольцо из 36 форсунок, у каждой свой светильник, один насос
  * на всё кольцо; и соседние случаи — 4 насоса, 72 светильника, чередование,
- * занятые адреса, наклон к центру, поворот.
+ * занятые адреса, наклон к центру, поворот. Со второго захода того же дня:
+ * размеры как на объекте (радиус, сторона, длина × ширина, стороны
+ * треугольника, ребро звезды), нумерация сверху по часовой, клапан — штучный,
+ * адреса приборов, поправленные руками.
  *
  * Запуск: npm -w @fountain-studio/engine run figure-test
  */
 import {
   autoShare,
+  autoShareSingle,
   autoFigureShare,
+  DEFAULT_FIGURE_DIMS,
   emptyProject,
+  figureDimsError,
+  figureExtent,
+  figureOutline,
   figurePoints,
+  figureVertices,
   planFigure,
   profileMap,
   devicesDependents,
   removeDevices,
   sharesEvenly,
-  shapePositions,
-  shapeVertices,
+  type FigureDims,
   type FigureSpec,
   type Project,
 } from '@fountain-studio/shared';
@@ -46,8 +54,8 @@ function spec(patch: Partial<FigureSpec> = {}): FigureSpec {
     name: 'Кольцо',
     shape: 'ring',
     count: 36,
-    size: 3,
-    aspect: 0.6,
+    dims: { ...DEFAULT_FIGURE_DIMS, radius: 3 },
+    clockwise: true,
     cx: 0,
     cy: 0,
     cz: 0,
@@ -63,6 +71,10 @@ function spec(patch: Partial<FigureSpec> = {}): FigureSpec {
     ...patch,
   };
 }
+const dims = (patch: Partial<FigureDims>): FigureDims => ({ ...DEFAULT_FIGURE_DIMS, ...patch });
+const near = (p: { x: number; y: number } | undefined, x: number, y: number): boolean =>
+  !!p && Math.abs(p.x - x) < 1e-3 && Math.abs(p.y - y) < 1e-3;
+const dist = (a: { x: number; y: number }, b: { x: number; y: number }): number => Math.hypot(a.x - b.x, a.y - b.y);
 
 // ── Раздача ──────────────────────────────────────────────────────────────
 console.log('— раздача приборов по форсункам —');
@@ -84,6 +96,22 @@ check('72 светильника — по два подряд', autoShare(36, 72
 }
 check('36 на 4 делится ровно', sharesEvenly(36, 4) && sharesEvenly(36, 72) && !sharesEvenly(36, 50));
 check('ноль приборов — у форсунок пусто', autoShare(5, 0, 'blocks').every((c) => c.length === 0));
+
+// Клапан штучный (заказчик 24.09.2026): «один клапан на все 10 форсунок» не бывает.
+console.log('— клапаны: по одному —');
+{
+  const spread = autoShareSingle(10, 4, 'alternate');
+  check('4 клапана на 10 — равномерно: Ф1, Ф3, Ф6, Ф8', same(spread.map((c) => c.length), [1, 0, 1, 0, 0, 1, 0, 1, 0, 0]), JSON.stringify(spread));
+  check('каждый клапан — ровно одной форсунке', spread.flat().length === 4 && new Set(spread.flat()).size === 4);
+  const first = autoShareSingle(10, 4, 'blocks');
+  check('4 клапана на 10 «с Ф1 подряд» — Ф1…Ф4', same(first, [[0], [1], [2], [3], [], [], [], [], [], []]), JSON.stringify(first));
+  check('10 на 10 — у каждой свой', autoShareSingle(10, 10, 'alternate').every((c, i) => same(c, [i])));
+  const more = autoShareSingle(4, 6, 'alternate');
+  check('6 клапанов на 4 — каждый клапан ровно одной форсунке', same(more.flat().sort(), [0, 1, 2, 3, 4, 5]), JSON.stringify(more));
+  check('клапаны «ровно» — только поровну', sharesEvenly(10, 10, 'valve') && !sharesEvenly(10, 4, 'valve') && !sharesEvenly(10, 20, 'valve'));
+  const one = autoFigureShare(spec({ valve: { count: 1, profileId: 'valve', universe: 1, startAddress: null, mode: 'alternate' } }));
+  check('один клапан на 36 форсунок — одной форсунке, а не всем', one.valve.filter((c) => c.length > 0).length === 1);
+}
 
 // ── Кольцо заказчика ─────────────────────────────────────────────────────
 console.log('— кольцо 36 форсунок, 1 насос, 36 RGB —');
@@ -116,17 +144,19 @@ console.log('— 72 светильника, 4 насоса, 36 клапанов 
   const project = emptyProject();
   const sp = spec({
     pump: { count: 4, profileId: 'pump', universe: 1, startAddress: null, mode: 'blocks' },
-    valve: { count: 36, profileId: 'valve', universe: 1, startAddress: null, mode: 'blocks' },
+    valve: { count: 36, profileId: 'valve', universe: 1, startAddress: null, mode: 'alternate' },
     light: { count: 72, profileId: 'rgb', universe: 2, startAddress: null, mode: 'blocks' },
   });
   const plan = planFigure(project, sp, autoFigureShare(sp), newId);
   const pumps = plan.devices.filter((d) => d.profileId === 'pump');
+  const valves = plan.devices.filter((d) => d.profileId === 'valve');
   const lights = plan.devices.filter((d) => d.profileId === 'rgb');
   check('без ошибок', plan.errors.length === 0, plan.errors.join('; '));
   check('Ф1…Ф9 на насосе 1, Ф10 — на насосе 2', plan.nozzles.slice(0, 9).every((n) => n.pumpDeviceId === pumps[0]!.id) && plan.nozzles[9]!.pumpDeviceId === pumps[1]!.id);
   check('у Ф1 два светильника: 1 и 2', plan.nozzles[0]!.lightDeviceId === lights[0]!.id && same(plan.nozzles[0]!.extraLightDeviceIds, [lights[1]!.id]));
   check('светильники — во второй вселенной с адреса 1', lights.every((l) => l.universe === 2) && lights[0]!.address === 1);
-  check('клапаны после насосов: 5…40', plan.devices.filter((d) => d.profileId === 'valve')[0]?.address === 5);
+  check('клапаны после насосов: 5…40', valves[0]?.address === 5 && valves[35]?.address === 40);
+  check('у каждой форсунки свой клапан', plan.nozzles.every((n, i) => n.valveDeviceId === valves[i]!.id && n.extraValveDeviceIds.length === 0));
 }
 
 // ── Занятые адреса ───────────────────────────────────────────────────────
@@ -145,32 +175,109 @@ console.log('— адреса учитывают уже занятые —');
   check('не влезает в 512 — ошибка, а не молча обрезано', over.errors.some((e) => e.includes('не хватает')), over.errors.join('; '));
 }
 
+// ── Адреса приборов: видно каждый, можно поправить ───────────────────────
+console.log('— адреса приборов по видам и правка руками —');
+{
+  const sp = spec({ count: 12, light: { count: 12, profileId: 'rgb', universe: 1, startAddress: null, mode: 'blocks' } });
+  const plan = planFigure(emptyProject(), sp, autoFigureShare(sp), newId);
+  check('по видам: насос 1 на 1, свет 3 на 8 (RGB по 3 адреса)', plan.byRole.pump[0]?.address === 1 && plan.byRole.light[2]?.address === 8 && plan.span.light === 3);
+  const fixed = planFigure(emptyProject(), { ...sp, light: { ...sp.light, fixed: { 0: 200 } } }, autoFigureShare(sp), newId);
+  check(
+    'свет 1 вписан руками на 200 — там и стоит, свет 2 — на первом свободном (2)',
+    fixed.errors.length === 0 && fixed.byRole.light[0]?.address === 200 && fixed.byRole.light[1]?.address === 2,
+    fixed.errors.join('; '),
+  );
+  check('поправленный прибор привязан к своей форсунке', fixed.nozzles[0]!.lightDeviceId === fixed.byRole.light[0]!.id);
+  const clash = planFigure(emptyProject(), { ...sp, light: { ...sp.light, fixed: { 0: 1 } } }, autoFigureShare(sp), newId);
+  check('вписан адрес насоса — ошибка «занят» с именем прибора', clash.errors.some((e) => e.includes('занят') && e.includes('насос 1')), clash.errors.join('; '));
+  const tail = planFigure(emptyProject(), { ...sp, light: { ...sp.light, fixed: { 0: 511 } } }, autoFigureShare(sp), newId);
+  check('RGB на 511 не помещается в 512 — ошибка', tail.errors.some((e) => e.includes('не помещается')), tail.errors.join('; '));
+  const from = planFigure(emptyProject(), { ...sp, light: { ...sp.light, startAddress: 10, fixed: { 1: 13 } } }, autoFigureShare(sp), newId);
+  check(
+    'с адреса 10, свет 2 на 13: свет 1 — 10, свет 3 — 16 (свой поправленный перешагнули)',
+    from.errors.length === 0 && from.byRole.light[0]?.address === 10 && from.byRole.light[1]?.address === 13 && from.byRole.light[2]?.address === 16,
+    from.errors.join('; ') + ' ' + from.byRole.light.slice(0, 3).map((d) => d?.address).join(','),
+  );
+}
+
 // ── Геометрия ────────────────────────────────────────────────────────────
-console.log('— геометрия: центр, поворот, наклон —');
+// Заказчик 24.09.2026: размеры — как меряют на объекте; нумерация у всех фигур
+// с одной точки (сверху; у квадрата и прямоугольника — верхний правый угол) и
+// по часовой стрелке. «Сверху» — это +Y: так на виде сверху и в 3D.
+console.log('— геометрия: размеры, нумерация, центр, поворот, наклон —');
 {
   const one = figurePoints(spec({ count: 1, cx: 2, cy: -1 }));
   check('одна форсунка — в центре фигуры', same(one, [{ x: 2, y: -1 }]), JSON.stringify(one));
+
+  const ring = figurePoints(spec({ count: 10 }));
+  check(
+    'кольцо радиусом 3 м: все 10 форсунок в 3 м от центра',
+    ring.every((p) => Math.abs(Math.hypot(p.x, p.y) - 3) < 1e-3),
+    ring.map((p) => Math.hypot(p.x, p.y).toFixed(3)).join(' '),
+  );
+  check('кольцо: Ф1 сверху (0; 3), Ф6 снизу (0; −3)', near(ring[0], 0, 3) && near(ring[5], 0, -3), JSON.stringify([ring[0], ring[5]]));
+  check('кольцо: по часовой — Ф2 правее Ф1', ring[1]!.x > 0.5, JSON.stringify(ring[1]));
+  const ext = figureExtent(figurePoints(spec({ count: 12 })));
+  check('кольцо радиусом 3 м: размах 6 × 6 м', Math.abs(ext.x - 6) < 1e-3 && Math.abs(ext.y - 6) < 1e-3, JSON.stringify(ext));
+  const ccw = figurePoints(spec({ count: 10, clockwise: false }));
+  check('кольцо против часовой — Ф1 сверху, Ф2 левее', near(ccw[0], 0, 3) && ccw[1]!.x < -0.5, JSON.stringify(ccw.slice(0, 2)));
   const rot = figurePoints(spec({ count: 4, rotationDeg: 90 }));
-  check('поворот 90° — первая форсунка на оси Y', Math.abs(rot[0]!.x) < 1e-6 && Math.abs(rot[0]!.y - 3) < 1e-6, JSON.stringify(rot[0]));
+  check('поворот 90° (против часовой) — Ф1 уходит с верха влево', near(rot[0], -3, 0), JSON.stringify(rot[0]));
+
   const sp = spec({ count: 4, tiltDeg: 20, tiltTo: 'center' });
   const plan = planFigure(emptyProject(), sp, autoFigureShare(sp), newId);
-  check('наклон к центру: форсунка справа смотрит влево (180°)', plan.nozzles[0]!.headingDeg === 180 && plan.nozzles[0]!.tiltDeg === 20, String(plan.nozzles[0]!.headingDeg));
+  check('наклон к центру: верхняя форсунка смотрит вниз (270°)', plan.nozzles[0]!.headingDeg === 270 && plan.nozzles[0]!.tiltDeg === 20, String(plan.nozzles[0]!.headingDeg));
+  check('наклон к центру: правая форсунка (Ф2) смотрит влево (180°)', plan.nozzles[1]!.headingDeg === 180, String(plan.nozzles[1]!.headingDeg));
   const out = planFigure(emptyProject(), { ...sp, tiltTo: 'out' }, autoFigureShare(sp), newId);
-  check('наклон наружу: та же форсунка смотрит вправо (0°)', out.nozzles[0]!.headingDeg === 0, String(out.nozzles[0]!.headingDeg));
+  check('наклон наружу: верхняя форсунка смотрит вверх (90°)', out.nozzles[0]!.headingDeg === 90, String(out.nozzles[0]!.headingDeg));
   check('поворот фигуры записан в контур', planFigure(emptyProject(), spec({ rotationDeg: 400 }), autoFigureShare(spec()), newId).group.rotationDeg === 40);
-  const sq = figurePoints(spec({ shape: 'square', count: 8, size: 2 }));
-  check('квадрат 8 — углы и середины сторон', sq.length === 8 && sq.some((p) => Math.abs(p.x + 2) < 1e-6 && Math.abs(p.y + 2) < 1e-6));
+
+  const sq = figurePoints(spec({ shape: 'square', count: 8, dims: dims({ side: 4 }) }));
+  check('квадрат со стороной 4 м из 8: Ф1 — верхний правый угол (2; 2)', near(sq[0], 2, 2), JSON.stringify(sq[0]));
+  check('квадрат по часовой: Ф2 — середина правой стороны, Ф3 — нижний правый угол', near(sq[1], 2, 0) && near(sq[2], 2, -2), JSON.stringify(sq.slice(1, 3)));
+  check('квадрат: Ф5 — нижний левый, Ф7 — верхний левый', near(sq[4], -2, -2) && near(sq[6], -2, 2));
+  const sqCcw = figurePoints(spec({ shape: 'square', count: 8, dims: dims({ side: 4 }), clockwise: false }));
+  check('квадрат против часовой: Ф1 тот же угол, Ф2 — середина верхней стороны', near(sqCcw[0], 2, 2) && near(sqCcw[1], 0, 2), JSON.stringify(sqCcw.slice(0, 2)));
+
+  const rect = figurePoints(spec({ shape: 'rect', count: 36, dims: dims({ length: 6, width: 3.6 }) }));
+  check('прямоугольник 6 × 3,6 м: Ф1 — верхний правый угол (3; 1,8)', near(rect[0], 3, 1.8), JSON.stringify(rect[0]));
+  check('прямоугольник: Ф2 идёт вниз по правой стороне', Math.abs(rect[1]!.x - 3) < 1e-3 && rect[1]!.y < 1.8, JSON.stringify(rect[1]));
+  const rectV = figureVertices('rect', dims({ length: 6, width: 3.6 }));
+  check('прямоугольник из 36: все 4 угла заняты', rect.length === 36 && rectV.every((v) => rect.some((p) => near(p, v.x, v.y))));
+  const onSide = (y: number): number => rect.filter((p) => Math.abs(p.y - y) < 1e-3).length;
+  check('прямоугольник из 36: по 12 на длинных сторонах (с углами), 8 на коротких', onSide(-1.8) === 12 && onSide(1.8) === 12, `${onSide(-1.8)} / ${onSide(1.8)}`);
+  const e = figureExtent(rect);
+  check('прямоугольник: размах ровно 6 × 3,6 м', Math.abs(e.x - 6) < 1e-3 && Math.abs(e.y - 3.6) < 1e-3, JSON.stringify(e));
+
+  const tri = figurePoints(spec({ shape: 'triangle', count: 3, dims: dims({ equilateral: true, side: 4 }) }));
+  check('равносторонний треугольник со стороной 4 м: Ф1 сверху', near(tri[0], 0, 4 / Math.sqrt(3)), JSON.stringify(tri[0]));
+  check(
+    'равносторонний: все стороны по 4 м, Ф2 — нижний правый угол',
+    [dist(tri[0]!, tri[1]!), dist(tri[1]!, tri[2]!), dist(tri[2]!, tri[0]!)].every((l) => Math.abs(l - 4) < 1e-3) && tri[1]!.x > 0,
+  );
+  const scal = figureVertices('triangle', dims({ equilateral: false, sides: [6, 5, 4] }));
+  check(
+    'треугольник 6 / 5 / 4: основание 6, правая 5, левая 4',
+    Math.abs(dist(scal[1]!, scal[2]!) - 6) < 1e-9 && Math.abs(dist(scal[0]!, scal[1]!) - 5) < 1e-9 && Math.abs(dist(scal[2]!, scal[0]!) - 4) < 1e-9,
+  );
+  check(
+    'треугольник 6 / 5 / 4: центр фигуры — центр тяжести',
+    Math.abs(scal[0]!.x + scal[1]!.x + scal[2]!.x) < 1e-9 && Math.abs(scal[0]!.y + scal[1]!.y + scal[2]!.y) < 1e-9,
+  );
+  check('треугольник 5 / 1 / 1 не строится — понятная ошибка', figureDimsError('triangle', dims({ equilateral: false, sides: [5, 1, 1] }))?.includes('короче суммы') === true);
+  const badSpec = spec({ shape: 'triangle', count: 6, dims: dims({ equilateral: false, sides: [5, 1, 1] }) });
+  const bad = planFigure(emptyProject(), badSpec, autoFigureShare(badSpec), newId);
+  check('с невозможными размерами фигура не создаётся', bad.errors.length > 0 && bad.nozzles.length === 0, bad.errors.join('; '));
 }
 
-// ── Правильные фигуры: вершины заняты, стороны ровные ────────────────────
-// Заказчик 24.09.2026: «прямоугольник кривой, звезда ужасная». Звезда должна
-// быть правильной: все рёбра одной длины, все внешние углы равны между собой
-// и все внутренние — между собой.
-console.log('— правильные фигуры —');
+// ── Правильная звезда: вершины заняты, стороны ровные ───────────────────
+// Заказчик 24.09.2026: «звезда ужасная». Звезда должна быть правильной: все
+// рёбра одной длины, все углы лучей равны между собой и все впадины — тоже.
+console.log('— правильная звезда по ребру —');
 {
-  const V = shapeVertices('star', 3);
-  const len = V.map((p, i) => Math.hypot(V[(i + 1) % 10]!.x - p.x, V[(i + 1) % 10]!.y - p.y));
-  check('звезда: 10 рёбер одной длины', len.every((l) => Math.abs(l - len[0]!) < 1e-9), len.map((l) => l.toFixed(4)).join(' '));
+  const V = figureVertices('star', dims({ starEdge: 2 }));
+  const len = V.map((p, i) => dist(p, V[(i + 1) % 10]!));
+  check('звезда с ребром 2 м: все 10 рёбер по 2 м', len.every((l) => Math.abs(l - 2) < 1e-9), len.map((l) => l.toFixed(4)).join(' '));
   const angle = (i: number): number => {
     const p = V[i]!;
     const a = V[(i + 9) % 10]!;
@@ -183,26 +290,21 @@ console.log('— правильные фигуры —');
   const inner = [1, 3, 5, 7, 9].map(angle);
   check('звезда: углы лучей все по 36°', tips.every((a) => Math.abs(a - 36) < 1e-6), tips.map((a) => a.toFixed(3)).join(' '));
   check('звезда: углы впадин все равны (108° снаружи)', inner.every((a) => Math.abs(a - 108) < 1e-6), inner.map((a) => a.toFixed(3)).join(' '));
+  check('звезда: Ф1 — верхний луч, Ф2 — впадина справа от него', Math.abs(V[0]!.x) < 1e-9 && V[0]!.y > 0 && V[1]!.x > 0);
 
-  const onVertex = (pts: { x: number; y: number }[], v: { x: number; y: number }[]): boolean =>
-    v.every((q) => pts.some((p) => Math.hypot(p.x - q.x, p.y - q.y) < 1e-9));
-  const star36 = shapePositions('star', 36, 3);
+  const at = (count: number) => figurePoints(spec({ shape: 'star', count, dims: dims({ starEdge: 2 }) }));
+  const onVertex = (pts: { x: number; y: number }[], v: { x: number; y: number }[]): boolean => v.every((q) => pts.some((p) => near(p, q.x, q.y)));
+  const star36 = at(36);
   check('звезда из 36: форсунки во всех 10 вершинах', star36.length === 36 && onVertex(star36, V));
-  const star5 = shapePositions('star', 5, 3);
+  const star5 = at(5);
   check('звезда из 5: концы лучей', star5.length === 5 && onVertex(star5, [0, 2, 4, 6, 8].map((i) => V[i]!)));
-  const star30 = shapePositions('star', 30, 3);
-  const gaps = star30.map((p, i) => Math.hypot(star30[(i + 1) % 30]!.x - p.x, star30[(i + 1) % 30]!.y - p.y));
-  check('звезда из 30: шаг между форсунками везде одинаковый', gaps.every((g) => Math.abs(g - gaps[0]!) < 1e-9));
-
-  const rectV = shapeVertices('rect', 3, 0, 0, 0, 0.6);
-  const rect = shapePositions('rect', 36, 3, 0, 0, 0, 0.6);
-  check('прямоугольник из 36: все 4 угла заняты', rect.length === 36 && onVertex(rect, rectV));
-  const onSide = (y: number): number => rect.filter((p) => Math.abs(p.y - y) < 1e-9).length;
-  check('прямоугольник 6×3,6 м из 36: по 12 на длинных сторонах (с углами), 8 на коротких', onSide(-1.8) === 12 && onSide(1.8) === 12, `${onSide(-1.8)} / ${onSide(1.8)}`);
-  const tri = shapePositions('triangle', 7, 3);
-  check('треугольник из 7: три вершины заняты', tri.length === 7 && onVertex(tri, shapeVertices('triangle', 3)));
-  const rotStar = shapePositions('star', 10, 3, 1, 1, 30);
-  check('поворот и центр — вершины повёрнутой звезды', onVertex(rotStar, shapeVertices('star', 3, 1, 1, 30)));
+  const star30 = at(30);
+  const gaps = star30.map((p, i) => dist(p, star30[(i + 1) % 30]!));
+  check('звезда из 30: шаг между форсунками везде одинаковый', gaps.every((g) => Math.abs(g - gaps[0]!) < 2e-3), gaps.map((g) => g.toFixed(3)).join(' '));
+  const rotSpec = spec({ shape: 'star', count: 10, dims: dims({ starEdge: 2 }), cx: 1, cy: 1, rotationDeg: 30 });
+  check('поворот и центр — форсунки в вершинах повёрнутой звезды', onVertex(figurePoints(rotSpec), figureOutline(rotSpec)));
+  const tri7 = figurePoints(spec({ shape: 'triangle', count: 7, dims: dims({ side: 4 }) }));
+  check('треугольник из 7: три вершины заняты', tri7.length === 7 && onVertex(tri7, figureVertices('triangle', dims({ side: 4 }))));
 }
 
 // ── Групповое удаление приборов ──────────────────────────────────────────

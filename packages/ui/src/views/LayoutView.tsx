@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isCollapsedKey, rememberCollapsedKey, useCollapsiblePanels } from '../collapsiblePanels';
 import { NumInput } from '../components/NumInput';
+import { FigureDimsFields, metersText } from '../components/FigureDimsFields';
 import { requestTab } from '../navigate';
 import {
   BOWL_DEFAULTS,
@@ -23,12 +24,14 @@ import {
   sniffPlanFormat,
   profileMap,
   LAYOUT_SHAPES,
+  DEFAULT_FIGURE_DIMS,
+  figureDimsError,
+  figureExtent,
   figurePoints,
   planFigure,
-  ringPositions,
-  shapePositions,
   snapShapeCount,
   type FigureDevices,
+  type FigureDims,
   type FigureSpec,
   rotateGroup,
   translateGroup,
@@ -1113,10 +1116,11 @@ function AddTools({
   const [what, setWhat] = useState<'nozzle' | 'light'>('nozzle');
   const [shape, setShape] = useState<LayoutShape>('ring');
   const [ringCount, setRingCount] = useState(8);
-  const [ringRadius, setRingRadius] = useState(3);
+  /** Размеры — те же, что у «Добавить фигуру фонтана»: радиус, сторона, длина и ширина… */
+  const [dims, setDims] = useState<FigureDims>(DEFAULT_FIGURE_DIMS);
+  const [clockwise, setClockwise] = useState(true);
   /** Центр фигуры: раскладка строится вокруг него, а не всегда вокруг нуля. */
   const [shapeCenter, setShapeCenter] = useState({ x: 0, y: 0, z: 0 });
-  const [aspect, setAspect] = useState(0.6);
   const [rotation, setRotation] = useState(0);
   const [ringKind, setRingKind] = useState<NozzleKind>('straight');
   const [height, setHeight] = useState(() => nozzleDefaults('straight').maxHeightM);
@@ -1190,30 +1194,35 @@ function AddTools({
    * потом поворачивается и сдвигается целиком (свойства справа). Геометрию
    * считает тот же код, что и «Добавить фигуру фонтана» на «Оборудовании».
    */
+  const shapeSpec = (name: string): FigureSpec => ({
+    name,
+    shape,
+    count: ringCount,
+    dims,
+    clockwise,
+    cx: shapeCenter.x,
+    cy: shapeCenter.y,
+    cz: shapeCenter.z,
+    rotationDeg: rotation,
+    nozzleKind: ringKind,
+    maxHeightM: height,
+    widthM: widthMm / 1000,
+    tiltDeg: tilt,
+    tiltTo,
+    pump: NO_DEVICES,
+    valve: NO_DEVICES,
+    light: NO_DEVICES,
+  });
+  const dimsError = ringCount > 1 ? figureDimsError(shape, dims) : null;
+  const extent = figureExtent(dimsError ? [] : figurePoints(shapeSpec('')));
+
   const addShape = (): void => {
+    if (dimsError) return;
     const base = SHAPE_BASE_NAME[shape];
     const taken = new Set(layout.nozzleGroups.map((g) => g.name));
     let k = 1;
     while (taken.has(`${base} ${k}`)) k++;
-    const spec: FigureSpec = {
-      name: `${base} ${k}`,
-      shape,
-      count: ringCount,
-      size: ringRadius,
-      aspect,
-      cx: shapeCenter.x,
-      cy: shapeCenter.y,
-      cz: shapeCenter.z,
-      rotationDeg: rotation,
-      nozzleKind: ringKind,
-      maxHeightM: height,
-      widthM: widthMm / 1000,
-      tiltDeg: tilt,
-      tiltTo,
-      pump: NO_DEVICES,
-      valve: NO_DEVICES,
-      light: NO_DEVICES,
-    };
+    const spec = shapeSpec(`${base} ${k}`);
     if (what === 'nozzle') {
       const plan = planFigure(project, spec, { pump: [], valve: [], light: [] }, uid);
       setLayout({ ...layout, nozzles: [...layout.nozzles, ...plan.nozzles], nozzleGroups: [...layout.nozzleGroups, plan.group] });
@@ -1255,7 +1264,7 @@ function AddTools({
   );
 
   return (
-    <section className="panel">
+    <section className="panel add-tools">
       <h2>Добавить</h2>
       <div className="sidebar-actions">
         <button className="btn btn-small btn-icon" onClick={addNozzle}><PlusIcon />Форсунка</button>
@@ -1263,10 +1272,18 @@ function AddTools({
         <button className="btn btn-small btn-icon" onClick={addBowl}><PlusIcon />Чаша</button>
       </div>
       <h3>Расставить фигурой</h3>
-      <p className="dim sidebar-note">
-        Здесь — только форсунки или прожекторы, без приборов. Форсунки сразу с насосами, клапанами и светом{' '}—{' '}
-        <button className="link-btn" onClick={() => requestTab('patch')}>
-          «Оборудование» → «Добавить фигуру фонтана»
+      {/*
+        Коротко, в две мысли (заказчик 24.09.2026: подсказка с тире и
+        переносом читалась странно): что здесь ставится и где быстрее.
+      */}
+      <p className="dim sidebar-note">Без приборов: насос, клапан и свет назначаются потом в свойствах.</p>
+      <p className="sidebar-note">
+        <button
+          className="link-btn"
+          data-hint="Вкладка «Оборудование», раздел «Добавить фигуру фонтана»: форсунки фигурой сразу с насосами, клапанами и светом, с адресами и привязками"
+          onClick={() => requestTab('patch')}
+        >
+          Быстрее сразу с адресами: <span className="nowrap">«Добавить фигуру фонтана»</span>
         </button>
       </p>
       <div className="field-grid">
@@ -1311,15 +1328,20 @@ function AddTools({
             </button>
           ))}
         </div>
-        <label className="field">
-          <FieldName label={shape === 'ring' ? 'Радиус, м' : 'Размер, м'} hint={H.shapeSize(shape === 'ring')} />{' '}
-          {numField(ringRadius, setRingRadius, { min: 0.1, max: 500, step: 0.5 })}
-        </label>
-        {shape === 'rect' && (
-          <label className="field">
-            <FieldName label="Пропорция" hint={H.shapeAspect} />{' '}
-            {numField(aspect, setAspect, { min: 0.1, max: 5, step: 0.1 })}
-          </label>
+        <FigureDimsFields shape={shape} dims={dims} onChange={setDims} clockwise={clockwise} onClockwise={setClockwise} sidebar />
+        {dimsError ? (
+          <p className="error-text">{dimsError}</p>
+        ) : (
+          ringCount > 1 &&
+          (shape === 'ring' ? (
+            <p className="dim" data-hint="Диаметр кольца — дважды радиус: от форсунки до противоположной через центр">
+              Диаметр: {metersText(2 * dims.radius)} м
+            </p>
+          ) : (
+            <p className="dim" data-hint="Сколько места займёт фигура по осям X и Y — от крайней форсунки до крайней">
+              Размах: {metersText(extent.x)} × {metersText(extent.y)} м
+            </p>
+          ))
         )}
         {(
           [
@@ -1380,7 +1402,7 @@ function AddTools({
           </label>
         )}
       </div>
-      <button className="btn btn-small" onClick={addShape}>
+      <button className="btn btn-small" disabled={dimsError !== null} onClick={addShape}>
         Расставить · {ringCount} шт.
       </button>
     </section>
