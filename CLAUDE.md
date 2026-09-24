@@ -60,6 +60,7 @@ npm -w @fountain-studio/engine run musidora-test     # кадр USB-DMX FountanP
 npm -w @fountain-studio/engine run failsafe-test     # аварийное отключение
 npm -w @fountain-studio/engine run eventlog-test     # журнал на диске
 npm -w @fountain-studio/engine run wind-test         # ветер: порог, выдержки, борт чаши, датчик Modbus/MQTT
+npm -w @fountain-studio/engine run figure-test       # фигура фонтана: раздача насосов/клапанов/света, адреса, поворот
 npm -w @fountain-studio/engine run worker-test       # расчёт в отдельном потоке
 npm -w @fountain-studio/engine run telegram-test     # уведомления в Telegram
 npm -w @fountain-studio/engine run mail-test         # уведомления на почту: разговор по SMTP
