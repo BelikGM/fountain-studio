@@ -15,16 +15,21 @@
  *     "out": "C:/.../папка-для-снимков",
  *     "width": 1600, "height": 1000,
  *     "scale": 1.25,                                    // масштаб экрана (по умолчанию 1)
+ *     "visible": true,                                  // обычное окно (см. ниже) — ТОЛЬКО на невидимом рабочем столе
  *     "steps": [
  *       { "tab": "Настройки" },                        // нажать вкладку по подписи
  *       { "click": "+ Вселенная" },                    // нажать кнопку по тексту
  *       { "clickNth": "Применить", "n": 1 },           // n-ю из одинаковых (с 0)
  *       { "select": "подпись поля", "value": "2" },   // выбрать в списке рядом с подписью
  *       { "scrollTo": "Вселенные DMX" },               // прокрутить к тексту
+ *       { "focus": "input[type=number]", "n": 2 },     // фокус в поле (CSS-селектор)
+ *       { "keys": ["Up", "Up", "5", "Tab"] },          // настоящие нажатия клавиш
+ *       { "mouseAt": "input[type=number]", "n": 2, "fromRight": 6, "fromTop": 5, "times": 2 }, // щелчок мышью (кнопки ▲▼)
  *       { "wait": 500 },
  *       { "eval": "document.title" },                  // выполнить JS, результат в вывод
  *       { "shot": "settings.png" },                    // снять видимую часть окна
  *       { "shot": "x.png", "clip": {"x":0,"y":0,"width":400,"height":200}, "zoom": 2 }, // фрагмент крупно
+ *       { "shot": "y.png", "clipTo": ".figure-preview", "pad": 8, "zoom": 1.5 },        // ровно элемент
  *       { "fit": "settings" },                         // найти обрезанные подписи
  *       { "align": "settings" }                        // проверить выравнивание по пикселям
  *     ]
@@ -314,16 +319,27 @@ function alignReport(img, targets, dpr, tol) {
 }
 
 app.whenReady().then(async () => {
+  /*
+   * visible — обычное окно на экране, с фокусом. Нужно, когда проверяется то,
+   * что внеэкранное окно не умеет: у него нет фокуса окна, поэтому не приходят
+   * focus/blur, а кнопки ▲▼ числового поля не срабатывают (выяснено 24.09.2026).
+   * ЗАПУСКАТЬ ТОЛЬКО НА НЕВИДИМОМ РАБОЧЕМ СТОЛЕ (scripts/run-hidden.ps1):
+   * окно, выскочившее на экран человека, забирает у него фокус и нажатия.
+   */
+  const visible = sc.visible === true;
   const win = new BrowserWindow({
     width: sc.width || 1600,
     height: sc.height || 1000,
-    show: false,
+    show: visible,
+    // У видимого окна размер — без рамки и заголовка, как у внеэкранного.
+    useContentSize: visible,
     // Внеэкранная отрисовка: скрытое обычное окно перерисовывается с опозданием,
     // и снимок показывал СТАРУЮ картинку — галочка в DOM уже стоит, а на снимке
     // её нет (поймано 22.09.2026). Здесь кадры рисуются всегда.
-    webPreferences: { backgroundThrottling: false, offscreen: true },
+    webPreferences: { backgroundThrottling: false, offscreen: !visible },
   });
-  win.webContents.setFrameRate(30);
+  if (visible) win.focus();
+  else win.webContents.setFrameRate(30);
   const report = [];
   const log = (s) => {
     report.push(s);
@@ -369,6 +385,49 @@ app.whenReady().then(async () => {
         log(`${ok ? '✔' : '✖ НЕ НАЙДЕНО'} выбрать «${step.value}» в «${step.select}»`);
         await sleep(step.after ?? 600);
       }
+      // Настоящие нажатия (события от «железа», а не из скрипта) — чтобы
+      // проверять то, что делает сам браузер: стрелки ↑/↓ и кнопки числового
+      // поля, набор цифр. focus — CSS-селектор поля (n — какое по счёту).
+      if (step.focus) {
+        const ok = await win.webContents.executeJavaScript(`
+          (() => { const e = document.querySelectorAll(${JSON.stringify(step.focus)})[${step.n || 0}]; if (!e) return false; e.scrollIntoView({ block: 'center' }); e.focus(); if (e.select) e.select(); return true; })()
+        `);
+        log(`${ok ? '✔' : '✖ НЕ НАЙДЕНО'} фокус в «${step.focus}»`);
+        await sleep(200);
+      }
+      // keys: ["Up", "Down", "5", "Tab"] — клавиши по очереди (имена — как у Electron).
+      if (step.keys) {
+        for (const k of step.keys) {
+          win.webContents.sendInputEvent({ type: 'keyDown', keyCode: k });
+          if (k.length === 1) win.webContents.sendInputEvent({ type: 'char', keyCode: k });
+          win.webContents.sendInputEvent({ type: 'keyUp', keyCode: k });
+          await sleep(120);
+        }
+        log(`клавиши: ${step.keys.join(' ')}`);
+        await sleep(step.after ?? 200);
+      }
+      // mouseAt: щёлкнуть мышью в точку элемента — fromRight/fromTop от его
+      // правого верхнего угла (кнопки ▲▼ числового поля — у правого края).
+      if (step.mouseAt) {
+        const r = await win.webContents.executeJavaScript(`
+          (() => { const e = document.querySelectorAll(${JSON.stringify(step.mouseAt)})[${step.n || 0}]; if (!e) return null; e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return { x: b.right, y: b.top }; })()
+        `);
+        if (!r) log(`✖ НЕ НАЙДЕНО «${step.mouseAt}»`);
+        else {
+          const x = Math.round(r.x - (step.fromRight ?? 6));
+          const y = Math.round(r.y + (step.fromTop ?? 5));
+          // Сначала навести: кнопки ▲▼ поля браузер показывает только под мышью.
+          win.webContents.sendInputEvent({ type: 'mouseMove', x, y });
+          await sleep(150);
+          for (let i = 0; i < (step.times || 1); i++) {
+            win.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+            await sleep(60);
+            win.webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+            await sleep(250);
+          }
+          log(`мышь: ${step.times || 1} × в (${x}; ${y}) у «${step.mouseAt}»`);
+        }
+      }
       if (step.scrollTo) {
         const ok = await win.webContents.executeJavaScript(`
           (() => { const e = ${FIND}(${JSON.stringify(step.scrollTo)}, ${step.n || 0}); if (!e) return false; e.scrollIntoView({ block: 'start' }); return true; })()
@@ -386,7 +445,19 @@ app.whenReady().then(async () => {
         win.webContents.invalidate();
         await sleep(250);
         // clip: {x, y, width, height} — снять фрагмент, чтобы рассмотреть мелочь вблизи.
-        let img = await win.webContents.capturePage(step.clip);
+        // clipTo: CSS-селектор — снять ровно этот элемент (с полями pad), прокрутив к нему.
+        let clip = step.clip;
+        if (step.clipTo) {
+          const pad = step.pad ?? 8;
+          clip = await win.webContents.executeJavaScript(`
+            (() => { const e = document.querySelectorAll(${JSON.stringify(step.clipTo)})[${step.n || 0}]; if (!e) return undefined; e.scrollIntoView({ block: 'center' });
+              const b = e.getBoundingClientRect(); const x = Math.max(0, Math.floor(b.left - ${pad})), y = Math.max(0, Math.floor(b.top - ${pad}));
+              return { x, y, width: Math.min(innerWidth - x, Math.ceil(b.width + 2 * ${pad})), height: Math.min(innerHeight - y, Math.ceil(b.height + 2 * ${pad})) }; })()
+          `);
+          if (!clip) log(`✖ НЕ НАЙДЕНО «${step.clipTo}» — снимок целиком`);
+          await sleep(200);
+        }
+        let img = await win.webContents.capturePage(clip);
         if (step.zoom) img = img.resize({ width: Math.round(img.getSize().width * step.zoom), quality: 'best' });
         const file = path.join(out, step.shot);
         fs.writeFileSync(file, img.toPNG());

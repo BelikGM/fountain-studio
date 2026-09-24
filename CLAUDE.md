@@ -60,7 +60,7 @@ npm -w @fountain-studio/engine run musidora-test     # кадр USB-DMX FountanP
 npm -w @fountain-studio/engine run failsafe-test     # аварийное отключение
 npm -w @fountain-studio/engine run eventlog-test     # журнал на диске
 npm -w @fountain-studio/engine run wind-test         # ветер: порог, выдержки, борт чаши, датчик Modbus/MQTT
-npm -w @fountain-studio/engine run figure-test       # фигура фонтана: раздача насосов/клапанов/света, адреса, поворот
+npm -w @fountain-studio/engine run figure-test       # фигура фонтана: размеры, нумерация, раздача насосов/клапанов/света, адреса
 npm -w @fountain-studio/engine run worker-test       # расчёт в отдельном потоке
 npm -w @fountain-studio/engine run telegram-test     # уведомления в Telegram
 npm -w @fountain-studio/engine run mail-test         # уведомления на почту: разговор по SMTP
@@ -68,6 +68,9 @@ npm -w @fountain-studio/engine run audio-test         # звук: громкос
 npm -w @fountain-studio/engine run lines-test         # вселенные и такт на ходу, без провала значений
 npm run app-test                                     # УСТАНОВЛЕННАЯ программа: движок из сборки, окно, значок у часов, автозапуск
 ```
+
+`app-test` открывает настоящее окно — запускать его через
+`scripts/run-hidden.ps1` (невидимый рабочий стол, см. ниже), а не на экране.
 
 Визуальные правки (3D, вёрстка) проверяются **своими скриншотами**, а не «по
 описанию»: поднять Electron-окно на `http://127.0.0.1:5180`, снять кадр,
@@ -89,6 +92,18 @@ npm -w @fountain-studio/engine run ui-shots -- сценарий.json
 Проверять шапку на ширинах 1280, 1366, 1600 и 1920. Снимок не заменяет
 проверку DOM: после нажатия сверять состояние через `eval`, иначе можно
 «нажать» не туда и не заметить.
+
+Настоящие нажатия — шаги `keys` (клавиши) и `mouseAt` (щелчок мышью в точку
+элемента, например по кнопкам ▲▼ числового поля). Внеэкранному окну не
+хватает фокуса: у него не приходят focus/blur и не работают кнопки ▲▼. Такие
+проверки — сценарий с `"visible": true` и запуск **только** на невидимом
+рабочем столе, чтобы окно не выскочило поверх работы человека и не забрало
+нажатия:
+
+```bash
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-hidden.ps1 \
+  -Command 'cmd /c npm -w @fountain-studio/engine run ui-shots -- сценарий.json > shots.log 2>&1' -TimeoutSec 600
+```
 
 Новая или изменённая кнопка, плашка, вкладка, значок — прогнать шаг `align`
 (выравнивание по пикселям) при `"scale": 1` и `"scale": 1.5`. Символы шрифта
