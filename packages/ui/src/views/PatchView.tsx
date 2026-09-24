@@ -558,6 +558,13 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
    * стоят на месте; вышли из поля — таблица пересортировывается.
    */
   const [frozenOrder, setFrozenOrder] = useState<string[] | null>(null);
+  /**
+   * Адрес, который набирается прямо сейчас, — и вне 1–512 тоже. Такой в
+   * прибор не уходит, и раньше рядом висела ошибка ПРОШЛОГО промежуточного
+   * числа: набрали «513» — видно «пересечение» прибора на 51 (заказчик
+   * 24.09.2026). Теперь рядом пишется настоящая причина — «вне 1–512».
+   */
+  const [addrDraft, setAddrDraft] = useState<{ id: string; v: number } | null>(null);
   /** Окно «Удалить приборы» (несколько сразу). */
   const [bulkOpen, setBulkOpen] = useState(false);
 
@@ -774,7 +781,9 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
             <tbody>
               {sorted.map((d) => {
                 const range = deviceRange(d, profiles);
-                const bad = issues.collisions.has(d.id) || issues.outOfRange.has(d.id);
+                const typed = addrDraft?.id === d.id ? addrDraft.v : null;
+                const typedOut = typed !== null && (typed < 1 || typed > DMX_UNIVERSE_SIZE);
+                const bad = typedOut || issues.collisions.has(d.id) || issues.outOfRange.has(d.id);
                 const profile = profiles.get(d.profileId);
                 const trimOpen = trimOpenId === d.id;
                 const modbusOpen = modbusOpenId === d.id;
@@ -830,14 +839,22 @@ function DevicesTable({ engine }: { engine: EngineConnection }) {
                         value={d.address}
                         onFocus={() => setFrozenOrder(sorted.map((x) => x.id))}
                         onBlur={() => setFrozenOrder(null)}
+                        onDraft={(v) => setAddrDraft(v === null ? null : { id: d.id, v })}
                         onChange={(v) => patchDevice(d.id, { address: v })}
                       />
                     </td>
-                    <td className="dim">
-                      {range.start}–{range.end}
-                      {issues.collisions.has(d.id) && <span className="error-text"> пересечение</span>}
-                      {issues.outOfRange.has(d.id) && <span className="error-text"> вне 1–512</span>}
-                    </td>
+                    {typedOut ? (
+                      <td className="dim" data-hint={`Адрес прибора — от 1 до ${DMX_UNIVERSE_SIZE}: во вселенной DMX всего ${DMX_UNIVERSE_SIZE} адресов. Выйдете из поля — адрес подрежется до ближайшего допустимого.`}>
+                        {typed}–{typed! + range.end - range.start}
+                        <span className="error-text"> вне 1–{DMX_UNIVERSE_SIZE}</span>
+                      </td>
+                    ) : (
+                      <td className="dim">
+                        {range.start}–{range.end}
+                        {issues.collisions.has(d.id) && <span className="error-text"> пересечение</span>}
+                        {issues.outOfRange.has(d.id) && <span className="error-text"> вне 1–{DMX_UNIVERSE_SIZE}</span>}
+                      </td>
+                    )}
                     <td
                       className={(layoutUses.get(d.id) ?? 0) > 1 ? 'warn' : 'dim'}
                       data-hint={
