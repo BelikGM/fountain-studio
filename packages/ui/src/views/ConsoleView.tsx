@@ -10,6 +10,8 @@ import {
   type TestPatternMode,
   type TestPatternScope,
   universeTitle,
+  universeShort,
+  universeCustomName,
   num,
 } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
@@ -197,15 +199,22 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
       <ManualBlocked engine={engine} />
 
       <div className="toolbar">
+        {/*
+          «Вселенная:» один раз перед рядом, на кнопках — номер и своё имя
+          («1», «2 · Северная чаша»), полное название — в подсказке. Было
+          «Вселенная 1 · Вселенная» на каждой кнопке — на ноутбуке ряд не влезал.
+        */}
         <div className="group">
+          <span className="dim">Вселенная:</span>
           {universes.map((u) => (
             <button
               key={u.id}
-              className={u.id === universeId ? 'btn active' : 'btn'}
-              data-hint={u.outputs.join('\n')}
+              // Кнопка с одним номером центруется без подъёма текста (btn-num).
+              className={`btn${u.id === universeId ? ' active' : ''}${universeCustomName(u) ? '' : ' btn-num'}`}
+              data-hint={[universeTitle(u), ...u.outputs].join('\n')}
               onClick={() => setUniverseId(u.id)}
             >
-              {universeTitle(u)}
+              {universeShort(u)}
             </button>
           ))}
         </div>

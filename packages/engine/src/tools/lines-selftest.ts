@@ -21,6 +21,7 @@ import {
   sanitizeProject,
   storedUniverseLabel,
   universeCustomName,
+  universeShort,
   universeTitle,
   type ConfigUniverse,
 } from '@fountain-studio/shared';
@@ -55,6 +56,10 @@ check('«Линия 1» у первой — это имя, которое дав
 check('«Вселенная 3» у третьей — тоже', universeCustomName({ id: 3, label: 'Вселенная 3' }) === null);
 check('своё имя показывается рядом с номером', universeTitle({ id: 2, label: 'Северная чаша' }) === 'Вселенная 2 · Северная чаша');
 check('«Линия 3» у второй — уже осмысленное имя', universeCustomName({ id: 2, label: 'Линия 3' }) === 'Линия 3');
+// Заказчик 24.09.2026: «Вселенная 1 · Вселенная» на кнопках «Отладки» — слишком длинно.
+check('голое «Вселенная» без номера — не имя', universeCustomName({ id: 1, label: 'Вселенная' }) === null && universeShort({ id: 1, label: ' вселенная ' }) === '1');
+check('«Universe» и «Линия» без номера — тоже', universeCustomName({ id: 2, label: 'Universe' }) === null && universeCustomName({ id: 2, label: 'Линия' }) === null);
+check('короткая подпись со своим именем — «2 · Северная чаша»', universeShort({ id: 2, label: 'Северная чаша' }) === '2 · Северная чаша');
 check('храним пустое вместо автоимени', storedUniverseLabel({ id: 1, label: 'Линия 1' }) === '');
 check('своё имя храним как есть', storedUniverseLabel({ id: 1, label: 'Каскад' }) === 'Каскад');
 

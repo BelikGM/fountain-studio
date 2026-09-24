@@ -2204,6 +2204,8 @@ input[type='range']:disabled { opacity: 0.4; cursor: default; }
 /* Кнопки из одних цифр: строчных букв нет — поднимать нечего, цифры центруем
    ровно (иначе при масштабе 150 % они вставали выше середины). */
 .shape-presets .btn, .figure-devices .btn { --lift-small: 0px; }
+/* То же у кнопок вселенных, где на кнопке один номер («1», «2»). */
+.btn.btn-num { --lift-btn: 0px; --lift-small: 0px; }
 
 /* Рамка выделения на схеме — обычный div поверх холста. */
 .canvas3d-band {

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useCollapsiblePanels } from '../collapsiblePanels';
 import { DMX_UNIVERSE_SIZE, type ClientMessage, type NetworkState, type RdmAction, type RdmSensorReading,
   universeTitle,
+  universeShort,
+  universeCustomName,
   num,
 } from '@fountain-studio/shared';
 import type { EngineConnection } from '../useEngine';
@@ -240,14 +242,15 @@ function DmxStreamPanel({ engine, hasInputCapture }: { engine: EngineConnection;
           </button>
         </div>
         <div className="group">
+          <span className="dim">Вселенная:</span>
           {universes.map((u) => (
             <button
               key={u.id}
-              className={u.id === universeId ? 'btn btn-small active' : 'btn btn-small'}
-              data-hint={u.outputs.join('\n')}
+              className={`btn btn-small${u.id === universeId ? ' active' : ''}${universeCustomName(u) ? '' : ' btn-num'}`}
+              data-hint={[universeTitle(u), ...u.outputs].join('\n')}
               onClick={() => setUniverseId(u.id)}
             >
-              {universeTitle(u)}
+              {universeShort(u)}
             </button>
           ))}
         </div>
