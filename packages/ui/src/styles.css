@@ -626,21 +626,33 @@ select {
 .cell-actions { white-space: nowrap; }
 /* Значение ручки тембра — постоянной ширины, чтобы «−12 дБ» и «0 дБ» не двигали строку. */
 .tone-value { display: inline-block; min-width: 48px; font-variant-numeric: tabular-nums; }
-/* Имя прибора на шкале, снизу вверх; поверх заливки, поэтому с тенью. */
+/* Имя прибора на шкале, снизу вверх; поверх заливки, поэтому на подложке.
+   Стоит по ЦЕЛЫМ пикселям: раньше центровалось через left: 50% и
+   translateX(-50%), колонка текста шириной 11px уезжала на полпикселя, и над
+   залитой частью шкалы (заливка — отдельный слой видеокарты) подпись
+   размывалась. Поэтому одни подписи были чёткие, другие мутные — смотря по
+   уровню (замечание 24.09.2026). Теперь колонка 12px ровно посередине
+   шкалы: (20 − 12) / 2 = 4px. */
 .fader-name {
   position: absolute;
-  left: 50%;
+  left: 4px;
+  width: 12px;
   bottom: 6px;
-  transform: translateX(-50%) rotate(180deg);
+  transform: rotate(180deg);
   writing-mode: vertical-rl;
   font-size: 11px;
-  line-height: 1;
+  line-height: 12px;
   white-space: nowrap;
   max-height: calc(100% - 12px);
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--fg);
-  text-shadow: 0 0 3px var(--bg-panel), 0 0 2px var(--bg-panel);
+  /* Подложка цвета панели вместо размытой тени: на ярких заливках (красный,
+     зелёный) тонкие белые буквы смешивались с цветом и выглядели мутными.
+     С подложкой текст контрастный в обеих темах (сверено снимками 24.09.2026). */
+  background: color-mix(in srgb, var(--bg-panel) 62%, transparent);
+  border-radius: 3px;
+  padding: 3px 0;
   pointer-events: none;
 }
 

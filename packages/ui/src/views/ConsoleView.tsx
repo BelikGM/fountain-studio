@@ -23,6 +23,20 @@ import { noteManual } from '../manualActivity';
 /** Варианты числа адресов на странице; 512 — вся вселенная одной лентой. */
 const PAGE_SIZES = [16, 32, 64, 128, 256, DMX_UNIVERSE_SIZE];
 
+/**
+ * Что показывать на странице. Раньше была одна галочка «только занятые», и на
+ * объекте, где светильники занимают сотни адресов, до насосов приходилось
+ * долго листать (заказчик 24.09.2026). Теперь — выбор: все адреса, занятые,
+ * или приборы одного вида.
+ */
+type ShowMode = 'all' | 'used' | DeviceKind;
+const SHOW_KINDS: { id: DeviceKind; label: string }[] = [
+  { id: 'lamp', label: 'Светильники' },
+  { id: 'pump', label: 'Насосы' },
+  { id: 'valve', label: 'Клапаны' },
+  { id: 'other', label: 'Прочие' },
+];
+
 const PATTERNS: { mode: TestPatternMode; label: string }[] = [
   { mode: 'off', label: 'Выключен' },
   { mode: 'sine', label: 'Волна' },
@@ -124,7 +138,7 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
 
   // адрес-1 → «Имя прибора · Канал» + цвет по роли (для фейдера).
   const owners = useMemo(() => {
-    const map = new Map<number, { label: string; roleClass: string; twoState: boolean }>();
+    const map = new Map<number, { label: string; roleClass: string; twoState: boolean; kind: DeviceKind }>();
     if (!project || universeId === null) return map;
     for (const d of project.devices) {
       if (d.universe !== universeId) continue;
@@ -137,6 +151,7 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
             label: `${d.name} · ${profile.channels[k]!.name}`,
             roleClass: classifyChannel(profile.kind, profile.channels[k]!.role),
             twoState: profile.twoState === true,
+            kind: profile.kind,
           });
         }
       }
@@ -148,9 +163,17 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
   // часть из 512). Включено по умолчанию; если приборов нет — показываем все.
   // Состояние общее на все вселенные намеренно: переключение вселенной не
   // должно сбрасывать фильтр — только пересчитать список под неё.
-  const [onlyUsed, setOnlyUsed] = useState(true);
+  const [show, setShow] = useState<ShowMode>('used');
   const usedChannels = useMemo(() => [...owners.keys()].sort((a, b) => a - b), [owners]);
-  const filterActive = onlyUsed && usedChannels.length > 0;
+  const kindCount = (kind: DeviceKind): number => usedChannels.filter((i) => owners.get(i)?.kind === kind).length;
+  /** Адреса выбранного вида; null — показываем страницами все 512. */
+  const shownChannels: number[] | null =
+    show === 'all' || usedChannels.length === 0
+      ? null
+      : show === 'used'
+        ? usedChannels
+        : usedChannels.filter((i) => owners.get(i)?.kind === show);
+  const filterActive = shownChannels !== null;
 
   const pattern = stats?.pattern ?? 'off';
   // Единица показа. «Бегущая» живёт в сотых долях секунды — «0.1 с» читается
@@ -188,18 +211,24 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
         </div>
 
         <div className="group">
-          <label className="field" data-hint="Показывать только адреса, на которых стоят приборы, — без пустых">
-            <input
-              type="checkbox"
-              checked={onlyUsed}
-              disabled={usedChannels.length === 0}
-              onChange={(e) => setOnlyUsed(e.target.checked)}
-            />{' '}
-            только занятые{usedChannels.length === 0 ? ' (нет приборов)' : ` (${usedChannels.length})`}
+          <label
+            className="field"
+            data-hint="Какие адреса показывать: все 512 (листаются страницами), только занятые приборами или приборы одного вида"
+          >
+            Показать:{' '}
+            <select value={usedChannels.length === 0 ? 'all' : show} disabled={usedChannels.length === 0} onChange={(e) => setShow(e.target.value as ShowMode)}>
+              <option value="all">Все адреса</option>
+              <option value="used">Занятые ({usedChannels.length})</option>
+              {SHOW_KINDS.filter((k) => k.id !== 'other' || kindCount('other') > 0).map((k) => (
+                <option key={k.id} value={k.id}>
+                  {k.label} ({kindCount(k.id)})
+                </option>
+              ))}
+            </select>
           </label>
           <label
             className={filterActive ? 'dim' : undefined}
-            data-hint={filterActive ? 'Не влияет, пока включён фильтр «только занятые» — настройка сохраняется' : undefined}
+            data-hint={filterActive ? 'Страницы — только для «Все адреса»; настройка сохраняется' : undefined}
           >
             На странице:{' '}
             <select disabled={filterActive} value={pageSize} onChange={(e) => changePageSize(Number(e.target.value))}>
@@ -213,7 +242,7 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
           {pageCount > 1 && (
             <label
               className={filterActive ? 'dim' : undefined}
-              data-hint={filterActive ? 'Не влияет, пока включён фильтр «только занятые» — настройка сохраняется' : undefined}
+              data-hint={filterActive ? 'Страницы — только для «Все адреса»; настройка сохраняется' : undefined}
             >
               Адреса:{' '}
               <select disabled={filterActive} value={page} onChange={(e) => setPage(Number(e.target.value))}>
@@ -397,8 +426,11 @@ export function ConsoleView({ engine }: { engine: EngineConnection }) {
       <QuickAll project={project} send={send} where="console" />
 
       <main className="faders">
-        {(filterActive
-          ? usedChannels.map((idx) => idx + 1)
+        {shownChannels !== null && shownChannels.length === 0 && (
+          <p className="dim faders-empty">В этой вселенной таких приборов нет.</p>
+        )}
+        {(shownChannels !== null
+          ? shownChannels.map((idx) => idx + 1)
           : Array.from(
               { length: Math.min(pageSize, DMX_UNIVERSE_SIZE - page * pageSize) },
               (_, i) => page * pageSize + i + 1,
